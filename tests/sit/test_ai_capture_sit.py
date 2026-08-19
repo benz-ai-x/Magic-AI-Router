@@ -18,8 +18,8 @@ import pytest
 pytest.importorskip("mitmproxy")
 from mitmproxy.test import tflow, tutils  # noqa: E402
 
-import ai_capture_addon as addon  # noqa: E402
-import capture_store  # noqa: E402
+from capture import ai_capture_addon as addon  # noqa: E402
+from capture import capture_store  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
