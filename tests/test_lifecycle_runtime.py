@@ -1,4 +1,4 @@
-"""Tests for service_coordinator.py — ServiceCoordinator.
+"""Tests for lifecycle_runtime.py — LifecycleRuntime.
 
 Candidate-1 refactor: ServiceCoordinator 被瘦身成只负责
 tick / sync_sleep / stop_all 的薄外壳。suanpan toggle / reload / restart
@@ -13,14 +13,13 @@ CaptureController 子模块接口不变，但不再通过 ServiceCoordinator 暴
 import unittest
 from unittest.mock import MagicMock, patch
 
-from services.service_coordinator import ServiceCoordinator, _should_prevent_sleep
+from services.lifecycle_runtime import LifecycleRuntime, _should_prevent_sleep
 
 
 def _make_coordinator():
-    return ServiceCoordinator(
+    return LifecycleRuntime(
         config_fn=lambda: {"prevent_sleep": False},
         ssh_monitor=MagicMock(),
-        capture_state_fn=lambda: (False, ""),
         paused_fn=lambda: False,
         on_menu_dirty=lambda: None,
     )
@@ -104,15 +103,58 @@ class TestStopAll(unittest.TestCase):
         mock_sp_stop.assert_not_called()
 
 
-class TestSetCaptureStateFn(unittest.TestCase):
-    """F7：两阶段构造——构造完成后再补设 capture_state_fn。"""
+class TestCaptureStateSingleProjection(unittest.TestCase):
+    """「抓包正在运行」单一投影：构造期直连 capture_ctrl，两个消费者内部适配。"""
 
-    def test_replaces_sys_proxy_capture_state(self):
+    def test_tuple_projection_for_sys_proxy(self):
         svc = _make_coordinator()
-        sentinel = ("SENTINEL", "VALUE")
-        svc.set_capture_state_fn(lambda: sentinel)
-        # SystemProxyController 把 capture_state 存在 _capture_state 上
-        self.assertIs(svc._sys_proxy._capture_state(), sentinel)
+        with patch.object(type(svc._capture_ctrl), "enabled", True), \
+             patch.object(type(svc._capture_ctrl), "status", "running"):
+            self.assertEqual(svc._capture_state_tuple(), (True, "running"))
+
+    def test_bool_projection_for_config_server(self):
+        svc = _make_coordinator()
+        with patch.object(type(svc._capture_ctrl), "enabled", True), \
+             patch.object(type(svc._capture_ctrl), "status", "starting"):
+            self.assertIs(svc._capture_state_bool(), False)
+        with patch.object(type(svc._capture_ctrl), "enabled", True), \
+             patch.object(type(svc._capture_ctrl), "status", "running"):
+            self.assertIs(svc._capture_state_bool(), True)
+
+
+class TestQuitOrder(unittest.TestCase):
+    """quit 顺序契约钉死：系统代理恢复 → SSH 停止 → 服务线 → 配置服务。
+    此前这条顺序只活在 app.py 的注释里（'Match original close order'）。"""
+
+    def test_quit_calls_in_contract_order(self):
+        svc = _make_coordinator()
+        order = []
+        with patch.object(svc._sys_proxy, "quit_cleanup",
+                          side_effect=lambda: order.append("sys_proxy")), \
+             patch.object(type(svc._suanpan), "running", False), \
+             patch.object(svc._capture, "stop",
+                          side_effect=lambda **kw: order.append("capture")), \
+             patch.object(svc._blocker, "release",
+                          side_effect=lambda: order.append("caffeinate")), \
+             patch.object(svc._config_server, "stop",
+                          side_effect=lambda: order.append("config_server")):
+            svc.quit(lambda: order.append("ssh"))
+        self.assertEqual(order, ["sys_proxy", "ssh", "caffeinate", "capture",
+                                 "config_server"])
+
+    def test_start_all_clears_ports_then_starts_services(self):
+        svc = _make_coordinator()
+        order = []
+        with patch("services.lifecycle_runtime._clear_stale_ports",
+                   side_effect=lambda *a: order.append("clear_ports")), \
+             patch("services.lifecycle_runtime._read_suanpan_port",
+                   return_value=9527), \
+             patch.object(svc._config_server, "start",
+                          side_effect=lambda: order.append("config_server") or True), \
+             patch.object(svc._suanpan, "start",
+                          side_effect=lambda: order.append("suanpan") or True):
+            svc.start_all()
+        self.assertEqual(order, ["clear_ports", "config_server", "suanpan"])
 
 
 if __name__ == "__main__":

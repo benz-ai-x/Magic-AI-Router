@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from sysctl import sleep_blocker
-from services.service_coordinator import _should_prevent_sleep
+from services.lifecycle_runtime import _should_prevent_sleep
 
 
 @pytest.mark.parametrize(

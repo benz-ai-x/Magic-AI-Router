@@ -219,7 +219,7 @@ class TestClearAppPorts(unittest.TestCase):
         return port_check.PortOwner(pid=pid, name="proc", cmd=cmd)
 
     def _run(self, owners):
-        from app import _clear_app_ports
+        from services.lifecycle_runtime import _clear_stale_ports as _clear_app_ports
         self_pid = 999
         # Real _is_stale_instance (dev-mode argv) — the predicate's
         # discrimination is itself under test in TestIsStaleInstance.
@@ -253,7 +253,7 @@ class TestClearAppPorts(unittest.TestCase):
 
 class TestIsStaleInstance(unittest.TestCase):
     def _pred(self):
-        from app import _is_stale_instance
+        from services.lifecycle_runtime import _is_stale_instance
         return _is_stale_instance
 
     def test_packaged_binary_path_matches(self):

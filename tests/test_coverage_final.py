@@ -37,17 +37,16 @@ from unittest.mock import PropertyMock
 
 
 # ── service_coordinator.py: tick/stop_all paths ───────────────────
-from services.service_coordinator import ServiceCoordinator
+from services.lifecycle_runtime import LifecycleRuntime
 
 
 class TestSvcCoordPaths(unittest.TestCase):
     def _make(self):
         with patch("sysctl.sys_proxy_controller.system_proxy") as mock_sp:
             mock_sp.recover_stale_transaction.return_value = (False, "")
-            return ServiceCoordinator(
+            return LifecycleRuntime(
                 config_fn=lambda: {"prevent_sleep": False},
                 ssh_monitor=MagicMock(),
-                capture_state_fn=lambda: (False, ""),
                 paused_fn=lambda: False,
                 on_menu_dirty=lambda: None,
             )

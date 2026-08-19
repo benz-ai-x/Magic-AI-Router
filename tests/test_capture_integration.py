@@ -46,7 +46,7 @@ def _new_app(**attrs):
     defaults = {
         "_config": config,
         "_conn": conn,
-        "_svc": svc,
+        "_lifecycle": svc,
         "_suanpan": suanpan,
         "_capture_ctrl": capture_ctrl,
         "_capture": monitor,
@@ -290,10 +290,9 @@ class TestQuitDualCleanup(unittest.TestCase):
         inst = _new_app()
         with patch("rumps.quit_application"):
             inst.quit_app(None)
-        inst._sys_proxy.quit_cleanup.assert_called_once()
-        inst._conn.stop_all.assert_called_once()
-        inst._svc.stop_all.assert_called_once()
-        inst._config_server.stop.assert_called_once()
+        # 顺序契约（sys_proxy→ssh→服务线→config_server）在
+        # test_lifecycle_runtime.TestQuitOrder 钉死；此处断言 app 侧 seam。
+        inst._lifecycle.quit.assert_called_once_with(inst._conn.stop_all)
 
 
 class TestStructKeyIncludesCaptureState(unittest.TestCase):

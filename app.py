@@ -21,13 +21,12 @@ from mpconf import config_store
 from shellui.bridge_protocol import ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY
 from capture.capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import load_config, save_config, merge_config, DEFAULT_CONFIG
-from services.config_server import ConfigServer
 from shellui.log_window import LogBuffer, show_log_window
 from shellui.webview_window import show_config_window
 from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
 from services.stats import Stats
 from tunnel.connection_coordinator import ConnectionCoordinator
-from services.service_coordinator import ServiceCoordinator
+from services.lifecycle_runtime import LifecycleRuntime
 from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")
@@ -64,48 +63,6 @@ actions_log = logging.getLogger("magic-proxy.actions")
 ssh_log = logging.getLogger("magic-proxy.ssh")
 
 
-def _is_stale_instance(cmd):
-    """True if a port owner's command line is a previous instance of THIS app.
-
-    #40: matches the packaged binary name or the dev-mode script (basename
-    of sys.argv[0]) as a path component ("…/Magic AI Router" — survives names
-    with spaces) or as a standalone whitespace-delimited token ("python3
-    app.py") — never a bare substring — so a foreign service that merely
-    contains a similar word is spared.
-    """
-    if not cmd:
-        return False
-    script = os.path.basename(sys.argv[0])
-    if not script:
-        return False
-    return "/" + script in cmd or script in cmd.split()
-
-
-def _clear_app_ports(config_port=9528, suanpan_port=9527):
-    """Kill stale previous instances of this app on its own ports.
-
-    #40: only processes whose command line identifies this app are killed.
-    A foreign service that happens to listen on 9527/9528 is spared (and
-    warned about) — killing it would be destroying someone else's process.
-    """
-    self_pid = os.getpid()
-    for port in (config_port, suanpan_port):
-        owner = port_check.who_owns(port)
-        if not owner or owner.pid == self_pid:
-            continue
-        if not _is_stale_instance(owner.cmd):
-            logger.warning(
-                "Port %d occupied by PID %d (%s) — not our process, leaving it alone",
-                port, owner.pid, owner.name)
-            continue
-        logger.info("Port %d occupied by PID %d (%s) — killing",
-                    port, owner.pid, owner.name)
-        ok, err = port_check.kill(owner.pid)
-        if ok:
-            logger.info("Killed PID %d on port %d", owner.pid, port)
-        else:
-            logger.warning("Failed to kill PID %d on port %d: %s",
-                           owner.pid, port, err)
 
 
 class MagicProxyApp(rumps.App):
@@ -129,44 +86,23 @@ class MagicProxyApp(rumps.App):
         # Non-blocking quit→relaunch state machine for proxied app launches
         self._relaunch_waiter = None
 
-        # Services (AI router + capture + system proxy + sleep)
-        # Candidate-1: ServiceCoordinator 不再暴露 suanpan / capture_ctrl /
-        # sys_proxy / capture 直通属性，MagicProxyApp 直接持有子模块。
-        # F7 修复：原先 capture_state_fn 闭包引用了「正在构造中的 self._svc」，
-        # 现在两阶段构造——先以占位 capture_state_fn 构造 ServiceCoordinator，
-        # 拿到直属子模块引用后再补设真正的 capture_state_fn。
-        self._svc = ServiceCoordinator(
+        # Services (AI router + capture + system proxy + sleep + config
+        # server): LifecycleRuntime 持有全部构造/启动/退出顺序（架构候选
+        # 2+3）——app 只经合法属性面取子模块引用，不再两阶段构造、不再
+        # 私有属性掏取，「抓包正在运行」在 lifecycle 内单一投影。
+        self._lifecycle = LifecycleRuntime(
             config_fn=lambda: self._config,
             ssh_monitor=self._conn.ssh,
-            capture_state_fn=lambda: (False, ""),
             paused_fn=lambda: self._conn.paused,
             on_menu_dirty=lambda: setattr(self._menu_builder, "last_struct_key", None),
             initial_sys_proxy_on=self._config.get("system_proxy_default", False),
         )
-        self._suanpan = self._svc._suanpan
-        self._capture_ctrl = self._svc._capture_ctrl
-        self._sys_proxy = self._svc._sys_proxy
-        self._capture = self._svc._capture
-        # 现在直属属性都已绑定，补设真正读取 capture_ctrl 的 capture_state_fn。
-        self._svc.set_capture_state_fn(
-            lambda: (self._capture_ctrl.enabled, self._capture_ctrl.status))
-
-        # Config server
-        config_port = self._config.get("config_port", 9528)
-        self._config_server = ConfigServer(
-            on_sp_saved=lambda: self._suanpan.reload(), port=config_port,
-            capture_state=lambda: (
-                self._capture_ctrl.enabled
-                and self._capture_ctrl.status == "running"))
-        sp_port = self._read_suanpan_port()
-        _clear_app_ports(config_port, sp_port)
-        self._config_server.start()
-
-        # AI router gateway auto-starts with the app (loopback-only);
-        # users can still stop it from the AI 路由 menu.
-        sp = self._suanpan
-        if not sp.start():
-            logger.warning("Suanpan gateway auto-start failed: %s", sp.error[:120])
+        self._suanpan = self._lifecycle.suanpan
+        self._capture_ctrl = self._lifecycle.capture_ctrl
+        self._sys_proxy = self._lifecycle.sys_proxy
+        self._capture = self._lifecycle.capture
+        self._config_server = self._lifecycle.config_server
+        self._lifecycle.start_all()
 
         # Menu
         self._menu_builder = MenuBuilder(
@@ -189,14 +125,6 @@ class MagicProxyApp(rumps.App):
         rumps.Timer(self._on_tick, 1).start()
 
     # ── helpers ──────────────────────────────────────────
-
-    @staticmethod
-    def _read_suanpan_port():
-        """Read the gateway port via 配置存储; fallback to 9527."""
-        try:
-            return netloc.parse_listen(config_store.suanpan_listen(), default_port=9527)[1]
-        except Exception:
-            return 9527
 
     @staticmethod
     def _install_edit_menu():
@@ -274,8 +202,8 @@ class MagicProxyApp(rumps.App):
         self._conn.check_ssh()
 
         # Services
-        self._svc.tick(self._config.get("capture_port", DEFAULT_CAPTURE_PORT))
-        self._svc.sync_sleep(s, self._conn.paused,
+        self._lifecycle.tick(self._config.get("capture_port", DEFAULT_CAPTURE_PORT))
+        self._lifecycle.sync_sleep(s, self._conn.paused,
                              self._config.get("prevent_sleep", False))
 
         # Pending proxied-app relaunch (quit → wait → launch)
@@ -330,7 +258,7 @@ class MagicProxyApp(rumps.App):
     def toggle_pause(self, _):
         self._conn.toggle_pause()
         self._sys_proxy.sync()
-        self._svc.sync_sleep(self._conn.ssh.status, self._conn.paused,
+        self._lifecycle.sync_sleep(self._conn.ssh.status, self._conn.paused,
                              self._config.get("prevent_sleep", False))
 
     def toggle_system_proxy(self, _):
@@ -402,7 +330,7 @@ class MagicProxyApp(rumps.App):
     def toggle_prevent_sleep(self, _):
         self._config["prevent_sleep"] = not self._config.get("prevent_sleep", False)
         save_config(self._config)
-        self._svc.sync_sleep(self._conn.ssh.status, self._conn.paused,
+        self._lifecycle.sync_sleep(self._conn.ssh.status, self._conn.paused,
                              self._config.get("prevent_sleep", False))
         self._dirty()
 
@@ -587,11 +515,8 @@ class MagicProxyApp(rumps.App):
             self.open_capture_dir(None)
 
     def quit_app(self, _):
-        # Match original close order: sys_proxy cleanup BEFORE ssh stop
-        self._sys_proxy.quit_cleanup()
-        self._conn.stop_all()
-        self._svc.stop_all()
-        self._config_server.stop()
+        # 退出顺序契约由 LifecycleRuntime.quit 持有（系统代理恢复先于 SSH 停止）
+        self._lifecycle.quit(self._conn.stop_all)
         rumps.quit_application()
 
 

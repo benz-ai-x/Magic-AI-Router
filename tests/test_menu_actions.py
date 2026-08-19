@@ -22,7 +22,7 @@ def _make_app(config=None):
     """Build a MagicProxyApp without rumps.App.__init__ for callback testing."""
     a = MagicProxyApp.__new__(MagicProxyApp)
     a._conn = MagicMock()
-    a._svc = MagicMock()
+    a._lifecycle = MagicMock()
     a._suanpan = MagicMock()
     a._capture_ctrl = MagicMock()
     a._sys_proxy = MagicMock()
@@ -68,7 +68,7 @@ class TestConnectionActions(unittest.TestCase):
         a.toggle_pause(None)
         a._conn.toggle_pause.assert_called_once()
         a._sys_proxy.sync.assert_called_once()
-        a._svc.sync_sleep.assert_called_once()
+        a._lifecycle.sync_sleep.assert_called_once()
 
     def test_toggle_system_proxy_delegates(self):
         a = _make_app()
@@ -200,7 +200,7 @@ class TestSleepLoginActions(unittest.TestCase):
             a.toggle_prevent_sleep(None)
         self.assertTrue(a._config["prevent_sleep"])
         save.assert_called_once()
-        a._svc.sync_sleep.assert_called_once()
+        a._lifecycle.sync_sleep.assert_called_once()
 
     def test_toggle_launch_at_login_success(self):
         a = _make_app({"launch_at_login": False})

@@ -94,7 +94,7 @@ services/ ── 服务
   config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token + body 上限）
   suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
   claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json，经 config_store.atomic_write；env 契约见 ADR-003）
-  service_coordinator.py ── tick/sync_sleep/stop_all 编排
+  lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约、tick/sync_sleep/stop_all、capture_state 单投影
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围 / 缓存 / 路由来源）+ 供应商连通性探测
   stats.py ── 运行统计
 
