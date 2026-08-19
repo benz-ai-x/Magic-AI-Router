@@ -5,9 +5,7 @@ import re
 import stat
 import subprocess
 
-import config_store
-
-
+from mpconf import config_store
 APP_SECURITY_DIR = os.path.expanduser("~/.magic-proxy")
 KNOWN_HOSTS_PATH = os.path.join(APP_SECURITY_DIR, "known_hosts")
 _TIMEOUT = 7

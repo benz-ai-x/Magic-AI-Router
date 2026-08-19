@@ -20,9 +20,7 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
-import capture
-
-
+from capture import capture
 @pytest.fixture(autouse=True)
 def _avoid_real_capture_store(monkeypatch):
     monkeypatch.setattr(

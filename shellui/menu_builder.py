@@ -11,8 +11,8 @@ from typing import Any, Callable
 import logging
 
 import rumps
-import chromium_proxy
-from config import save_config
+from capture import chromium_proxy
+from mpconf.config import save_config
 from util import resource_path as _resource_path, truncate as _truncate
 
 logger = logging.getLogger("magic-proxy.menu")

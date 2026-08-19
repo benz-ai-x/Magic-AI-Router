@@ -16,7 +16,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from capture_store import append_json
+from capture.capture_store import append_json
 
 log = logging.getLogger("ai_capture_addon")
 MAX_CAPTURE_FLOW_BYTES = 5 * 1024 * 1024

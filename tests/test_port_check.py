@@ -5,9 +5,7 @@ import subprocess
 import unittest
 from unittest.mock import patch, MagicMock
 
-import port_check
-
-
+from sysctl import port_check
 def _completed(stdout="", stderr="", returncode=0):
     cp = MagicMock(spec=subprocess.CompletedProcess)
     cp.stdout = stdout

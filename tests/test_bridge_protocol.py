@@ -12,7 +12,7 @@ import json
 import re
 import unittest
 
-from bridge_protocol import BridgeCore
+from shellui.bridge_protocol import BridgeCore
 
 
 def extract_json(js):

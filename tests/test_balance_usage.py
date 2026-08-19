@@ -14,9 +14,7 @@ import urllib.error
 from datetime import datetime
 from unittest.mock import patch
 
-import balance_usage
-
-
+from services import balance_usage
 def _sp(providers):
     return {"providers": providers}
 

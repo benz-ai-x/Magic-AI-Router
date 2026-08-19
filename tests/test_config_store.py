@@ -13,9 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import config_store
-
-
+from mpconf import config_store
 class TestPathsRegistry(unittest.TestCase):
     def test_defaults_point_at_home(self):
         self.assertEqual(config_store.DEFAULT_PATHS["mp"],

@@ -19,13 +19,11 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import app
-import capture
-import capture_controller
-from capture_controller import CaptureController
-import sleep_blocker
-import system_proxy
-
-
+from capture import capture
+from capture import capture_controller
+from capture.capture_controller import CaptureController
+from sysctl import sleep_blocker
+from sysctl import system_proxy
 def _new_app(**attrs):
     inst = app.MagicProxyApp.__new__(app.MagicProxyApp)
     monitor = attrs.pop("_capture", MagicMock())
@@ -87,7 +85,7 @@ class TestDefaultConfigCaptureFields(unittest.TestCase):
 class TestSystemProxyTargetPort(unittest.TestCase):
     """SystemProxyController._target_port: capture running -> capture_port, else http_listen_port."""
     def _ctrl(self, cap_en=False, cap_st="stopped", port=8888, cap_port=8080):
-        from sys_proxy_controller import SystemProxyController
+        from sysctl.sys_proxy_controller import SystemProxyController
         return SystemProxyController(
             ssh_monitor=MagicMock(), capture_state=lambda: (cap_en, cap_st),
             config_fn=lambda: {"http_listen_port": port, "capture_port": cap_port},
@@ -113,7 +111,7 @@ class TestSystemProxyTargetHost(unittest.TestCase):
     """SystemProxyController._target_host always returns 127.0.0.1 (http proxy
     is loopback-only; the host field is gone from the config)."""
     def _ctrl(self, cap_en=False, cap_st="stopped"):
-        from sys_proxy_controller import SystemProxyController
+        from sysctl.sys_proxy_controller import SystemProxyController
         return SystemProxyController(
             ssh_monitor=MagicMock(), capture_state=lambda: (cap_en, cap_st),
             config_fn=lambda: {"http_listen_port": 8888, "capture_port": 8080},
@@ -132,7 +130,7 @@ class TestSystemProxyTargetHost(unittest.TestCase):
 class TestSystemProxySyncAppliesCorrectHost(unittest.TestCase):
     """SystemProxyController.sync passes resolved host into system_proxy.apply_transaction."""
     def test_capture_off_applies_loopback_http_port(self):
-        from sys_proxy_controller import SystemProxyController
+        from sysctl.sys_proxy_controller import SystemProxyController
         ctrl = SystemProxyController(
             ssh_monitor=MagicMock(status="connected"),
             capture_state=lambda: (False, "stopped"),
@@ -140,12 +138,12 @@ class TestSystemProxySyncAppliesCorrectHost(unittest.TestCase):
             paused_fn=lambda: False, initial_on=True)
         original = {"Wi-Fi": {}}
         desired = {"Wi-Fi": {}}
-        with patch("system_proxy.recover_stale_transaction", return_value=(True, "")),              patch("system_proxy.snapshot", return_value=original),              patch("system_proxy.apply_transaction", return_value=(True, "", desired)) as apply:
+        with patch("sysctl.system_proxy.recover_stale_transaction", return_value=(True, "")),              patch("sysctl.system_proxy.snapshot", return_value=original),              patch("sysctl.system_proxy.apply_transaction", return_value=(True, "", desired)) as apply:
             ctrl.sync()
         apply.assert_called_once_with("127.0.0.1", 8888, system_proxy.DEFAULT_BYPASS, original)
 
     def test_capture_on_applies_loopback_capture_port(self):
-        from sys_proxy_controller import SystemProxyController
+        from sysctl.sys_proxy_controller import SystemProxyController
         ctrl = SystemProxyController(
             ssh_monitor=MagicMock(status="connected"),
             capture_state=lambda: (True, "running"),
@@ -153,7 +151,7 @@ class TestSystemProxySyncAppliesCorrectHost(unittest.TestCase):
             paused_fn=lambda: False, initial_on=True)
         original = {"Wi-Fi": {}}
         desired = {"Wi-Fi": {}}
-        with patch("system_proxy.recover_stale_transaction", return_value=(True, "")),              patch("system_proxy.snapshot", return_value=original),              patch("system_proxy.apply_transaction", return_value=(True, "", desired)) as apply:
+        with patch("sysctl.system_proxy.recover_stale_transaction", return_value=(True, "")),              patch("sysctl.system_proxy.snapshot", return_value=original),              patch("sysctl.system_proxy.apply_transaction", return_value=(True, "", desired)) as apply:
             ctrl.sync()
         apply.assert_called_once_with("127.0.0.1", 8080, system_proxy.DEFAULT_BYPASS, original)
 
@@ -162,7 +160,7 @@ class TestToggleCapture(unittest.TestCase):
     def test_toggle_off_does_not_check_ca_trust(self):
         inst = _new_app(_capture_enabled=True)
         inst._capture.status = "running"
-        with patch("ca_trust.is_trusted") as is_trusted:
+        with patch("capture.ca_trust.is_trusted") as is_trusted:
             inst.toggle_capture(None)
         is_trusted.assert_not_called()
         self.assertFalse(inst._capture_ctrl.enabled)
@@ -181,7 +179,7 @@ class TestToggleCapture(unittest.TestCase):
         inst = _new_app(_capture_enabled=False)
         inst._capture.status = "stopped"
         with patch.object(app.MagicProxyApp, "_check_port", return_value=True) as check_port, \
-             patch("ca_trust.is_trusted", return_value=True), \
+             patch("capture.ca_trust.is_trusted", return_value=True), \
              patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
              patch.object(capture_controller, "_resource_path", return_value="/x/addon.py"):
             inst.toggle_capture(None)
@@ -192,7 +190,7 @@ class TestToggleCapture(unittest.TestCase):
         inst = _new_app(_capture_enabled=False)
         inst._capture.status = "stopped"
         with patch.object(app.MagicProxyApp, "_check_port", return_value=False), \
-             patch("ca_trust.is_trusted") as is_trusted:
+             patch("capture.ca_trust.is_trusted") as is_trusted:
             inst.toggle_capture(None)
         is_trusted.assert_not_called()
         self.assertFalse(inst._capture_ctrl.enabled)
@@ -202,8 +200,8 @@ class TestToggleCapture(unittest.TestCase):
         inst = _new_app(_capture_enabled=False)
         inst._capture.status = "stopped"
         with patch.object(app.MagicProxyApp, "_check_port", return_value=True), \
-             patch("ca_trust.is_trusted", return_value=True), \
-             patch("ca_trust.show_ca_trust_guide") as guide, \
+             patch("capture.ca_trust.is_trusted", return_value=True), \
+             patch("capture.ca_trust.show_ca_trust_guide") as guide, \
              patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
              patch.object(capture_controller, "_resource_path", return_value="/x/addon.py"):
             inst.toggle_capture(None)
@@ -215,8 +213,8 @@ class TestToggleCapture(unittest.TestCase):
         inst = _new_app(_capture_enabled=False)
         inst._capture.status = "stopped"
         with patch.object(app.MagicProxyApp, "_check_port", return_value=True), \
-             patch("ca_trust.is_trusted", return_value=False), \
-             patch("ca_trust.show_ca_trust_guide") as guide:
+             patch("capture.ca_trust.is_trusted", return_value=False), \
+             patch("capture.ca_trust.show_ca_trust_guide") as guide:
             inst.toggle_capture(None)
         guide.assert_called_once()
         # Must not flip on until the guide reports success via its callback.
@@ -232,8 +230,8 @@ class TestToggleCapture(unittest.TestCase):
             captured_cb["cb"] = on_result
 
         with patch.object(app.MagicProxyApp, "_check_port", return_value=True), \
-             patch("ca_trust.is_trusted", return_value=False), \
-             patch("ca_trust.show_ca_trust_guide", side_effect=fake_guide), \
+             patch("capture.ca_trust.is_trusted", return_value=False), \
+             patch("capture.ca_trust.show_ca_trust_guide", side_effect=fake_guide), \
              patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
              patch.object(capture_controller, "_resource_path", return_value="/x/addon.py"):
             inst.toggle_capture(None)
@@ -250,8 +248,8 @@ class TestToggleCapture(unittest.TestCase):
             captured_cb["cb"] = on_result
 
         with patch.object(app.MagicProxyApp, "_check_port", return_value=True), \
-             patch("ca_trust.is_trusted", return_value=False), \
-             patch("ca_trust.show_ca_trust_guide", side_effect=fake_guide):
+             patch("capture.ca_trust.is_trusted", return_value=False), \
+             patch("capture.ca_trust.show_ca_trust_guide", side_effect=fake_guide):
             inst.toggle_capture(None)
             captured_cb["cb"](False)
         self.assertFalse(inst._capture_ctrl.enabled)
@@ -300,7 +298,7 @@ class TestQuitDualCleanup(unittest.TestCase):
 
 class TestStructKeyIncludesCaptureState(unittest.TestCase):
     def test_struct_key_changes_when_capture_status_changes(self):
-        from menu_builder import MenuBuilder
+        from shellui.menu_builder import MenuBuilder
         inst = _new_app(_capture_enabled=True)
         inst._conn.ssh = MagicMock(status="stopped", error_msg="", log="")
         inst._conn.paused = False

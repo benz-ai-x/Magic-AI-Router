@@ -9,7 +9,7 @@ import logging
 import threading
 import unittest
 
-from log_window import LogBuffer
+from shellui.log_window import LogBuffer
 
 
 class TestLogBuffer(unittest.TestCase):

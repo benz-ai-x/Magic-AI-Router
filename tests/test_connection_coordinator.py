@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from connection_coordinator import ConnectionCoordinator
+from tunnel.connection_coordinator import ConnectionCoordinator
 
 
 def _make_config():

@@ -6,9 +6,7 @@ import unittest
 from http.client import HTTPConnection
 from unittest.mock import MagicMock, patch
 
-import config_server
-
-
+from services import config_server
 def _start_server():
     """Start a config server on a random port, return (server, port)."""
     import threading
@@ -88,7 +86,7 @@ class TestTokenAuth(unittest.TestCase):
             path=f"/api/state?token={self.token}",
             headers={},
         )
-        with patch("config_server.secrets.compare_digest",
+        with patch("services.config_server.secrets.compare_digest",
                    wraps=_secrets.compare_digest) as spy:
             result = config_server._Handler._valid_token(h)
             self.assertTrue(result)
@@ -129,7 +127,7 @@ class TestBodySizeLimit(unittest.TestCase):
         self.server.stop()
 
     def test_post_oversized_body_returns_413(self):
-        with patch("config_server.MAX_BODY_BYTES", 2):
+        with patch("services.config_server.MAX_BODY_BYTES", 2):
             status, _ = _request(
                 self.port, "POST",
                 f"/api/fetch-models?token={self.token}",
@@ -138,7 +136,7 @@ class TestBodySizeLimit(unittest.TestCase):
         self.assertEqual(status, 413)
 
     def test_put_oversized_body_returns_413(self):
-        with patch("config_server.MAX_BODY_BYTES", 2):
+        with patch("services.config_server.MAX_BODY_BYTES", 2):
             status, _ = _request(
                 self.port, "PUT",
                 f"/api/state?token={self.token}",
@@ -147,8 +145,8 @@ class TestBodySizeLimit(unittest.TestCase):
         self.assertEqual(status, 413)
 
     def test_post_normal_body_still_works(self):
-        with patch("config_server.MAX_BODY_BYTES", 10_000_000):
-            with patch("config_store.sp_load_raw", return_value={"providers": {}}):
+        with patch("services.config_server.MAX_BODY_BYTES", 10_000_000):
+            with patch("mpconf.config_store.sp_load_raw", return_value={"providers": {}}):
                 status, _ = _request(
                     self.port, "POST",
                     f"/api/fetch-models?token={self.token}",
@@ -263,8 +261,8 @@ class TestPutState(unittest.TestCase):
         self.assertEqual(status, 400)
 
     def test_put_calls_write_mp_and_sp(self):
-        with patch("config_server._write_mp", return_value=[]) as wmp, \
-             patch("config_store.sp_save", return_value=(True, None)) as wsp:
+        with patch("services.config_server._write_mp", return_value=[]) as wmp, \
+             patch("mpconf.config_store.sp_save", return_value=(True, None)) as wsp:
             body = json.dumps({"mp": {"tunnels": []}, "sp": {"providers": {}}})
             status, data = _request(self.port, "PUT", f"/api/state?token={self.token}",
                                     body=body)
@@ -273,7 +271,7 @@ class TestPutState(unittest.TestCase):
         wsp.assert_called_once()
 
     def test_put_with_errors_returns_422(self):
-        with patch("config_server._write_mp", return_value=["write failed"]):
+        with patch("services.config_server._write_mp", return_value=["write failed"]):
             body = json.dumps({"mp": {}})
             status, data = _request(self.port, "PUT", f"/api/state?token={self.token}",
                                     body=body)
@@ -323,14 +321,14 @@ class TestFetchModelsEndpoint(unittest.TestCase):
         resp.__enter__ = lambda s: s
         resp.__exit__ = lambda s, *a: False
         resp.read.return_value = body
-        with patch("config_store.sp_load_raw", return_value=self.SP), \
+        with patch("mpconf.config_store.sp_load_raw", return_value=self.SP), \
              patch("urllib.request.urlopen", return_value=resp):
             status, data = self._post('{"provider": "deepseek"}')
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data), {"models": ["deepseek-v4-flash"]})
 
     def test_fetch_models_unknown_provider_returns_error(self):
-        with patch("config_store.sp_load_raw", return_value=self.SP):
+        with patch("mpconf.config_store.sp_load_raw", return_value=self.SP):
             status, data = self._post('{"provider": "ghost"}')
         self.assertEqual(status, 200)
         self.assertIn("error", json.loads(data))
@@ -373,9 +371,9 @@ class TestWriteMpKeychainGuard(unittest.TestCase):
 
     def _write(self, tunnels):
         cfg = {"tunnels": tunnels}
-        with patch("config_server.save_config", return_value=True), \
-             patch("config_server.keychain.delete_password") as delete, \
-             patch("config_server.keychain.set_password", return_value=True):
+        with patch("services.config_server.save_config", return_value=True), \
+             patch("services.config_server.keychain.delete_password") as delete, \
+             patch("services.config_server.keychain.set_password", return_value=True):
             errors = config_server._write_mp(cfg)
         return errors, delete
 
@@ -539,8 +537,8 @@ class TestCaptureStateField(unittest.TestCase):
 
     def test_capture_active_never_round_trips_into_file(self):
         # The flag is server-injected; _write_mp must strip it before saving.
-        with patch("config_server.save_config", return_value=True) as save, \
-             patch("config_server.merge_config", side_effect=lambda c: c):
+        with patch("services.config_server.save_config", return_value=True) as save, \
+             patch("services.config_server.merge_config", side_effect=lambda c: c):
             config_server._write_mp({"capture_active": True, "tunnels": []})
         saved_cfg = save.call_args[0][0]
         self.assertNotIn("capture_active", saved_cfg)

@@ -9,7 +9,7 @@ import path from "node:path";
 import vm from "node:vm";
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const HTML = readFileSync(path.join(ROOT, "config_ui.html"), "utf8");
+const HTML = readFileSync(path.join(ROOT, "shellui", "config_ui.html"), "utf8");
 const SCRIPT = HTML.match(/<script data-layer="model">([\s\S]*?)<\/script>/)[1]
   .replace(/\nload\(\);\s*$/, "\n");
 

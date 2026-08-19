@@ -164,7 +164,7 @@ class TestSaveConfigDictWriteFailure(unittest.TestCase):
             },
             "router": {"default": "p/m"},
         }
-        with patch("config_store.atomic_write", return_value=False):
+        with patch("mpconf.config_store.atomic_write", return_value=False):
             ok, err = save_config_dict(valid, "/tmp/nonexistent_path/test_sp.yaml")
         self.assertFalse(ok)
         self.assertIn("写入失败", err)

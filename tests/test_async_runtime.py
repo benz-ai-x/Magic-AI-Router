@@ -3,7 +3,7 @@ import asyncio
 import time
 import unittest
 
-from async_runtime import AsyncRuntime
+from tunnel.async_runtime import AsyncRuntime
 
 
 class TestInitialProperties(unittest.TestCase):

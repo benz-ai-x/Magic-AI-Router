@@ -10,10 +10,22 @@ import sys
 import time
 
 
+# Dev-mode search dirs for bundled resources (frozen .app keeps them flat in
+# _MEIPASS via --add-data "src:."; in dev they live in their domain packages).
+_RESOURCE_DEV_DIRS = ("", "shellui", "capture", "sysctl", "docs", "assets")
+
+
 def resource_path(name: str) -> str:
     """Locate a bundled resource in dev and inside the PyInstaller .app."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, name)
+    flat = os.path.join(base, name)
+    if hasattr(sys, "_MEIPASS") or os.path.exists(flat):
+        return flat
+    for d in _RESOURCE_DEV_DIRS:
+        cand = os.path.join(base, d, name)
+        if os.path.exists(cand):
+            return cand
+    return flat
 
 
 def _stamp_from_file(path: str):

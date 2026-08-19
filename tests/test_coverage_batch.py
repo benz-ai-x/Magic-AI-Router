@@ -5,11 +5,9 @@ import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 # ── system_proxy.py ──────────────────────────────────────
-import system_proxy
-
-
+from sysctl import system_proxy
 class TestSystemProxy(unittest.TestCase):
-    @patch("system_proxy.subprocess.run")
+    @patch("sysctl.system_proxy.subprocess.run")
     def test_active_services(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0,
             stdout="Ethernet\nWi-Fi\n")
@@ -18,11 +16,9 @@ class TestSystemProxy(unittest.TestCase):
 
 
 # ── chromium_proxy.py ────────────────────────────────────
-import chromium_proxy
-
-
+from capture import chromium_proxy
 class TestChromiumProxy(unittest.TestCase):
-    @patch("chromium_proxy.subprocess.run")
+    @patch("capture.chromium_proxy.subprocess.run")
     def test_quit_app_calls_killall(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         chromium_proxy.quit_app("/path/to/Test.app")
@@ -77,7 +73,7 @@ class TestRouterEdges(unittest.TestCase):
 
 
 # ── connection_coordinator.py ────────────────────────────
-from connection_coordinator import ConnectionCoordinator
+from tunnel.connection_coordinator import ConnectionCoordinator
 
 
 class TestConnectionCoordinatorLifecycle(unittest.TestCase):
@@ -113,7 +109,7 @@ class TestConnectionCoordinatorLifecycle(unittest.TestCase):
 
 
 # ── suanpan_runtime.py ───────────────────────────────────
-from suanpan_runtime import SuanpanRuntime
+from services.suanpan_runtime import SuanpanRuntime
 
 
 class TestSuanpanRuntimeLifecycle(unittest.TestCase):

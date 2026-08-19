@@ -9,7 +9,7 @@ import path from "node:path";
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 export function extractLayer(n) {
-  const html = readFileSync(path.join(ROOT, "config_ui.html"), "utf8");
+  const html = readFileSync(path.join(ROOT, "shellui", "config_ui.html"), "utf8");
   const m = html.match(/<script data-layer="model">([\s\S]*?)<\/script>/);
   if (!m) throw new Error("script block not found");
   const body = m[1];

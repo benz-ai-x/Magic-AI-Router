@@ -12,9 +12,9 @@ import numpy as np
 from PIL import Image
 
 ICON_SOURCE = "icons/magic-ai-router-macos-v2.icns"
-OUTPUT_COLOR = "MenubarIcon.png"
-OUTPUT_YELLOW = "MenubarIcon-yellow.png"
-OUTPUT_GRAY = "MenubarIcon-gray.png"
+OUTPUT_COLOR = "assets/MenubarIcon.png"
+OUTPUT_YELLOW = "assets/MenubarIcon-yellow.png"
+OUTPUT_GRAY = "assets/MenubarIcon-gray.png"
 SIZE = 256
 
 

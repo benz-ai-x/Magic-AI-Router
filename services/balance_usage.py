@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from provider_auth import build_outbound_headers, resolve_api_key
+from mpconf.provider_auth import build_outbound_headers, resolve_api_key
 
 logger = logging.getLogger("magic-proxy.balance_usage")
 

@@ -12,7 +12,7 @@ import logging
 import threading
 
 import rumps
-import host_key
+from tunnel import host_key
 from PyObjCTools import AppHelper
 
 logger = logging.getLogger("magic-proxy.host_key_flow")

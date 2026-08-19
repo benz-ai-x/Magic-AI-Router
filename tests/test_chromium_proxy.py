@@ -1,9 +1,7 @@
 """Tests for chromium_proxy (pure logic + resolver, no live app)."""
 from unittest.mock import patch, MagicMock
 
-import chromium_proxy
-
-
+from capture import chromium_proxy
 def test_launch_args_carries_proxy_server():
     assert chromium_proxy.launch_args("127.0.0.1:8888") == ["--proxy-server=127.0.0.1:8888"]
 

@@ -1,9 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import proxy
-
-
+from tunnel import proxy
 class TestAuthorityParsing(unittest.TestCase):
     def test_connect_authority_supports_ipv6(self):
         self.assertEqual(proxy._parse_authority("[::1]:443"), ("::1", 443))
@@ -244,8 +242,8 @@ class TestHandleClient(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSSHMonitorStart(unittest.TestCase):
-    @patch("subprocess_monitor.subprocess.Popen")
-    @patch("subprocess_monitor.subprocess.run")
+    @patch("tunnel.subprocess_monitor.subprocess.Popen")
+    @patch("tunnel.subprocess_monitor.subprocess.run")
     def test_start_key_auth(self, mock_run, mock_popen):
         mock_popen.return_value = MagicMock(pid=12345)
         mock_run.return_value = MagicMock(returncode=0, stdout="")
@@ -294,7 +292,7 @@ class TestHandleClientErrors(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSSHMonitorProbeReady(unittest.TestCase):
-    @patch("proxy.socket")
+    @patch("tunnel.proxy.socket")
     def test_probe_ready_success(self, mock_socket_mod):
         mock_sock = MagicMock()
         mock_socket_mod.create_connection.return_value.__enter__.return_value = mock_sock
@@ -305,7 +303,7 @@ class TestSSHMonitorProbeReady(unittest.TestCase):
         # Returns True if SOCKS5 handshake succeeds
         self.assertTrue(result or result is False)  # either way, no crash
 
-    @patch("proxy.socket")
+    @patch("tunnel.proxy.socket")
     def test_probe_ready_connection_refused(self, mock_socket_mod):
         mock_socket_mod.create_connection.side_effect = ConnectionRefusedError
         monitor = proxy.SSHMonitor(line_sink=lambda _: None)
@@ -525,8 +523,8 @@ class TestRelayDrainAndEOF(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSSHMonitorPasswordAuth(unittest.TestCase):
-    @patch("subprocess_monitor.subprocess.Popen")
-    @patch("subprocess_monitor.subprocess.run")
+    @patch("tunnel.subprocess_monitor.subprocess.Popen")
+    @patch("tunnel.subprocess_monitor.subprocess.run")
     def test_start_password_auth(self, mock_run, mock_popen):
         mock_popen.return_value = MagicMock(pid=12345)
         mock_run.return_value = MagicMock(returncode=0, stdout="")
@@ -539,7 +537,7 @@ class TestSSHMonitorPasswordAuth(unittest.TestCase):
 
 
 class TestSSHMonitorProbeReadySuccess(unittest.TestCase):
-    @patch("proxy.socket.socket")
+    @patch("tunnel.proxy.socket.socket")
     def test_probe_ready_returns_true_on_socks5(self, mock_socket_cls):
         mock_sock = MagicMock()
         mock_socket_cls.return_value = mock_sock
@@ -699,11 +697,11 @@ class TestHandleClientWriterErrors(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSSHMonitorPasswordCloseError(unittest.TestCase):
-    @patch("proxy.os.close")
-    @patch("proxy.os.write")
-    @patch("proxy.os.pipe")
-    @patch("subprocess_monitor.subprocess.Popen")
-    @patch("subprocess_monitor.subprocess.run")
+    @patch("tunnel.proxy.os.close")
+    @patch("tunnel.proxy.os.write")
+    @patch("tunnel.proxy.os.pipe")
+    @patch("tunnel.subprocess_monitor.subprocess.Popen")
+    @patch("tunnel.subprocess_monitor.subprocess.run")
     def test_password_auth_close_error_swallowed(self, mock_run, mock_popen,
                                                  mock_pipe, mock_write, mock_close):
         mock_pipe.return_value = (100, 101)

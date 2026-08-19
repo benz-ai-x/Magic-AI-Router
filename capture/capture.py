@@ -10,8 +10,8 @@ import os
 import re
 import socket
 from datetime import datetime
-from capture_store import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT, prepare as prepare_capture_dir
-from subprocess_monitor import SubprocessMonitor
+from capture.capture_store import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT, prepare as prepare_capture_dir
+from tunnel.subprocess_monitor import SubprocessMonitor
 
 logger = logging.getLogger("magic-proxy.capture")
 

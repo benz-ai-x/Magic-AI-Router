@@ -79,14 +79,14 @@ class TestVersionSingleSource:
 
 
 class TestConfigStoreDocstringContract:
-    """config_store.py must use the current ADR-023 vocabulary."""
+    """mpconf/config_store.py must use the current ADR-023 vocabulary."""
 
     def test_no_masking_wording(self):
-        text = (ROOT / "config_store.py").read_text(encoding="utf-8")
+        text = (ROOT / "mpconf/config_store.py").read_text(encoding="utf-8")
         assert "key masking" not in text, \
-            "config_store.py still uses the pre-ADR-023 'key masking' wording"
+            "mpconf/config_store.py still uses the pre-ADR-023 'key masking' wording"
         assert "api_key_set" in text, \
-            "config_store.py docstring should name the api_key_set contract"
+            "mpconf/config_store.py docstring should name the api_key_set contract"
 
 
 class TestClaudeCodeEnvContractDocumented:
@@ -97,7 +97,7 @@ class TestClaudeCodeEnvContractDocumented:
         assert ADR_024.exists(), "docs/adr/024-claude-code-env-contract.md missing"
 
     def test_every_env_var_documented(self):
-        from claude_code_setup import _ROLES
+        from services.claude_code_setup import _ROLES
         text = ADR_024.read_text(encoding="utf-8")
         env_vars = [env_var for _, _, env_var, _ in _ROLES]
         for var in env_vars:
@@ -184,7 +184,7 @@ class TestSettingsNavigationDocumented:
     """The volatile AI routing sidebar list must come from the UI registry."""
 
     def test_claude_md_ai_router_views_match_registry(self):
-        html = (ROOT / "config_ui.html").read_text(encoding="utf-8")
+        html = (ROOT / "shellui" / "config_ui.html").read_text(encoding="utf-8")
         titles = re.findall(
             r"\w+:\{group:'AI 路由',title:'([^']+)'", html)
         assert titles, "no AI routing views found in config_ui VIEWS registry"

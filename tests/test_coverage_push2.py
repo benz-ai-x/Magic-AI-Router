@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
 
 # ── config_server.py: missing handler routes + lifecycle ──────────
 from http.server import HTTPServer
-from config_server import ConfigServer, _Handler, CONFIG_PORT
+from services.config_server import ConfigServer, _Handler, CONFIG_PORT
 
 
 class TestConfigServerLifecycle(unittest.TestCase):
@@ -39,7 +39,7 @@ class TestConfigServerRoutes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._port = 19878
-        from config_server import ConfigServer
+        from services.config_server import ConfigServer
         cls._server = ConfigServer(port=cls._port)
         cls._server.start()
         time.sleep(0.3)
@@ -59,12 +59,12 @@ class TestConfigServerRoutes(unittest.TestCase):
             return e.code, json.loads(e.read())
 
     def test_get_balance_route(self):
-        with patch("config_server.fetch_balance", return_value=[]):
+        with patch("services.config_server.fetch_balance", return_value=[]):
             status, body = self._get("/api/balance")
         self.assertEqual(status, 200)
 
     def test_get_usage_route(self):
-        with patch("config_server.fetch_usage", return_value={"total": {}}):
+        with patch("services.config_server.fetch_usage", return_value={"total": {}}):
             status, body = self._get("/api/usage")
         self.assertEqual(status, 200)
 
@@ -75,7 +75,7 @@ class TestConfigServerRoutes(unittest.TestCase):
     def test_post_test_provider(self):
         import urllib.request
         url = f"http://127.0.0.1:{self._port}/api/test-provider?token={self._server.token}"
-        with patch("config_server.test_provider", return_value={"ok": True}):
+        with patch("services.config_server.test_provider", return_value={"ok": True}):
             req = urllib.request.Request(url, data=json.dumps({"provider": "p"}).encode(),
                                          headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=5) as r:
@@ -85,8 +85,8 @@ class TestConfigServerRoutes(unittest.TestCase):
     def test_put_state(self):
         import urllib.request
         url = f"http://127.0.0.1:{self._port}/api/state?token={self._server.token}"
-        with patch("config_server._write_mp", return_value=[]) as mock_wm, \
-             patch("config_store.sp_save", return_value=(True, None)) as mock_ws:
+        with patch("services.config_server._write_mp", return_value=[]) as mock_wm, \
+             patch("mpconf.config_store.sp_save", return_value=(True, None)) as mock_ws:
             data = json.dumps({"mp": {"tunnels": []}, "sp": {"providers": {}}}).encode()
             req = urllib.request.Request(url, data=data, method="PUT",
                                          headers={"Content-Type": "application/json"})
@@ -97,7 +97,7 @@ class TestConfigServerRoutes(unittest.TestCase):
     def test_put_with_errors(self):
         import urllib.request
         url = f"http://127.0.0.1:{self._port}/api/state?token={self._server.token}"
-        with patch("config_server._write_mp", return_value=["error1"]):
+        with patch("services.config_server._write_mp", return_value=["error1"]):
             data = json.dumps({"mp": {"tunnels": []}}).encode()
             req = urllib.request.Request(url, data=data, method="PUT",
                                          headers={"Content-Type": "application/json"})
@@ -109,12 +109,10 @@ class TestConfigServerRoutes(unittest.TestCase):
 
 
 # ── proxy.py: SSHMonitor password auth + socks5 errors ────────────
-import proxy
-
-
+from tunnel import proxy
 class TestSSHMonitorPasswordAuth(unittest.TestCase):
-    @patch("subprocess_monitor.subprocess.Popen")
-    @patch("subprocess_monitor.subprocess.run")
+    @patch("tunnel.subprocess_monitor.subprocess.Popen")
+    @patch("tunnel.subprocess_monitor.subprocess.run")
     def test_start_password_auth(self, mock_run, mock_popen):
         mock_popen.return_value = MagicMock(pid=12345)
         mock_run.return_value = MagicMock(returncode=0, stdout="")
@@ -168,11 +166,11 @@ class TestBodyLimitChunked(unittest.TestCase):
 
 
 # ── sys_proxy_controller.py: sync() branches ──────────────────────
-from sys_proxy_controller import SystemProxyController
+from sysctl.sys_proxy_controller import SystemProxyController
 
 
 class TestSysProxySyncBranches(unittest.TestCase):
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_sync_applies_when_desired(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (False, "")
         mock_sp.snapshot.return_value = [{"webproxy": {"Enabled": "no"}}]
@@ -188,7 +186,7 @@ class TestSysProxySyncBranches(unittest.TestCase):
         ctrl.sync()
         mock_sp.apply_transaction.assert_called_once()
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_sync_releases_when_not_desired(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (False, "")
         mock_sp.snapshot.return_value = [{"webproxy": {"Enabled": "yes"}}]
@@ -206,7 +204,7 @@ class TestSysProxySyncBranches(unittest.TestCase):
         ctrl.sync()
         mock_sp.release_transaction.assert_called_once()
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_sync_apply_failure_sets_error(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (False, "")
         mock_sp.snapshot.return_value = [{"webproxy": {"Enabled": "no"}}]

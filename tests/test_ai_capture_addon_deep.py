@@ -10,7 +10,7 @@ Seams under test (confirmed):
 """
 import json
 
-import ai_capture_addon as addon
+from capture import ai_capture_addon as addon
 import pytest
 
 

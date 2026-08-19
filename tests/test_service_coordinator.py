@@ -13,7 +13,7 @@ CaptureController 子模块接口不变，但不再通过 ServiceCoordinator 暴
 import unittest
 from unittest.mock import MagicMock, patch
 
-from service_coordinator import ServiceCoordinator, _should_prevent_sleep
+from services.service_coordinator import ServiceCoordinator, _should_prevent_sleep
 
 
 def _make_coordinator():

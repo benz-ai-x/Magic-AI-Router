@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import logging
 
-from proxy import ProxyRuntime, SSHMonitor
-from retry_scheduler import RetryScheduler
-from host_key_flow import HostKeyFlow
-from stats import Stats
+from tunnel.proxy import ProxyRuntime, SSHMonitor
+from tunnel.retry_scheduler import RetryScheduler
+from tunnel.host_key_flow import HostKeyFlow
+from services.stats import Stats
 
 logger = logging.getLogger("magic-proxy.connection")
 

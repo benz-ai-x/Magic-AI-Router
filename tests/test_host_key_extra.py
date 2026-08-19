@@ -5,13 +5,12 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-import host_key
-
+from tunnel import host_key
 _TUNNEL = {"ssh_host": "srv", "ssh_port": 22, "ssh_user": "u"}
 
 
 class TestInspect(unittest.TestCase):
-    @patch("host_key.subprocess.run")
+    @patch("tunnel.host_key.subprocess.run")
     def test_known_host_returns_known_true(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="srv ssh-rsa AAAA...\n")
         # inspect 的分支取决于 known_hosts 是否存在——固定到临时文件，
@@ -19,13 +18,13 @@ class TestInspect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             kh = os.path.join(d, "known_hosts")
             open(kh, "w").close()
-            with patch("host_key.APP_SECURITY_DIR", d), \
-                 patch("host_key.KNOWN_HOSTS_PATH", kh):
+            with patch("tunnel.host_key.APP_SECURITY_DIR", d), \
+                 patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh):
                 known, keys, fps, err = host_key.inspect(_TUNNEL)
         self.assertTrue(known)
         self.assertEqual(err, "")
 
-    @patch("host_key.subprocess.run")
+    @patch("tunnel.host_key.subprocess.run")
     def test_scan_unknown_host_returns_keys_and_fingerprints(self, mock_run):
         # known_hosts 存在但 keygen -F 未命中 → 依次 keyscan / fingerprint
         mock_run.side_effect = [
@@ -36,8 +35,8 @@ class TestInspect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             kh = os.path.join(d, "known_hosts")
             open(kh, "w").close()
-            with patch("host_key.APP_SECURITY_DIR", d), \
-                 patch("host_key.KNOWN_HOSTS_PATH", kh):
+            with patch("tunnel.host_key.APP_SECURITY_DIR", d), \
+                 patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh):
                 known, keys, fps, err = host_key.inspect(_TUNNEL)
         self.assertFalse(known)
         self.assertEqual(err, "")

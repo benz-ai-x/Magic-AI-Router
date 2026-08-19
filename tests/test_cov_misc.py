@@ -12,8 +12,8 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-import balance_usage
-import login_item
+from services import balance_usage
+from sysctl import login_item
 import util
 
 

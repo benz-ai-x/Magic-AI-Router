@@ -7,8 +7,7 @@ uses SecItemAdd/SecItemCopyMatching/SecItemDelete directly.
 import unittest
 from unittest.mock import patch, MagicMock
 
-import keychain
-
+from sysctl import keychain
 _TUNNEL = {"ssh_user": "u", "ssh_host": "h", "ssh_port": 22, "auth_type": "password"}
 
 
@@ -39,7 +38,7 @@ def _mock_security():
 
 
 class TestSetPassword(unittest.TestCase):
-    @patch("keychain.Security", new_callable=_mock_security)
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
     @patch("subprocess.run")
     def test_writes_via_security_framework_without_subprocess(self, mock_run, sec):
         """The password must reach the keychain as data, never as argv."""
@@ -50,19 +49,19 @@ class TestSetPassword(unittest.TestCase):
         self.assertEqual(attrs[sec.kSecAttrAccount], "u@h:22")
         self.assertEqual(attrs[sec.kSecValueData], b"secret")
 
-    @patch("keychain.Security", new_callable=_mock_security)
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
     def test_deletes_existing_entry_before_add(self, sec):
         keychain.set_password(_TUNNEL, "secret")
         self.assertIn(sec.kSecClassGenericPassword,
                       sec.SecItemDelete.call_args[0][0].values())
 
-    @patch("keychain.Security", new_callable=_mock_security)
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
     def test_add_failure_returns_false(self, sec):
         sec.SecItemAdd.return_value = (-1, MagicMock())
         with self.assertLogs("magic-proxy.keychain", level="WARNING"):
             self.assertFalse(keychain.set_password(_TUNNEL, "secret"))
 
-    @patch("keychain.Security", new_callable=_mock_security)
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
     def test_exception_returns_false_without_leaking_password(self, sec):
         sec.SecItemAdd.side_effect = RuntimeError("boom")
         secret = "leak-me-123"
@@ -75,12 +74,12 @@ class TestSetPassword(unittest.TestCase):
 
 
 class TestGetPassword(unittest.TestCase):
-    @patch("keychain.Security", new_callable=_mock_security)
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
     def test_success(self, sec):
         sec.SecItemCopyMatching.return_value = (0, b"mypw")
         self.assertEqual(keychain.get_password(_TUNNEL), "mypw")
 
-    @patch("keychain.Security", new_callable=_mock_security)
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
     def test_not_found_returns_empty(self, sec):
         sec.SecItemCopyMatching.return_value = (-25300, None)  # errSecItemNotFound
         self.assertEqual(keychain.get_password(_TUNNEL), "")
@@ -90,13 +89,13 @@ class TestGetPassword(unittest.TestCase):
 
 
 class TestDeletePassword(unittest.TestCase):
-    @patch("keychain.Security", new_callable=_mock_security)
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
     def test_success(self, sec):
         keychain.delete_password(_TUNNEL)
         self.assertIn(sec.kSecClassGenericPassword,
                       sec.SecItemDelete.call_args[0][0].values())
 
-    @patch("keychain.Security", new_callable=_mock_security)
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
     def test_not_found_is_silent(self, sec):
         sec.SecItemDelete.return_value = -25300
         keychain.delete_password(_TUNNEL)  # should not raise

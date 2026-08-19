@@ -99,8 +99,8 @@ pip install -q -r requirements-dev.txt
 # Generate the menu-bar state icon if missing (Pillow is in the venv).  The
 # production app icon is the approved v2 artwork under assets/icon; the menu-bar
 # state icon is loaded and tinted dynamically by menu_builder.py.
-if [ ! -f MenubarIcon.png ]; then
-    python generate_icon.py
+if [ ! -f assets/MenubarIcon.png ]; then
+    python tools/generate_icon.py
 fi
 
 APP_ICON="icons/magic-ai-router-macos-v2.icns"
@@ -118,33 +118,33 @@ python -m PyInstaller \
     --windowed \
     --name "Magic AI Router" \
     --add-data "build_time.txt:." \
-    --add-data "stats.py:." \
-    --add-data "proxy.py:." \
-    --add-data "config_server.py:." \
-    --add-data "config_ui.html:." \
-    --add-data "agent.md:." \
-    --add-data "webview_window.py:." \
-    --add-data "keychain.py:." \
-    --add-data "host_key.py:." \
-    --add-data "system_proxy.py:." \
-    --add-data "port_check.py:." \
-    --add-data "log_window.py:." \
-    --add-data "capture.py:." \
-    --add-data "capture_store.py:." \
-    --add-data "config.py:." \
-    --add-data "subprocess_monitor.py:." \
-    --add-data "sys_proxy_controller.py:." \
-    --add-data "retry_scheduler.py:." \
-    --add-data "menu_builder.py:." \
-    --add-data "host_key_flow.py:." \
-    --add-data "ca_trust.py:." \
-    --add-data "ai_capture_addon.py:." \
-    --add-data "sleep_blocker.py:." \
-    --add-data "login_item.py:." \
-    --add-data "suanpan_runtime.py:." \
-    --add-data "MenubarIcon.png:." \
-    --add-data "MenubarIcon-gray.png:." \
-    --add-data "MenubarIcon-yellow.png:." \
+    --add-data "services/stats.py:." \
+    --add-data "tunnel/proxy.py:." \
+    --add-data "services/config_server.py:." \
+    --add-data "shellui/config_ui.html:." \
+    --add-data "docs/agent.md:." \
+    --add-data "shellui/webview_window.py:." \
+    --add-data "sysctl/keychain.py:." \
+    --add-data "tunnel/host_key.py:." \
+    --add-data "sysctl/system_proxy.py:." \
+    --add-data "sysctl/port_check.py:." \
+    --add-data "shellui/log_window.py:." \
+    --add-data "capture/capture.py:." \
+    --add-data "capture/capture_store.py:." \
+    --add-data "mpconf/config.py:." \
+    --add-data "tunnel/subprocess_monitor.py:." \
+    --add-data "sysctl/sys_proxy_controller.py:." \
+    --add-data "tunnel/retry_scheduler.py:." \
+    --add-data "shellui/menu_builder.py:." \
+    --add-data "tunnel/host_key_flow.py:." \
+    --add-data "capture/ca_trust.py:." \
+    --add-data "capture/ai_capture_addon.py:." \
+    --add-data "sysctl/sleep_blocker.py:." \
+    --add-data "sysctl/login_item.py:." \
+    --add-data "services/suanpan_runtime.py:." \
+    --add-data "assets/MenubarIcon.png:." \
+    --add-data "assets/MenubarIcon-gray.png:." \
+    --add-data "assets/MenubarIcon-yellow.png:." \
     --add-data "dist-mitmdump/mitmdump:mitmdump" \
     --collect-all suanpan \
     --collect-submodules uvicorn \

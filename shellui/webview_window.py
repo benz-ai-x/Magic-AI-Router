@@ -29,7 +29,7 @@ from AppKit import (
 )
 from Foundation import NSObject, NSBundle, NSURL, NSURLRequest
 
-from bridge_protocol import ACTION_SHOW_OPEN_PANEL, BridgeCore
+from shellui.bridge_protocol import ACTION_SHOW_OPEN_PANEL, BridgeCore
 
 logger = logging.getLogger("magic-proxy.webview")
 

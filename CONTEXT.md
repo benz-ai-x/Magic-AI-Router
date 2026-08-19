@@ -36,15 +36,15 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 ### 设置窗桥接（Settings Window Bridge）
 
-偏好设置窗（WKWebView）内 JS 与原生 Python 之间的消息协议。单一 `bridge` 通道，消息为 `{type, payload}` JSON。协议核心在 `bridge_protocol.py`（纯 Python，可单测）；`webview_window.py` 仅为 ObjC 薄 adapter。
+偏好设置窗（WKWebView）内 JS 与原生 Python 之间的消息协议。单一 `bridge` 通道，消息为 `{type, payload}` JSON。协议核心在 `shellui/bridge_protocol.py`（纯 Python，可单测）；`shellui/webview_window.py` 仅为 ObjC 薄 adapter。
 
 约定：Python 只递数据，绝不命名 JS 的 DOM 选择器、绝不手写 JS 源码（`json.dumps` 是唯一转义层）；dirty 等界面状态以 JS 为真相源，Python 侧仅为镜像，关窗拦截（`windowShouldClose_`）读镜像。
 
 ### 配置存储（ConfigStore）
 
-两个配置文件（`~/.magic-proxy.json` 与 `~/.suanpan.yaml`）路径的唯一权威注册表 + 共享安全写管线，位于 `config_store.py`。所有读取方在调用时从 `PATHS` 注册表取路径——测试只需 `patch.dict(config_store.PATHS)` 单点重定向，任何测试都无法再写真实配置文件。
+两个配置文件（`~/.magic-proxy.json` 与 `~/.suanpan.yaml`）路径的唯一权威注册表 + 共享安全写管线，位于 `mpconf/config_store.py`。所有读取方在调用时从 `PATHS` 注册表取路径——测试只需 `patch.dict(config_store.PATHS)` 单点重定向，任何测试都无法再写真实配置文件。
 
-统一语义：原子写（mkstemp + chmod 0600 + os.replace）；Suanpan 侧另保留覆盖前 `.bak` 备份。配置内容的语义（mp 的 merge/migrate、sp 的 pydantic 校验与密钥掩码）不在此——留在 `config.py` 与 `suanpan/config.py`。
+统一语义：原子写（mkstemp + chmod 0600 + os.replace）；Suanpan 侧另保留覆盖前 `.bak` 备份。配置内容的语义（mp 的 merge/migrate、sp 的 pydantic 校验与密钥掩码）不在此——留在 `mpconf/config.py` 与 `suanpan/config.py`。
 
 ### Suanpan（算盘）
 

@@ -12,8 +12,8 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-import config_store
-from suanpan_runtime import SuanpanRuntime, DEFAULT_LISTEN
+from mpconf import config_store
+from services.suanpan_runtime import SuanpanRuntime, DEFAULT_LISTEN
 
 
 class TestInitialProperties(unittest.TestCase):

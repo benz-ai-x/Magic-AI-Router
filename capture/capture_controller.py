@@ -12,9 +12,9 @@ import shutil
 import sys
 import time
 
-import ca_trust
-import netloc
-from capture_store import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
+from capture import ca_trust
+from mpconf import netloc
+from capture.capture_store import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from util import resource_path as _resource_path, truncate as _truncate
 
 logger = logging.getLogger("magic-proxy.capture_ctrl")
@@ -90,7 +90,7 @@ class CaptureController:
         self._trust_cache = None  # enabled titles never read trust state
         started = self._monitor.start(
             mitmdump_bin=mitmdump_bin,
-            addon_path=_resource_path("ai_capture_addon.py"),
+            addon_path=_resource_path("capture.ai_capture_addon.py"),
             capture_port=cfg.get("capture_port", DEFAULT_CAPTURE_PORT),
             upstream=f"http://{netloc.format_listen('127.0.0.1', int(cfg['http_listen_port']))}",
             capture_dir=cfg.get("capture_dir", DEFAULT_CAPTURE_DIR),

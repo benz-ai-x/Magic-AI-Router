@@ -27,17 +27,15 @@ import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import proxy
-import async_runtime
-import subprocess_monitor
-import sys_proxy_controller
-import system_proxy
-import sleep_blocker
-import retry_scheduler
-import host_key_flow
-import host_key
-
-
+from tunnel import proxy
+from tunnel import async_runtime
+from tunnel import subprocess_monitor
+from sysctl import sys_proxy_controller
+from sysctl import system_proxy
+from sysctl import sleep_blocker
+from tunnel import retry_scheduler
+from tunnel import host_key_flow
+from tunnel import host_key
 # ── proxy.py: limited_client (402-412) ──────────────────────────────
 
 
@@ -303,7 +301,7 @@ class TestSubprocessMonitorStderrCrash(unittest.TestCase):
     """Lines 128-129: exception handler in _read_stderr."""
 
     def test_stderr_reader_crash_is_caught(self):
-        from subprocess_monitor import SubprocessMonitor
+        from tunnel.subprocess_monitor import SubprocessMonitor
 
         class _M(SubprocessMonitor):
             _PROCESS_NAME = "test"
@@ -331,7 +329,7 @@ class TestSubprocessMonitorWaitLogThreadJoin(unittest.TestCase):
     """Line 174: _wait_log_thread.join(timeout=1) when thread is alive."""
 
     def test_wait_log_thread_joins_live_thread(self):
-        from subprocess_monitor import SubprocessMonitor
+        from tunnel.subprocess_monitor import SubprocessMonitor
 
         class _M(SubprocessMonitor):
             _PROCESS_NAME = "test"
@@ -358,7 +356,7 @@ class TestSubprocessMonitorSigkillTimeout(unittest.TestCase):
     """Lines 166-167: blocking stop where SIGKILL + wait also times out."""
 
     def test_sigkill_timeout_logs_warning(self):
-        from subprocess_monitor import SubprocessMonitor
+        from tunnel.subprocess_monitor import SubprocessMonitor
 
         class _M(SubprocessMonitor):
             _PROCESS_NAME = "test"
@@ -434,7 +432,7 @@ class TestSubprocessMonitorReapProcess(unittest.TestCase):
 class TestSubprocessMonitorProbeNotImplemented(unittest.TestCase):
 
     def test_base_probe_ready_raises(self):
-        from subprocess_monitor import SubprocessMonitor
+        from tunnel.subprocess_monitor import SubprocessMonitor
         m = SubprocessMonitor()
         with self.assertRaises(NotImplementedError):
             m._probe_ready(8080)
@@ -448,7 +446,7 @@ class TestSubprocessMonitorNonBlockingStopRealProc(unittest.TestCase):
     thread runs _reap_process to completion."""
 
     def test_non_blocking_stop_terminates_real_subprocess(self):
-        from subprocess_monitor import SubprocessMonitor
+        from tunnel.subprocess_monitor import SubprocessMonitor
 
         class _M(SubprocessMonitor):
             _PROCESS_NAME = "test"
@@ -491,7 +489,7 @@ def _make_ssh(connected=True):
 class TestSyncInvalidPortOn(unittest.TestCase):
     """Lines 85-86: invalid http_listen_port + _on=True."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_invalid_port_when_on_sets_error(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         ssh = _make_ssh()
@@ -509,7 +507,7 @@ class TestSyncInvalidPortOn(unittest.TestCase):
 class TestSyncApplySuccess(unittest.TestCase):
     """Lines 76-83, 89-103, 111-113: happy-path apply."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_apply_success(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         mock_sp.snapshot.return_value = {"Wi-Fi": "snapshot"}
@@ -532,7 +530,7 @@ class TestSyncApplySuccess(unittest.TestCase):
 class TestSyncEmptySnapshot(unittest.TestCase):
     """Lines 94-96: snapshot empty → error + return."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_empty_snapshot_sets_error(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         mock_sp.snapshot.return_value = {}
@@ -553,7 +551,7 @@ class TestSyncEmptySnapshot(unittest.TestCase):
 class TestSyncApplyFailDesiredNone(unittest.TestCase):
     """Lines 104-107: apply fails with desired_state=None."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_apply_fail_desired_none_clears_snapshot(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         mock_sp.snapshot.return_value = {"Wi-Fi": "snapshot"}
@@ -577,7 +575,7 @@ class TestSyncApplyFailDesiredNone(unittest.TestCase):
 class TestSyncApplyFailDesiredNotNone(unittest.TestCase):
     """Lines 108-110: apply fails with desired_state not None → _on=False."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_apply_fail_with_desired_turns_off(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         mock_sp.snapshot.return_value = {"Wi-Fi": "snapshot"}
@@ -599,7 +597,7 @@ class TestSyncApplyFailDesiredNotNone(unittest.TestCase):
 class TestSyncReapplyDifferentTarget(unittest.TestCase):
     """Line 90: already applied with a different target → re-apply."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_reapply_on_target_change(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         mock_sp.apply_transaction.return_value = (
@@ -624,7 +622,7 @@ class TestSyncReapplyDifferentTarget(unittest.TestCase):
 class TestSyncNoOpWhenAppliedSameTarget(unittest.TestCase):
     """Line 90: desired=True, applied=True, same target → neither branch."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_noop_on_same_target(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         ssh = _make_ssh()
@@ -646,7 +644,7 @@ class TestSyncNoOpWhenAppliedSameTarget(unittest.TestCase):
 class TestSyncReleaseSuccess(unittest.TestCase):
     """Lines 116-127: not desired, snapshot exists → release succeeds."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_release_success_clears_state(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         mock_sp.release_transaction.return_value = (True, "")
@@ -671,7 +669,7 @@ class TestSyncReleaseSuccess(unittest.TestCase):
 class TestSyncReleaseFail(unittest.TestCase):
     """Lines 125, 128-129: not desired, snapshot exists → release fails."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_release_fail_logs_warning(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         mock_sp.release_transaction.return_value = (False, "release denied")
@@ -694,7 +692,7 @@ class TestSyncReleaseFail(unittest.TestCase):
 class TestQuitCleanupReleaseFail(unittest.TestCase):
     """Line 137: quit_cleanup release fails → logger.warning."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_quit_cleanup_release_fail_logs(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (True, "")
         mock_sp.release_transaction.return_value = (False, "restore failed")
@@ -801,8 +799,8 @@ class TestRetrySchedulerMarkDueStaleGeneration(unittest.TestCase):
 
 class TestHostKeyFlowBeginReplacementThreadBody(unittest.TestCase):
 
-    @patch("host_key_flow.AppHelper")
-    @patch("host_key_flow.host_key.inspect")
+    @patch("tunnel.host_key_flow.AppHelper")
+    @patch("tunnel.host_key_flow.host_key.inspect")
     def test_begin_replacement_runs_scan_in_thread(self, mock_inspect,
                                                    mock_apphelper):
         """Lines 103-104: don't mock threading.Thread — let it run."""

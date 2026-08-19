@@ -2,7 +2,7 @@
 import time
 import unittest
 
-from retry_scheduler import RetryScheduler
+from tunnel.retry_scheduler import RetryScheduler
 
 
 class TestInitialState(unittest.TestCase):

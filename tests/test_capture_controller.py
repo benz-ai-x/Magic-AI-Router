@@ -10,9 +10,9 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-import capture
-import capture_controller
-from capture_controller import CaptureController
+from capture import capture
+from capture import capture_controller
+from capture.capture_controller import CaptureController
 
 
 def _ctrl(status="stopped", error_msg="", config=None):
@@ -140,16 +140,16 @@ class TestMenuTitle(unittest.TestCase):
         self.assertEqual(ctrl.menu_title(), "抓包模式：异常")
 
     def test_off_and_ca_trusted_shows_plain_off(self):
-        with patch("ca_trust.is_trusted", return_value=True):
+        with patch("capture.ca_trust.is_trusted", return_value=True):
             self.assertEqual(_ctrl(status="stopped").menu_title(), "抓包模式：关")
 
     def test_off_and_ca_not_trusted_shows_hint(self):
-        with patch("ca_trust.is_trusted", return_value=False):
+        with patch("capture.ca_trust.is_trusted", return_value=False):
             self.assertEqual(_ctrl(status="stopped").menu_title(), "抓包模式：关（需信任证书）")
 
     def test_does_not_check_ca_trust_while_enabled(self):
         ctrl = _ctrl(status="running"); ctrl._enabled = True
-        with patch("ca_trust.is_trusted") as is_trusted:
+        with patch("capture.ca_trust.is_trusted") as is_trusted:
             ctrl.menu_title()
         is_trusted.assert_not_called()
 
@@ -161,7 +161,7 @@ class TestTrustCaching(unittest.TestCase):
 
     def test_repeated_menu_title_checks_trust_once(self):
         ctrl = _ctrl(status="stopped")
-        with patch("ca_trust.is_trusted", return_value=False) as is_trusted:
+        with patch("capture.ca_trust.is_trusted", return_value=False) as is_trusted:
             ctrl.menu_title()
             ctrl.menu_title()
             ctrl.menu_title()
@@ -169,7 +169,7 @@ class TestTrustCaching(unittest.TestCase):
 
     def test_cache_expires_after_ttl(self):
         ctrl = _ctrl(status="stopped")
-        with patch("ca_trust.is_trusted", return_value=False) as is_trusted, \
+        with patch("capture.ca_trust.is_trusted", return_value=False) as is_trusted, \
              patch.object(capture_controller.time, "monotonic") as mono:
             mono.return_value = 1000.0
             ctrl.menu_title()
@@ -179,7 +179,7 @@ class TestTrustCaching(unittest.TestCase):
 
     def test_trust_result_change_reflected_after_expiry(self):
         ctrl = _ctrl(status="stopped")
-        with patch("ca_trust.is_trusted", side_effect=[False, True]) as is_trusted, \
+        with patch("capture.ca_trust.is_trusted", side_effect=[False, True]) as is_trusted, \
              patch.object(capture_controller.time, "monotonic") as mono:
             mono.return_value = 0.0
             self.assertEqual(ctrl.menu_title(), "抓包模式：关（需信任证书）")
@@ -189,7 +189,7 @@ class TestTrustCaching(unittest.TestCase):
 
     def test_enable_invalidates_cache(self):
         ctrl = _ctrl(status="stopped")
-        with patch("ca_trust.is_trusted", return_value=False) as is_trusted, \
+        with patch("capture.ca_trust.is_trusted", return_value=False) as is_trusted, \
              patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
              patch.object(capture_controller, "_resource_path", return_value="/x/addon.py"):
             ctrl.menu_title()  # populates cache

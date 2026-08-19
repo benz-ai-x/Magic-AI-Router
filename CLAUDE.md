@@ -49,36 +49,55 @@ bash notarize.sh
 ## 架构
 
 ```
-app.py ── 编排器：__init__ + _on_tick + 菜单回调
-  ├── config.py ── 配置 I/O（load/save/merge/migrate）；http_listen_port 字段 + 读时兼容旧 "host:port"
-  ├── config_store.py ── 路径注册表 PATHS + 原子写管线（mkstemp+chmod 0600+os.replace）；所有托管配置文件的唯一安全写入口
-  ├── netloc.py ── host:port 解析/格式化/loopback 校验的唯一所有者
-  ├── provider_auth.py ── 供应商认证纯逻辑（resolve_api_key + build_outbound_headers）
-  ├── proxy.py ── asyncio HTTP→SOCKS5 代理 + SSHMonitor + ProxyRuntime
-  ├── async_runtime.py ── daemon 线程 + asyncio 循环 + 代际计数停止（ProxyRuntime/Suanpan 共用）
-  ├── connection_coordinator.py ── SSH 连接/重试/host-key 流程编排
-  ├── service_coordinator.py ── tick/sync_sleep/stop_all 编排（瘦身后；子模块由 app.py 直接持有）
-  ├── subprocess_monitor.py ── 子进程生命周期基类（SSHMonitor/CaptureMonitor 继承）
-  ├── menu_builder.py ── 菜单栏 UI 构建 + 状态图标
-  ├── sys_proxy_controller.py ── 系统代理收敛状态机
-  ├── retry_scheduler.py ── SSH 重试退避调度
-  ├── host_key_flow.py ── SSH 主机密钥信任流程
-  ├── host_key.py ── SSH known_hosts 管理
-  ├── config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token + body 上限）
-  ├── balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围 / 缓存 / 路由来源）+ 供应商连通性探测
-  ├── config_ui.html ── 自包含 Web 配置面板（三层架构：LAYER 1 纯逻辑可 node:test / VIEWS 注册表 / 渲染层）
-  ├── bridge_protocol.py ── 设置窗 JS↔Python 消息协议（纯 Python 核心，可单测）
-  ├── webview_window.py ── WKWebView 窗口（ObjC 薄 adapter）
-  ├── suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
-  ├── capture.py ── mitmdump 子进程管理（抓包模式）
-  ├── capture_controller.py ── 抓包启停 + 信任缓存控制
-  ├── capture_store.py ── 抓包目录/文件管理（跨进程共享）
-  ├── ai_capture_addon.py ── mitmproxy addon：6 家 AI 请求抽取落 JSONL
-  ├── claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json，经 config_store.atomic_write；env 契约见 ADR-024）
-  ├── ca_trust.py ── 根 CA 信任检测 + 引导窗
-  ├── system_proxy.py ── networksetup 包装：事务式 + 崩溃恢复
-  ├── util.py ── resource_path（PyInstaller _MEIPASS）+ truncate + build_stamp + version_display
-  ├── 其他小模块：stats / keychain / port_check / sleep_blocker / login_item / chromium_proxy / log_window / generate_icon / mitmdump_entry
+app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有）
+util.py ── resource_path（frozen 平铺 / dev 按域包子目录查找）+ truncate + build_stamp + version_display
+mitmdump_entry.py ── 抓包构建入口（mitmproxy mitmdump 包装）
+
+mpconf/ ── 配置栈
+  config.py ── 配置 I/O（load/save/merge/migrate）；http_listen_port 字段 + 读时兼容旧 "host:port"
+  config_store.py ── 路径注册表 PATHS + 原子写管线（mkstemp+chmod 0600+os.replace）；所有托管配置文件的唯一安全写入口
+  netloc.py ── host:port 解析/格式化/loopback 校验的唯一所有者
+  provider_auth.py ── 供应商认证纯逻辑（resolve_api_key + build_outbound_headers）
+
+tunnel/ ── SSH 隧道核心
+  proxy.py ── asyncio HTTP→SOCKS5 代理 + SSHMonitor + ProxyRuntime
+  async_runtime.py ── daemon 线程 + asyncio 循环 + 代际计数停止（ProxyRuntime/Suanpan 共用）
+  connection_coordinator.py ── SSH 连接/重试/host-key 流程编排
+  subprocess_monitor.py ── 子进程生命周期基类（SSHMonitor/CaptureMonitor 继承）
+  retry_scheduler.py ── SSH 重试退避调度
+  host_key.py ── SSH known_hosts 管理
+  host_key_flow.py ── SSH 主机密钥信任流程
+
+shellui/ ── 界面
+  menu_builder.py ── 菜单栏 UI 构建 + 状态图标
+  webview_window.py ── WKWebView 窗口（ObjC 薄 adapter）
+  log_window.py ── 日志窗
+  bridge_protocol.py ── 设置窗 JS↔Python 消息协议（纯 Python 核心，可单测）
+  config_ui.html ── 自包含 Web 配置面板（三层架构：LAYER 1 纯逻辑可 node:test / VIEWS 注册表 / 渲染层）
+
+capture/ ── 抓包
+  capture.py ── mitmdump 子进程管理（抓包模式）
+  capture_controller.py ── 抓包启停 + 信任缓存控制
+  capture_store.py ── 抓包目录/文件管理（跨进程共享）
+  ai_capture_addon.py ── mitmproxy addon：6 家 AI 请求抽取落 JSONL
+  ca_trust.py ── 根 CA 信任检测 + 引导窗
+  chromium_proxy.py ── Chromium 启动代理配置
+
+sysctl/ ── 系统集成
+  system_proxy.py ── networksetup 包装：事务式 + 崩溃恢复
+  sys_proxy_controller.py ── 系统代理收敛状态机
+  sleep_blocker.py ── 防睡眠
+  login_item.py ── 登录启动 LaunchAgent（bundle ID 见 build.sh）
+  port_check.py ── 端口占用检测
+  keychain.py ── macOS Keychain 读写
+
+services/ ── 服务
+  config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token + body 上限）
+  suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
+  claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json，经 config_store.atomic_write；env 契约见 ADR-024）
+  service_coordinator.py ── tick/sync_sleep/stop_all 编排
+  balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围 / 缓存 / 路由来源）+ 供应商连通性探测
+  stats.py ── 运行统计
 
 suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM 后端）
   config.py ── Pydantic 配置 schema + YAML 加载/回写 + API key 掩码契约（api_key_set 布尔，真实 key 不出进程；见 ADR-023）

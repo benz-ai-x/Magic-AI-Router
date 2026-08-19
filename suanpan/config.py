@@ -8,13 +8,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-import netloc
+from mpconf import netloc
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from provider_auth import HOP_HEADERS as _HOP_HEADERS
-from provider_auth import build_outbound_headers as _build_outbound
-from provider_auth import resolve_api_key as _resolve_key
+from mpconf.provider_auth import HOP_HEADERS as _HOP_HEADERS
+from mpconf.provider_auth import build_outbound_headers as _build_outbound
+from mpconf.provider_auth import resolve_api_key as _resolve_key
 
 
 class ProviderConfig(BaseModel):
@@ -204,7 +204,7 @@ def save_config_dict(data: dict, path: Path | str) -> tuple[bool, str | None]:
     except Exception as e:
         return False, f"Suanpan 配置校验失败: {e}"
     # Atomic write (0600 — the file holds API keys) with pre-write .bak backup.
-    from config_store import atomic_write
+    from mpconf.config_store import atomic_write
     if not atomic_write(str(path), dump_config(config), backup=True):
         return False, "配置文件写入失败（详见日志）"
     return True, None

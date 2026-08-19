@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import logging
 
-import sleep_blocker
-from capture import CaptureMonitor
-from capture_controller import CaptureController
-from suanpan_runtime import SuanpanRuntime
-from sys_proxy_controller import SystemProxyController
+from sysctl import sleep_blocker
+from capture.capture import CaptureMonitor
+from capture.capture_controller import CaptureController
+from services.suanpan_runtime import SuanpanRuntime
+from sysctl.sys_proxy_controller import SystemProxyController
 
 logger = logging.getLogger("magic-proxy.service")
 

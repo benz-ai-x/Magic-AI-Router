@@ -11,8 +11,8 @@ until the user installs them (``pip3 install -r requirements-dev.txt``).
 import logging
 import os
 
-from async_runtime import AsyncRuntime
-from config_store import DEFAULT_PATHS, get_path
+from tunnel.async_runtime import AsyncRuntime
+from mpconf.config_store import DEFAULT_PATHS, get_path
 
 logger = logging.getLogger("magic-proxy.suanpan")
 
@@ -98,7 +98,7 @@ class SuanpanRuntime:
         config_path_str = self._config_path
 
         def factory(loop):
-            import netloc
+            from mpconf import netloc
             config = load_config(config_path_str)
             app = create_app(config, config_path=config_path_str)
             try:

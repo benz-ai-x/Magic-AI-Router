@@ -9,11 +9,11 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from stats import Stats
-import host_key
-import netloc
-from subprocess_monitor import SubprocessMonitor
-from async_runtime import AsyncRuntime
+from services.stats import Stats
+from tunnel import host_key
+from mpconf import netloc
+from tunnel.subprocess_monitor import SubprocessMonitor
+from tunnel.async_runtime import AsyncRuntime
 
 logger = logging.getLogger("magic-proxy.proxy")
 

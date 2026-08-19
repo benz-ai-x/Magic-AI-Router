@@ -12,10 +12,9 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
-import ai_capture_addon as addon
-import capture
-import capture_store
-
+from capture import ai_capture_addon as addon
+from capture import capture
+from capture import capture_store
 # Save references to real implementations before any autouse fixture mocks them.
 _REAL_HOME_DIR = capture_store._home_dir
 

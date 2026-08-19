@@ -407,23 +407,21 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
 
 # ── config_server.py / config_store.py: _write_mp + sp save ────────
 
-import config_server
-import config_store
-
-
+from services import config_server
+from mpconf import config_store
 class TestWriteMp(unittest.TestCase):
-    @patch("config_server.keychain")
-    @patch("config_server.save_config")
-    @patch("config_server.merge_config")
+    @patch("services.config_server.keychain")
+    @patch("services.config_server.save_config")
+    @patch("services.config_server.merge_config")
     def test_write_success(self, mock_merge, mock_save, mock_kc):
         mock_merge.return_value = {"tunnels": []}
         mock_save.return_value = True
         errors = config_server._write_mp({"tunnels": []})
         self.assertEqual(errors, [])
 
-    @patch("config_server.keychain")
-    @patch("config_server.save_config")
-    @patch("config_server.merge_config")
+    @patch("services.config_server.keychain")
+    @patch("services.config_server.save_config")
+    @patch("services.config_server.merge_config")
     def test_write_keychain_password(self, mock_merge, mock_save, mock_kc):
         mock_merge.return_value = {"tunnels": [{"auth_type": "password", "ssh_host": "h"}]}
         mock_save.return_value = True
@@ -433,9 +431,9 @@ class TestWriteMp(unittest.TestCase):
         mock_kc.set_password.assert_called_once()
         self.assertEqual(errors, [])
 
-    @patch("config_server.keychain")
-    @patch("config_server.save_config")
-    @patch("config_server.merge_config")
+    @patch("services.config_server.keychain")
+    @patch("services.config_server.save_config")
+    @patch("services.config_server.merge_config")
     def test_keychain_failure_reports_error(self, mock_merge, mock_save, mock_kc):
         mock_merge.return_value = {"tunnels": []}
         mock_save.return_value = True
@@ -521,9 +519,7 @@ class TestMainHandlers(unittest.TestCase):
 
 # ── host_key.py: accept + replace with real files ─────────────────
 
-import host_key
-
-
+from tunnel import host_key
 class TestHostKeyAccept(unittest.TestCase):
     def test_accept_empty_returns_false(self):
         self.assertFalse(host_key.accept(""))
@@ -536,7 +532,7 @@ class TestHostKeyReplace(unittest.TestCase):
 
 # ── suanpan_runtime.py: start error paths ──────────────────────────
 
-from suanpan_runtime import SuanpanRuntime
+from services.suanpan_runtime import SuanpanRuntime
 
 
 class TestSuanpanRuntimeImport(unittest.TestCase):

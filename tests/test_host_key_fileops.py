@@ -4,17 +4,15 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import host_key
-
-
+from tunnel import host_key
 class TestHostKeyAcceptWithFiles(unittest.TestCase):
     def test_accept_writes_keys_to_known_hosts(self):
         with tempfile.TemporaryDirectory() as d:
             sec_dir = os.path.join(d, "security")
             os.makedirs(sec_dir)
             kh_path = os.path.join(sec_dir, "known_hosts")
-            with patch("host_key.APP_SECURITY_DIR", sec_dir), \
-                 patch("host_key.KNOWN_HOSTS_PATH", kh_path):
+            with patch("tunnel.host_key.APP_SECURITY_DIR", sec_dir), \
+                 patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh_path):
                 result = host_key.accept("[test]:22 ssh-rsa AAAATEST\n")
             self.assertTrue(result)
             with open(kh_path) as f:
@@ -28,8 +26,8 @@ class TestHostKeyAcceptWithFiles(unittest.TestCase):
             kh_path = os.path.join(sec_dir, "known_hosts")
             with open(kh_path, "w") as f:
                 f.write("existing line\n")
-            with patch("host_key.APP_SECURITY_DIR", sec_dir), \
-                 patch("host_key.KNOWN_HOSTS_PATH", kh_path):
+            with patch("tunnel.host_key.APP_SECURITY_DIR", sec_dir), \
+                 patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh_path):
                 host_key.accept("[test]:22 ssh-rsa NEWKEY\n")
             with open(kh_path) as f:
                 lines = f.readlines()
@@ -46,8 +44,8 @@ class TestHostKeyReplaceWithFiles(unittest.TestCase):
             kh_path = os.path.join(sec_dir, "known_hosts")
             with open(kh_path, "w") as f:
                 f.write("[other]:22 ssh-rsa OTHERKEY\n")
-            with patch("host_key.APP_SECURITY_DIR", sec_dir), \
-                 patch("host_key.KNOWN_HOSTS_PATH", kh_path):
+            with patch("tunnel.host_key.APP_SECURITY_DIR", sec_dir), \
+                 patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh_path):
                 result = host_key.replace(
                     {"ssh_host": "srv", "ssh_port": 22},
                     "[srv]:22 ssh-rsa NEWKEY\n")
@@ -62,8 +60,8 @@ class TestHostKeyReplaceWithFiles(unittest.TestCase):
             sec_dir = os.path.join(d, "security")
             os.makedirs(sec_dir)
             kh_path = os.path.join(sec_dir, "known_hosts")
-            with patch("host_key.APP_SECURITY_DIR", sec_dir), \
-                 patch("host_key.KNOWN_HOSTS_PATH", kh_path):
+            with patch("tunnel.host_key.APP_SECURITY_DIR", sec_dir), \
+                 patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh_path):
                 result = host_key.replace(
                     {"ssh_host": "newhost", "ssh_port": 22},
                     "[newhost]:22 ssh-rsa NEWKEY\n")
@@ -77,8 +75,8 @@ class TestHostKeyEnsureStorage(unittest.TestCase):
     def test_ensure_storage_creates_dir(self):
         with tempfile.TemporaryDirectory() as d:
             sec_dir = os.path.join(d, "newsec")
-            with patch("host_key.APP_SECURITY_DIR", sec_dir), \
-                 patch("host_key.KNOWN_HOSTS_PATH", os.path.join(sec_dir, "known_hosts")):
+            with patch("tunnel.host_key.APP_SECURITY_DIR", sec_dir), \
+                 patch("tunnel.host_key.KNOWN_HOSTS_PATH", os.path.join(sec_dir, "known_hosts")):
                 host_key._ensure_storage()
             self.assertTrue(os.path.isdir(sec_dir))
 
@@ -91,14 +89,14 @@ class TestHostKeyInspectDetailed(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         kh = os.path.join(self._tmp.name, "known_hosts")
         open(kh, "w").close()
-        self._dir_patch = patch("host_key.APP_SECURITY_DIR", self._tmp.name)
-        self._kh_patch = patch("host_key.KNOWN_HOSTS_PATH", kh)
+        self._dir_patch = patch("tunnel.host_key.APP_SECURITY_DIR", self._tmp.name)
+        self._kh_patch = patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh)
         self._dir_patch.start()
         self._kh_patch.start()
         self.addCleanup(self._kh_patch.stop)
         self.addCleanup(self._dir_patch.stop)
 
-    @patch("host_key.subprocess.run")
+    @patch("tunnel.host_key.subprocess.run")
     def test_inspect_known_host(self, mock_run):
         mock_run.return_value = type("R", (), {
             "returncode": 0, "stdout": "[srv]:22 ssh-rsa AAAA\n", "stderr": ""
@@ -106,7 +104,7 @@ class TestHostKeyInspectDetailed(unittest.TestCase):
         known, keys, fps, err = host_key.inspect({"ssh_host": "srv", "ssh_port": 22})
         self.assertTrue(known)
 
-    @patch("host_key.subprocess.run")
+    @patch("tunnel.host_key.subprocess.run")
     def test_inspect_scan_error(self, mock_run):
         mock_run.side_effect = [
             type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})(),  # not found
@@ -116,7 +114,7 @@ class TestHostKeyInspectDetailed(unittest.TestCase):
         self.assertFalse(known)
         self.assertIn("扫描", err)
 
-    @patch("host_key.subprocess.run")
+    @patch("tunnel.host_key.subprocess.run")
     def test_inspect_fingerprint_error(self, mock_run):
         mock_run.side_effect = [
             type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})(),  # not found

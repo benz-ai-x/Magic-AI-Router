@@ -4,9 +4,7 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock
 
-import system_proxy
-
-
+from sysctl import system_proxy
 def _completed(stdout="", stderr="", returncode=0):
     cp = MagicMock(spec=subprocess.CompletedProcess)
     cp.stdout = stdout
@@ -214,13 +212,13 @@ class TestWriteRemoveJournal(unittest.TestCase):
         """_write_journal delegates to config_store.atomic_write; when that
         fails (returns False), _write_journal surfaces False instead of
         raising — caller (apply_transaction) treats False as the error."""
-        with patch("system_proxy.config_store.atomic_write", return_value=False) as aw:
+        with patch("sysctl.system_proxy.config_store.atomic_write", return_value=False) as aw:
             ok = system_proxy._write_journal({}, {})
         self.assertFalse(ok)
         aw.assert_called_once()
 
     def test_write_journal_success_returns_true(self):
-        with patch("system_proxy.config_store.atomic_write", return_value=True):
+        with patch("sysctl.system_proxy.config_store.atomic_write", return_value=True):
             self.assertTrue(system_proxy._write_journal({}, {}))
 
     def test_write_journal_serializes_payload(self):
@@ -232,7 +230,7 @@ class TestWriteRemoveJournal(unittest.TestCase):
             captured["text"] = text
             return True
 
-        with patch("system_proxy.config_store.atomic_write",
+        with patch("sysctl.system_proxy.config_store.atomic_write",
                    side_effect=fake_atomic_write):
             system_proxy._write_journal(
                 {"Wi-Fi": {"bypass": []}},

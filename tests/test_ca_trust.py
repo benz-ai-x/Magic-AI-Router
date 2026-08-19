@@ -14,9 +14,7 @@ import subprocess
 import unittest
 from unittest.mock import patch, MagicMock
 
-import ca_trust
-
-
+from capture import ca_trust
 def _completed(stdout="", stderr="", returncode=0):
     cp = MagicMock(spec=subprocess.CompletedProcess)
     cp.stdout = stdout

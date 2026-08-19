@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 
 # ── connection_coordinator.py: tick/check_ssh error paths ─────────
-from connection_coordinator import ConnectionCoordinator
+from tunnel.connection_coordinator import ConnectionCoordinator
 
 
 class TestConnCoordTickPaths(unittest.TestCase):
@@ -37,12 +37,12 @@ from unittest.mock import PropertyMock
 
 
 # ── service_coordinator.py: tick/stop_all paths ───────────────────
-from service_coordinator import ServiceCoordinator
+from services.service_coordinator import ServiceCoordinator
 
 
 class TestSvcCoordPaths(unittest.TestCase):
     def _make(self):
-        with patch("sys_proxy_controller.system_proxy") as mock_sp:
+        with patch("sysctl.sys_proxy_controller.system_proxy") as mock_sp:
             mock_sp.recover_stale_transaction.return_value = (False, "")
             return ServiceCoordinator(
                 config_fn=lambda: {"prevent_sleep": False},
@@ -70,9 +70,7 @@ class TestSvcCoordPaths(unittest.TestCase):
 
 
 # ── config.py: _migrate password + save error ──────────────────────
-import config
-
-
+from mpconf import config
 class TestConfigMigratePassword(unittest.TestCase):
     def test_migrate_preserves_tunnel_config(self):
         old = {"tunnels": [{"ssh_host": "s", "auth_type": "password"}]}
@@ -87,30 +85,26 @@ class TestConfigSaveOSError(unittest.TestCase):
 
 
 # ── keychain.py: OSError paths ─────────────────────────────────────
-import keychain
-
-
+from sysctl import keychain
 class TestKeychainOSError(unittest.TestCase):
-    @patch("keychain.Security.SecItemAdd", side_effect=OSError("keychain busy"))
+    @patch("sysctl.keychain.Security.SecItemAdd", side_effect=OSError("keychain busy"))
     def test_set_password_oserror(self, _):
         result = keychain.set_password({"ssh_host": "h"}, "pw")
         self.assertFalse(result)
 
-    @patch("keychain.Security.SecItemCopyMatching",
+    @patch("sysctl.keychain.Security.SecItemCopyMatching",
            side_effect=OSError("keychain busy"))
     def test_get_password_oserror(self, _):
         result = keychain.get_password({"ssh_host": "h"})
         self.assertEqual(result, "")
 
-    @patch("keychain.Security.SecItemDelete", side_effect=OSError("keychain busy"))
+    @patch("sysctl.keychain.Security.SecItemDelete", side_effect=OSError("keychain busy"))
     def test_delete_password_oserror(self, _):
         keychain.delete_password({"ssh_host": "h"})  # should not raise
 
 
 # ── login_item.py: error paths ─────────────────────────────────────
-import login_item
-
-
+from sysctl import login_item
 class TestLoginItemErrors(unittest.TestCase):
     @patch("subprocess.run")
     def test_set_launch_at_login_failure(self, mock_run):
@@ -120,9 +114,7 @@ class TestLoginItemErrors(unittest.TestCase):
 
 
 # ── port_check.py: error paths ─────────────────────────────────────
-import port_check
-
-
+from sysctl import port_check
 class TestPortCheckEdges(unittest.TestCase):
     def test_who_owns_free_port(self):
         with patch("subprocess.run") as mock_run:
@@ -145,9 +137,7 @@ class TestPortCheckEdges(unittest.TestCase):
 
 
 # ── balance_usage.py: edges ────────────────────────────────────────
-import balance_usage
-
-
+from services import balance_usage
 class TestBalanceEdges(unittest.TestCase):
     def test_resolve_key_none_returns_none(self):
         p = {"api_key": None}
@@ -160,7 +150,7 @@ class TestBalanceEdges(unittest.TestCase):
 
 
 # ── async_runtime.py: error paths ──────────────────────────────────
-from async_runtime import AsyncRuntime
+from tunnel.async_runtime import AsyncRuntime
 
 
 class TestAsyncRuntimeErrors(unittest.TestCase):
@@ -176,7 +166,7 @@ class TestAsyncRuntimeErrors(unittest.TestCase):
 
 
 # ── capture.py: states ─────────────────────────────────────────────
-from capture import CaptureMonitor
+from capture.capture import CaptureMonitor
 
 
 class TestCaptureMonitorStates(unittest.TestCase):

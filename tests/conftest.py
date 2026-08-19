@@ -10,9 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-import config_store
-
-
+from mpconf import config_store
 @pytest.fixture(autouse=True, scope="session")
 def _sandbox_real_config_paths(tmp_path_factory):
     sandbox = tmp_path_factory.mktemp("real-config-sandbox")

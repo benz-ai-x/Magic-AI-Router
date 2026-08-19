@@ -11,7 +11,7 @@ the buffer's monotonic ``total`` instead; these tests pin that behavior.
 import logging
 import unittest
 
-from log_window import LogBuffer, LogWindow
+from shellui.log_window import LogBuffer, LogWindow
 
 
 class _FakeScroller:

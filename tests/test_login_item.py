@@ -8,9 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import login_item
-
-
+from sysctl import login_item
 class TestLaunchAtLoginLaunchAgent(unittest.TestCase):
     def setUp(self):
         self._orig_frozen = login_item.FROZEN

@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import MagicMock
 
-from menu_builder import MenuBuilder, MenuState
+from shellui.menu_builder import MenuBuilder, MenuState
 
 
 def _state(**overrides):

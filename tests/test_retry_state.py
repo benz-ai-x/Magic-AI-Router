@@ -1,7 +1,7 @@
 """Tests for RetryScheduler (extracted from MagicProxyApp)."""
 from unittest.mock import MagicMock, patch
 
-from retry_scheduler import RetryScheduler
+from tunnel.retry_scheduler import RetryScheduler
 
 
 def test_repeated_error_schedules_only_one_timer():

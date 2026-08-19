@@ -6,7 +6,7 @@ methods delegate) and balance_usage.py (dict path, no pydantic needed).
 import os
 import unittest
 
-from provider_auth import build_outbound_headers, resolve_api_key
+from mpconf.provider_auth import build_outbound_headers, resolve_api_key
 
 
 class TestResolveApiKey(unittest.TestCase):

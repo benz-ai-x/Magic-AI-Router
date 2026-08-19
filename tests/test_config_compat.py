@@ -9,9 +9,7 @@ import os
 import tempfile
 import unittest
 
-import config
-
-
+from mpconf import config
 class TestTerminalEnvsDropped(unittest.TestCase):
     def _old_cfg(self):
         return {

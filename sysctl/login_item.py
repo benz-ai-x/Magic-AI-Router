@@ -21,8 +21,7 @@ import plistlib
 import subprocess
 import sys
 
-import config_store
-
+from mpconf import config_store
 logger = logging.getLogger("magic-proxy.login_item")
 
 # PyInstaller sets sys._MEIPASS inside a frozen .app; its absence means we're

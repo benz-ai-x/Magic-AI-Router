@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const HTML = readFileSync(path.join(ROOT, "config_ui.html"), "utf8");
+const HTML = readFileSync(path.join(ROOT, "shellui", "config_ui.html"), "utf8");
 
 function tokens(css) {
   const out = {};

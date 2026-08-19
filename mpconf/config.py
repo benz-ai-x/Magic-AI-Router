@@ -10,10 +10,10 @@ import json
 import logging
 import os
 
-import keychain
-import netloc
-from capture_store import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
-from config_store import DEFAULT_PATHS, atomic_write, get_path
+from sysctl import keychain
+from mpconf import netloc
+from capture.capture_store import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
+from mpconf.config_store import DEFAULT_PATHS, atomic_write, get_path
 
 logger = logging.getLogger("magic-proxy.config")
 

@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import sleep_blocker
-from service_coordinator import _should_prevent_sleep
+from sysctl import sleep_blocker
+from services.service_coordinator import _should_prevent_sleep
 
 
 @pytest.mark.parametrize(
@@ -32,7 +32,7 @@ def _fake_proc():
 
 def test_acquire_starts_caffeinate_with_is_and_w_pid():
     blocker = sleep_blocker.CaffeinateBlocker(bin_path="/usr/bin/caffeinate")
-    with patch("sleep_blocker.subprocess.Popen") as popen:
+    with patch("sysctl.sleep_blocker.subprocess.Popen") as popen:
         popen.return_value = _fake_proc()
         blocker.acquire()
     args = popen.call_args[0][0]
@@ -45,7 +45,7 @@ def test_acquire_starts_caffeinate_with_is_and_w_pid():
 
 def test_acquire_idempotent_when_running():
     blocker = sleep_blocker.CaffeinateBlocker()
-    with patch("sleep_blocker.subprocess.Popen") as popen:
+    with patch("sysctl.sleep_blocker.subprocess.Popen") as popen:
         popen.return_value = _fake_proc()
         blocker.acquire()
         blocker.acquire()  # second call must not spawn again
@@ -54,7 +54,7 @@ def test_acquire_idempotent_when_running():
 
 def test_acquire_failure_is_non_fatal_and_latches():
     blocker = sleep_blocker.CaffeinateBlocker()
-    with patch("sleep_blocker.subprocess.Popen", side_effect=OSError("nope")):
+    with patch("sysctl.sleep_blocker.subprocess.Popen", side_effect=OSError("nope")):
         blocker.acquire()  # logs once, stays not-running
         blocker.acquire()  # second failure must not log again (latched)
     assert blocker.is_running is False
@@ -63,7 +63,7 @@ def test_acquire_failure_is_non_fatal_and_latches():
 def test_release_terminates_running_proc():
     blocker = sleep_blocker.CaffeinateBlocker()
     proc = _fake_proc()
-    with patch("sleep_blocker.subprocess.Popen", return_value=proc):
+    with patch("sysctl.sleep_blocker.subprocess.Popen", return_value=proc):
         blocker.acquire()
     blocker.release()
     proc.terminate.assert_called_once()
@@ -78,7 +78,7 @@ def test_release_idempotent_when_not_running():
 
 def test_release_clears_running_state():
     blocker = sleep_blocker.CaffeinateBlocker()
-    with patch("sleep_blocker.subprocess.Popen", return_value=_fake_proc()):
+    with patch("sysctl.sleep_blocker.subprocess.Popen", return_value=_fake_proc()):
         blocker.acquire()
     assert blocker.is_running is True
     blocker.release()

@@ -2,13 +2,13 @@
 omit =
     # PyObjC/rumps UI — requires live NSRunLoop, untestable in CI
     app.py
-    menu_builder.py
-    webview_window.py
-    log_window.py
-    ca_trust.py
+    shellui/menu_builder.py
+    shellui/webview_window.py
+    shellui/log_window.py
+    capture/ca_trust.py
     # Trivial entry points
     mitmdump_entry.py
-    generate_icon.py
+    tools/generate_icon.py
     suanpan/__main__.py
     # Test files themselves
     tests/*

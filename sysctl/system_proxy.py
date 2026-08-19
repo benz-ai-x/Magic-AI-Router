@@ -10,8 +10,7 @@ import json
 import os
 import subprocess
 
-import config_store
-
+from mpconf import config_store
 logger = logging.getLogger("magic-proxy.system_proxy")
 
 DEFAULT_BYPASS = ["*.local", "169.254/16", "127.0.0.1", "localhost"]

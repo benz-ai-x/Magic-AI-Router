@@ -3,9 +3,7 @@ import subprocess
 import unittest
 from unittest.mock import patch, MagicMock
 
-import sleep_blocker
-
-
+from sysctl import sleep_blocker
 class TestCaffeinateBlocker(unittest.TestCase):
     def test_not_running_on_init(self):
         b = sleep_blocker.CaffeinateBlocker()

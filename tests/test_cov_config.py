@@ -17,12 +17,12 @@ import unittest
 from http.client import HTTPConnection
 from unittest.mock import MagicMock, patch
 
-import bridge_protocol
-import capture_controller
-import claude_code_setup
-import config
-import config_server
-from capture_controller import CaptureController
+from shellui import bridge_protocol
+from capture import capture_controller
+from services import claude_code_setup
+from mpconf import config
+from services import config_server
+from capture.capture_controller import CaptureController
 
 
 # ── config_server helpers ──────────────────────────────────────────────
@@ -368,11 +368,11 @@ class TestSetupListenResolution(unittest.TestCase):
         """setup() resolves listen via config_store.suanpan_listen()."""
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("claude_code_setup.config_store.suanpan_listen",
+            with patch("services.claude_code_setup.config_store.suanpan_listen",
                        return_value="127.0.0.1:8888"), \
-                 patch("claude_code_setup.config_store.sp_load_raw",
+                 patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={}), \
-                 patch.dict("config_store.PATHS",
+                 patch.dict("mpconf.config_store.PATHS",
                             {"claude_settings": settings_path}):
                 result = claude_code_setup.setup()
             with open(settings_path) as f:
@@ -388,9 +388,9 @@ class TestSetupFallbackDefaultListen(unittest.TestCase):
         PATHS["sp"] doesn't exist), giving 127.0.0.1:9527."""
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={}), \
-                 patch.dict("config_store.PATHS",
+                 patch.dict("mpconf.config_store.PATHS",
                             {"claude_settings": settings_path}):
                 result = claude_code_setup.setup()
             self.assertTrue(result["ok"])
@@ -406,11 +406,11 @@ class TestSetupAtomicWriteFailure(unittest.TestCase):
         """Line 97: atomic_write returns False → action 'failed'."""
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={}), \
-                 patch.dict("config_store.PATHS",
+                 patch.dict("mpconf.config_store.PATHS",
                             {"claude_settings": settings_path}), \
-                 patch("claude_code_setup.config_store.atomic_write",
+                 patch("services.claude_code_setup.config_store.atomic_write",
                        return_value=False):
                 result = claude_code_setup.setup()
         self.assertFalse(result["ok"])

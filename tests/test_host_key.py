@@ -2,9 +2,7 @@ import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import host_key
-
-
+from tunnel import host_key
 def _cp(returncode=0, stdout="", stderr=""):
     cp = MagicMock(spec=subprocess.CompletedProcess)
     cp.returncode = returncode

@@ -23,8 +23,7 @@ import json
 import logging
 import os
 
-import config_store
-
+from mpconf import config_store
 logger = logging.getLogger("magic-proxy.claude_code_setup")
 
 # Suanpan prefix rules that map to Claude Code tier roles.

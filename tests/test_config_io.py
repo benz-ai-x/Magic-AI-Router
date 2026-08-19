@@ -5,9 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import config
-
-
+from mpconf import config
 class TestLoadConfig(unittest.TestCase):
     def test_nonexistent_returns_none(self):
         self.assertIsNone(config.load_config("/nonexistent/path.json"))
@@ -67,7 +65,7 @@ class TestMergeConfigEdgeCases(unittest.TestCase):
         self.assertEqual(merged["tunnels"][0]["ssh_port"], 22)
 
     def test_empty_capture_dir_falls_back_to_default(self):
-        from capture_store import DEFAULT_CAPTURE_DIR
+        from capture.capture_store import DEFAULT_CAPTURE_DIR
         merged = config.merge_config({"capture_dir": "   "})
         self.assertEqual(merged["capture_dir"],
                          os.path.abspath(os.path.expanduser(DEFAULT_CAPTURE_DIR)))
@@ -114,8 +112,8 @@ class TestLoadConfigMigration(unittest.TestCase):
                                 "auth_type": "password", "ssh_password": "secret"}]}
             with open(path, "w") as f:
                 json.dump(old, f)
-            with patch("config.keychain.set_password", return_value=True), \
-                 patch("config.save_config", return_value=False):
+            with patch("mpconf.config.keychain.set_password", return_value=True), \
+                 patch("mpconf.config.save_config", return_value=False):
                 result = config.load_config(path)
             self.assertIsNotNone(result)
             self.assertNotIn("ssh_password", result["tunnels"][0])
@@ -131,8 +129,8 @@ class TestLoadConfigMigration(unittest.TestCase):
                                 "auth_type": "password", "ssh_password": "secret"}]}
             with open(path, "w") as f:
                 json.dump(old, f)
-            with patch("config.keychain.set_password", return_value=True), \
-                 patch("config.save_config", return_value=False), \
+            with patch("mpconf.config.keychain.set_password", return_value=True), \
+                 patch("mpconf.config.save_config", return_value=False), \
                  patch("os.replace", side_effect=OSError("cannot isolate")):
                 result = config.load_config(path)
             self.assertIsNotNone(result)
@@ -153,21 +151,21 @@ class TestSaveConfigUnlinkError(unittest.TestCase):
 class TestMigratePasswordSweep(unittest.TestCase):
     def test_old_format_password_sets_auth_type(self):
         old = {"ssh_host": "srv", "ssh_password": "secret"}
-        with patch("config.keychain.set_password", return_value=True):
+        with patch("mpconf.config.keychain.set_password", return_value=True):
             result = config._migrate(old)
         tunnel = result["tunnels"][0]
         self.assertEqual(tunnel["auth_type"], "password")
 
     def test_plaintext_password_moved_to_keychain(self):
         cfg = {"tunnels": [{"ssh_host": "s", "ssh_password": "secret"}]}
-        with patch("config.keychain.set_password", return_value=True):
+        with patch("mpconf.config.keychain.set_password", return_value=True):
             result = config._migrate(cfg)
         self.assertNotIn("ssh_password", result["tunnels"][0])
 
     def test_password_removed_even_when_keychain_fails(self):
         """HARD-1: plaintext must leave the dict regardless of Keychain result."""
         cfg = {"tunnels": [{"ssh_host": "s", "ssh_password": "secret"}]}
-        with patch("config.keychain.set_password", return_value=False):
+        with patch("mpconf.config.keychain.set_password", return_value=False):
             result = config._migrate(cfg)
         self.assertNotIn("ssh_password", result["tunnels"][0])
 
@@ -177,7 +175,7 @@ class TestMigratePasswordSweep(unittest.TestCase):
             path = os.path.join(d, "cfg.json")
             with open(path, "w") as f:
                 json.dump({"tunnels": [{"ssh_host": "s", "ssh_password": "secret"}]}, f)
-            with patch("config.keychain.set_password", return_value=False):
+            with patch("mpconf.config.keychain.set_password", return_value=False):
                 config.load_config(path)
             with open(path) as f:
                 on_disk = json.load(f)

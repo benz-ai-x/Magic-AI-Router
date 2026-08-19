@@ -11,23 +11,23 @@ import time
 from AppKit import NSApplication, NSMenu, NSMenuItem
 import rumps
 
-import ca_trust
-import chromium_proxy
-import keychain
-import login_item
-import netloc
-import port_check
-import config_store
-from bridge_protocol import ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY
-from capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
-from config import load_config, save_config, merge_config, DEFAULT_CONFIG
-from config_server import ConfigServer
-from log_window import LogBuffer, show_log_window
-from webview_window import show_config_window
-from menu_builder import MenuBuilder, MenuState, _status_color_for_connection
-from stats import Stats
-from connection_coordinator import ConnectionCoordinator
-from service_coordinator import ServiceCoordinator
+from capture import ca_trust
+from capture import chromium_proxy
+from sysctl import keychain
+from sysctl import login_item
+from mpconf import netloc
+from sysctl import port_check
+from mpconf import config_store
+from shellui.bridge_protocol import ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY
+from capture.capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
+from mpconf.config import load_config, save_config, merge_config, DEFAULT_CONFIG
+from services.config_server import ConfigServer
+from shellui.log_window import LogBuffer, show_log_window
+from shellui.webview_window import show_config_window
+from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
+from services.stats import Stats
+from tunnel.connection_coordinator import ConnectionCoordinator
+from services.service_coordinator import ServiceCoordinator
 from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")

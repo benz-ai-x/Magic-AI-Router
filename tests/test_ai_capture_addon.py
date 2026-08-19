@@ -7,8 +7,8 @@ Real mitmproxy flow composition is exercised separately in SIT.
 import json
 import os
 
-import ai_capture_addon as addon
-import capture_store
+from capture import ai_capture_addon as addon
+from capture import capture_store
 import pytest
 
 

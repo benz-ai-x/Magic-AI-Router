@@ -7,7 +7,7 @@ and host_key functions are mocked.
 import unittest
 from unittest.mock import MagicMock, patch
 
-from host_key_flow import HostKeyFlow
+from tunnel.host_key_flow import HostKeyFlow
 
 
 def _make_flow(get_tunnel=None, on_connect=None, on_reconnect=None):
@@ -30,7 +30,7 @@ class TestStartCheckNoTunnel(unittest.TestCase):
 
 
 class TestStartCheckStateTransition(unittest.TestCase):
-    @patch("host_key_flow.threading.Thread")
+    @patch("tunnel.host_key_flow.threading.Thread")
     def test_sets_checking_and_connecting(self, _mock_thread):
         flow = _make_flow()
         flow.start_check()
@@ -39,13 +39,13 @@ class TestStartCheckStateTransition(unittest.TestCase):
 
 
 class TestBeginReplacement(unittest.TestCase):
-    @patch("host_key_flow.threading.Thread")
+    @patch("tunnel.host_key_flow.threading.Thread")
     def test_no_tunnel_is_noop(self, _mock_thread):
         flow = _make_flow(get_tunnel=lambda: None)
         flow.begin_replacement()
         self.assertFalse(flow.change_prompted)
 
-    @patch("host_key_flow.threading.Thread")
+    @patch("tunnel.host_key_flow.threading.Thread")
     def test_sets_change_prompted(self, _mock_thread):
         flow = _make_flow()
         flow.begin_replacement()
@@ -80,8 +80,8 @@ class TestFinishCheck(unittest.TestCase):
         flow._on_connect.assert_called_once()
         flow._ssh.set_status.assert_not_called()  # no error/stop
 
-    @patch("host_key_flow.host_key.accept", return_value=True)
-    @patch("host_key_flow.rumps.alert", return_value=1)
+    @patch("tunnel.host_key_flow.host_key.accept", return_value=True)
+    @patch("tunnel.host_key_flow.rumps.alert", return_value=1)
     def test_unknown_key_user_trusts(self, _alert, _accept):
         flow = _make_flow()
         gen = flow._generation
@@ -89,7 +89,7 @@ class TestFinishCheck(unittest.TestCase):
         _accept.assert_called_once_with("keys")
         flow._on_connect.assert_called_once()
 
-    @patch("host_key_flow.rumps.alert", return_value=0)
+    @patch("tunnel.host_key_flow.rumps.alert", return_value=0)
     def test_unknown_key_user_cancels(self, _alert):
         flow = _make_flow()
         gen = flow._generation
@@ -97,7 +97,7 @@ class TestFinishCheck(unittest.TestCase):
         flow._ssh.set_status.assert_called_once_with("stopped")
         flow._on_connect.assert_not_called()
 
-    @patch("host_key_flow.rumps.alert")
+    @patch("tunnel.host_key_flow.rumps.alert")
     def test_inspection_error_sets_error_status(self, mock_alert):
         flow = _make_flow()
         gen = flow._generation
@@ -118,12 +118,12 @@ class TestInspectThreadGuarded(unittest.TestCase):
 
     def test_inspect_exception_marks_error(self):
         flow = _make_flow()
-        with patch("host_key_flow.host_key.inspect",
+        with patch("tunnel.host_key_flow.host_key.inspect",
                    side_effect=RuntimeError("boom")), \
-             patch("host_key_flow.AppHelper.callAfter",
+             patch("tunnel.host_key_flow.AppHelper.callAfter",
                    side_effect=lambda fn, *a: fn(*a)), \
-             patch("host_key_flow.rumps.alert"), \
-             patch("host_key_flow.threading.Thread") as mock_thread:
+             patch("tunnel.host_key_flow.rumps.alert"), \
+             patch("tunnel.host_key_flow.threading.Thread") as mock_thread:
             flow.start_check()
             mock_thread.assert_called_once()
             # Call inside the patch block: the thread target closes over the
@@ -136,10 +136,10 @@ class TestInspectThreadGuarded(unittest.TestCase):
     def test_inspect_success_dispatches_finish(self):
         """Happy path still hands the inspection result to the main thread."""
         flow = _make_flow()
-        with patch("host_key_flow.host_key.inspect",
+        with patch("tunnel.host_key_flow.host_key.inspect",
                    return_value=(True, "k", "f", None)), \
-             patch("host_key_flow.AppHelper.callAfter") as call_after, \
-             patch("host_key_flow.threading.Thread") as mock_thread:
+             patch("tunnel.host_key_flow.AppHelper.callAfter") as call_after, \
+             patch("tunnel.host_key_flow.threading.Thread") as mock_thread:
             flow.start_check()
             mock_thread.call_args[1]["target"]()
         call_after.assert_called_once()
@@ -151,8 +151,8 @@ class TestFinishReplacement(unittest.TestCase):
     """Test _finish_replacement decision logic directly."""
     _tunnel = {"ssh_host": "srv", "ssh_port": 22}
 
-    @patch("host_key_flow.host_key.replace", return_value=True)
-    @patch("host_key_flow.rumps.alert", return_value=1)
+    @patch("tunnel.host_key_flow.host_key.replace", return_value=True)
+    @patch("tunnel.host_key_flow.rumps.alert", return_value=1)
     def test_user_confirms_replaces_and_reconnects(self, _alert, _replace):
         flow = _make_flow()
         gen = flow._generation
@@ -161,7 +161,7 @@ class TestFinishReplacement(unittest.TestCase):
         flow._on_reconnect.assert_called_once()
         self.assertFalse(flow.change_prompted)
 
-    @patch("host_key_flow.rumps.alert", return_value=0)
+    @patch("tunnel.host_key_flow.rumps.alert", return_value=0)
     def test_user_cancels_sets_stopped(self, _alert):
         flow = _make_flow()
         gen = flow._generation
@@ -169,7 +169,7 @@ class TestFinishReplacement(unittest.TestCase):
         flow._ssh.set_status.assert_called_once_with("stopped")
         flow._on_reconnect.assert_not_called()
 
-    @patch("host_key_flow.rumps.alert")
+    @patch("tunnel.host_key_flow.rumps.alert")
     def test_scan_error_shows_alert_no_change(self, mock_alert):
         flow = _make_flow()
         gen = flow._generation

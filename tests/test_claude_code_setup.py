@@ -10,10 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import claude_code_setup
-import config_store
-
-
+from services import claude_code_setup
+from mpconf import config_store
 class TestSetupClaudeCode(unittest.TestCase):
     """setup() writes ~/.claude/settings.json env block via atomic_write."""
 
@@ -28,9 +26,9 @@ class TestSetupClaudeCode(unittest.TestCase):
             if existing_settings is not None:
                 with open(settings_path, "w") as f:
                     json.dump(existing_settings, f)
-            with patch("claude_code_setup.config_store.suanpan_listen",
+            with patch("services.claude_code_setup.config_store.suanpan_listen",
                        return_value="127.0.0.1:9527"), \
-                 patch("claude_code_setup.config_store.sp_load_raw",
+                 patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value=sp if sp is not None else {}), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 result = claude_code_setup.setup(roles=roles)
@@ -113,7 +111,7 @@ class TestSetupClaudeCode(unittest.TestCase):
         self.assertNotIn("CLAUDE_CODE_SUBAGENT_MODEL", env)
 
     def test_returns_failed_on_error(self):
-        with patch("claude_code_setup.config_store.sp_load_raw",
+        with patch("services.claude_code_setup.config_store.sp_load_raw",
                    side_effect=FileNotFoundError("nope")), \
              patch.dict(config_store.PATHS,
                         {"claude_settings": "/nonexistent/path/settings.json"}):
@@ -124,9 +122,9 @@ class TestSetupClaudeCode(unittest.TestCase):
     def test_uses_suanpan_listen(self):
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("claude_code_setup.config_store.suanpan_listen",
+            with patch("services.claude_code_setup.config_store.suanpan_listen",
                        return_value="127.0.0.1:8888"), \
-                 patch("claude_code_setup.config_store.sp_load_raw",
+                 patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={}), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 result = claude_code_setup.setup()
@@ -150,7 +148,7 @@ class TestSetupClaudeCodeAtomicWrite(unittest.TestCase):
     def test_written_file_has_0600_mode(self):
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={"listen": "127.0.0.1:9527"}), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 claude_code_setup.setup()
@@ -163,7 +161,7 @@ class TestSetupClaudeCodeAtomicWrite(unittest.TestCase):
             original = {"env": {"FOO": "bar"}}
             with open(settings_path, "w") as f:
                 json.dump(original, f)
-            with patch("claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={"listen": "127.0.0.1:9527"}), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 claude_code_setup.setup()
@@ -176,7 +174,7 @@ class TestSetupClaudeCodeAtomicWrite(unittest.TestCase):
     def test_no_backup_when_no_prior_file(self):
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={"listen": "127.0.0.1:9527"}), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 claude_code_setup.setup()
@@ -185,7 +183,7 @@ class TestSetupClaudeCodeAtomicWrite(unittest.TestCase):
     def test_creates_parent_directory(self):
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "nested", "dir", "settings.json")
-            with patch("claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={"listen": "127.0.0.1:9527"}), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 claude_code_setup.setup()
@@ -202,9 +200,9 @@ class TestSetupClaudeCodeAtomicWrite(unittest.TestCase):
                                 "FOO": "bar"}}
             with open(settings_path, "w") as f:
                 json.dump(original, f)
-            with patch("claude_code_setup.config_store.suanpan_listen",
+            with patch("services.claude_code_setup.config_store.suanpan_listen",
                        return_value="127.0.0.1:9527"), \
-                 patch("claude_code_setup.config_store.sp_load_raw",
+                 patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={}), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 first = claude_code_setup.setup()
@@ -340,7 +338,7 @@ class TestDefaultRolesFromSp(unittest.TestCase):
             "rules": [{"match_prefix": "claude-sonnet", "route_to": "KIMI/k3"}],
             "router": {"default": "GLM_MAX/glm-5.2"},
         }
-        with patch("claude_code_setup.config_store.sp_load_raw", return_value=sp):
+        with patch("services.claude_code_setup.config_store.sp_load_raw", return_value=sp):
             data = claude_code_setup.default_roles()
         self.assertEqual(data["roles"]["sonnet"]["model"], "KIMI/k3")
         self.assertEqual(data["roles"]["opus"]["model"], "GLM_MAX/glm-5.2")
@@ -350,7 +348,7 @@ class TestDefaultRolesFromSp(unittest.TestCase):
         parallel role list (Python _ROLES is the single source of truth).
         The default role is rendered by a dedicated UI control, not the
         table, so it stays out of `order`."""
-        with patch("claude_code_setup.config_store.sp_load_raw", return_value={}):
+        with patch("services.claude_code_setup.config_store.sp_load_raw", return_value={}):
             data = claude_code_setup.default_roles()
         self.assertEqual(
             data["order"], ["opus", "sonnet", "fable", "haiku", "subagent"])
@@ -444,7 +442,7 @@ class TestSetupClaudeCodeWithRoles(unittest.TestCase):
             if existing_settings is not None:
                 with open(settings_path, "w") as f:
                     json.dump(existing_settings, f)
-            with patch("claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value={"listen": "127.0.0.1:9527"}), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 result = claude_code_setup.setup(roles=roles)
@@ -475,7 +473,7 @@ class TestSetupClaudeCodeWithRoles(unittest.TestCase):
         roles = {"opus": {"model": "KIMI/k3", "ctx_1m": False}}
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value=sp), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 result = claude_code_setup.setup(roles=roles)
@@ -535,9 +533,9 @@ class TestPreview(unittest.TestCase):
         if existing_settings is not None:
             with open(settings_path, "w") as f:
                 json.dump(existing_settings, f)
-        with patch("claude_code_setup.config_store.suanpan_listen",
+        with patch("services.claude_code_setup.config_store.suanpan_listen",
                    return_value="127.0.0.1:9527"), \
-             patch("claude_code_setup.config_store.sp_load_raw",
+             patch("services.claude_code_setup.config_store.sp_load_raw",
                    return_value={}), \
              patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
             result = claude_code_setup.preview(roles=roles)
@@ -657,9 +655,9 @@ class TestPreview(unittest.TestCase):
         pv, _, settings_path = self._run_preview(roles=roles,
                                                  existing_settings=existing)
         self.assertTrue(pv["ok"])
-        with patch("claude_code_setup.config_store.suanpan_listen",
+        with patch("services.claude_code_setup.config_store.suanpan_listen",
                    return_value="127.0.0.1:9527"), \
-             patch("claude_code_setup.config_store.sp_load_raw",
+             patch("services.claude_code_setup.config_store.sp_load_raw",
                    return_value={}), \
              patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
             setup_result = claude_code_setup.setup(roles=roles)

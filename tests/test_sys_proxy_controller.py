@@ -2,13 +2,13 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from sys_proxy_controller import SystemProxyController
+from sysctl.sys_proxy_controller import SystemProxyController
 
 
 def _make_ctrl(**overrides):
     ssh = MagicMock()
     ssh.status = "stopped"
-    with patch("sys_proxy_controller.system_proxy") as mock_sp:
+    with patch("sysctl.sys_proxy_controller.system_proxy") as mock_sp:
         mock_sp.recover_stale_transaction.return_value = (False, "")
         ctrl = SystemProxyController(
             ssh_monitor=ssh,
@@ -77,7 +77,7 @@ class TestTargetResolution(unittest.TestCase):
 
 
 class TestQuitCleanup(unittest.TestCase):
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_quit_releases_and_resets(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (False, "")
         mock_sp.release_transaction.return_value = (True, "")
@@ -88,7 +88,7 @@ class TestQuitCleanup(unittest.TestCase):
         mock_sp.release_transaction.assert_called_once()
         self.assertIsNone(ctrl._snapshot)
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_quit_no_snapshot_is_noop(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (False, "")
         ctrl = _make_ctrl()
@@ -101,7 +101,7 @@ class TestApplyFailureExposesOffState(unittest.TestCase):
     the controller silently sets _on=False. The error message must now surface
     that the proxy was disabled."""
 
-    @patch("sys_proxy_controller.system_proxy")
+    @patch("sysctl.sys_proxy_controller.system_proxy")
     def test_apply_failure_with_desired_state_mentions_off(self, mock_sp):
         mock_sp.recover_stale_transaction.return_value = (False, "")
         mock_sp.snapshot.return_value = {"webproxy": "old"}

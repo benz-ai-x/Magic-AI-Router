@@ -13,7 +13,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from subprocess_monitor import SubprocessMonitor
+from tunnel.subprocess_monitor import SubprocessMonitor
 
 
 class _FakeMonitor(SubprocessMonitor):
@@ -78,14 +78,14 @@ class TestProperties(unittest.TestCase):
 
     def test_cmd_str_set_by_start_process(self):
         m = _FakeMonitor()
-        with patch("subprocess_monitor.subprocess.Popen") as mock_popen:
+        with patch("tunnel.subprocess_monitor.subprocess.Popen") as mock_popen:
             mock_popen.return_value = MagicMock(poll=lambda: None, stderr=iter([]))
             m._start_process(["echo", "hi"])
         self.assertEqual(m.cmd_str, "echo hi")
 
     def test_cmd_str_uses_display_cmd_when_provided(self):
         m = _FakeMonitor()
-        with patch("subprocess_monitor.subprocess.Popen") as mock_popen:
+        with patch("tunnel.subprocess_monitor.subprocess.Popen") as mock_popen:
             mock_popen.return_value = MagicMock(poll=lambda: None, stderr=iter([]))
             m._start_process(["secret-cmd"], display_cmd="safe-cmd")
         self.assertEqual(m.cmd_str, "safe-cmd")
@@ -113,7 +113,7 @@ class TestProperties(unittest.TestCase):
 class TestStartProcess(unittest.TestCase):
     def test_popen_failure_sets_error(self):
         m = _FakeMonitor()
-        with patch("subprocess_monitor.subprocess.Popen", side_effect=OSError("no such file")):
+        with patch("tunnel.subprocess_monitor.subprocess.Popen", side_effect=OSError("no such file")):
             ok = m._start_process(["nonexistent-binary"])
         self.assertFalse(ok)
         self.assertEqual(m.status, "error")
@@ -122,7 +122,7 @@ class TestStartProcess(unittest.TestCase):
     def test_successful_start_sets_starting(self):
         m = _FakeMonitor()
         mock_proc = MagicMock(poll=lambda: None, stderr=iter([]))
-        with patch("subprocess_monitor.subprocess.Popen", return_value=mock_proc):
+        with patch("tunnel.subprocess_monitor.subprocess.Popen", return_value=mock_proc):
             ok = m._start_process(["echo", "hi"])
         self.assertTrue(ok)
         self.assertEqual(m.status, "starting")
@@ -133,7 +133,7 @@ class TestStartProcess(unittest.TestCase):
         with m._log_lock:
             m._log_lines.append("old")
         mock_proc = MagicMock(poll=lambda: None, stderr=iter([]))
-        with patch("subprocess_monitor.subprocess.Popen", return_value=mock_proc):
+        with patch("tunnel.subprocess_monitor.subprocess.Popen", return_value=mock_proc):
             m._start_process(["echo"])
         self.assertEqual(m.snapshot_log_lines(), [])
 

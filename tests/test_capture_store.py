@@ -2,9 +2,7 @@ import os
 
 import pytest
 
-import capture_store
-
-
+from capture import capture_store
 def test_refuses_existing_unmarked_custom_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(capture_store, "_home_dir", lambda: os.path.realpath(tmp_path))

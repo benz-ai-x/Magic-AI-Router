@@ -4,8 +4,8 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock
 
-import config_server
-import config_store
+from services import config_server
+from mpconf import config_store
 from suanpan.config import _restore_key
 
 
@@ -24,8 +24,8 @@ class TestRestoreKey(unittest.TestCase):
 
 
 class TestWriteMp(unittest.TestCase):
-    @patch("config_server.save_config")
-    @patch("config_server.keychain")
+    @patch("services.config_server.save_config")
+    @patch("services.config_server.keychain")
     def test_writes_config_and_returns_errors(self, mock_kc, mock_save):
         mock_save.return_value = True
         cfg = {"tunnels": [{"auth_type": "password", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22}]}
@@ -33,14 +33,14 @@ class TestWriteMp(unittest.TestCase):
         self.assertEqual(errors, [])
         mock_save.assert_called_once()
 
-    @patch("config_server.save_config")
+    @patch("services.config_server.save_config")
     def test_save_failure_returns_error(self, mock_save):
         mock_save.return_value = False
         errors = config_server._write_mp({"tunnels": []})
         self.assertTrue(any("写入失败" in e for e in errors))
 
-    @patch("config_server.save_config")
-    @patch("config_server.keychain")
+    @patch("services.config_server.save_config")
+    @patch("services.config_server.keychain")
     def test_save_failure_leaves_keychain_untouched(self, mock_kc, mock_save):
         """File save fails → keychain must not hold orphans for unsaved tunnels."""
         mock_save.return_value = False
