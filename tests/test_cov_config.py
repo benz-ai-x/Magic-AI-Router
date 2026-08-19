@@ -30,9 +30,8 @@ from capture.capture_controller import CaptureController
 def _start_server():
     """Start a config server on a random port, return (server, port)."""
     s = config_server.ConfigServer()
-    config_server._Handler.expected_token = s._token
     s._server = config_server._ThreadingHTTPServer(
-        ("127.0.0.1", 0), config_server._Handler)
+        ("127.0.0.1", 0), config_server._Handler, expected_token=s._token)
     port = s._server.server_address[1]
     s._thread = threading.Thread(target=s._server.serve_forever, daemon=True)
     s._thread.start()
@@ -323,13 +322,13 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
         with patch.object(config_server, "_write_mp", return_value=[]), \
              patch.object(config_server.config_store, "sp_save",
                           return_value=(True, None)):
-            config_server._Handler.on_sp_saved = callback
+            self.server._server.on_sp_saved = callback
             try:
                 _request(
                     self.port, "PUT", f"/api/state?token={self.token}",
                     body=json.dumps({"sp": {"providers": {}}}))
             finally:
-                config_server._Handler.on_sp_saved = None
+                self.server._server.on_sp_saved = None
         callback.assert_called_once()
 
     def test_on_sp_saved_exception_swallowed(self):
@@ -338,13 +337,13 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
         with patch.object(config_server, "_write_mp", return_value=[]), \
              patch.object(config_server.config_store, "sp_save",
                           return_value=(True, None)):
-            config_server._Handler.on_sp_saved = callback
+            self.server._server.on_sp_saved = callback
             try:
                 status, data = _request(
                     self.port, "PUT", f"/api/state?token={self.token}",
                     body=json.dumps({"sp": {"providers": {}}}))
             finally:
-                config_server._Handler.on_sp_saved = None
+                self.server._server.on_sp_saved = None
         # The exception was caught; the response is still 200 OK.
         self.assertEqual(status, 200)
 

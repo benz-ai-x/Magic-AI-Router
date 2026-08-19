@@ -187,16 +187,22 @@ def test_tunnel(tunnel):
 
 
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Carries the per-server callback refs on the INSTANCE (not class
+    attributes): parallel ConfigServers in tests can never cross-talk, and
+    tests construct one directly without replicating start() internals."""
     daemon_threads = True
+
+    def __init__(self, address, handler, *, expected_token=None,
+                 on_sp_saved=None, capture_state_fn=None):
+        self.expected_token = expected_token
+        self.on_sp_saved = on_sp_saved
+        self.capture_state_fn = capture_state_fn
+        super().__init__(address, handler)
 
 
 class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
-
-    expected_token = None  # set by ConfigServer.start()
-    on_sp_saved = None     # set by ConfigServer.start()
-    capture_state_fn = None  # set by ConfigServer.start(); → bool | None
 
     def _valid_token(self):
         """Validate bearer token from query string or Authorization header."""
@@ -207,9 +213,10 @@ class _Handler(BaseHTTPRequestHandler):
             if auth.startswith("Bearer "):
                 token = auth[7:]
         # Constant-time comparison to prevent timing side-channels.
-        if not token or not _Handler.expected_token:
+        expected = self.server.expected_token
+        if not token or not expected:
             return False
-        return secrets.compare_digest(token, _Handler.expected_token)
+        return secrets.compare_digest(token, expected)
 
     def _valid_host(self):
         """Reject non-loopback Host headers (DNS-rebinding guard)."""
@@ -283,9 +290,8 @@ class _Handler(BaseHTTPRequestHandler):
             # Read-only runtime status injected for the config UI; _write_mp
             # strips it again so it can never round-trip into the file.
             try:
-                mp["capture_active"] = bool(
-                    _Handler.capture_state_fn
-                    and _Handler.capture_state_fn())
+                fn = self.server.capture_state_fn
+                mp["capture_active"] = bool(fn and fn())
             except Exception:
                 logger.exception("capture_state_fn failed")
                 mp["capture_active"] = False
@@ -385,9 +391,9 @@ class _Handler(BaseHTTPRequestHandler):
             ok, err = config_store.sp_save(sp_in)
             if not ok:
                 errors.append(err)
-            elif _Handler.on_sp_saved:
+            elif self.server.on_sp_saved:
                 try:
-                    _Handler.on_sp_saved()
+                    self.server.on_sp_saved()
                 except Exception:
                     logger.exception("on_sp_saved callback failed")
         if errors:
@@ -430,10 +436,11 @@ class ConfigServer:
         if self.running:
             return True
         try:
-            _Handler.expected_token = self._token
-            _Handler.on_sp_saved = self._on_sp_saved
-            _Handler.capture_state_fn = self._capture_state
-            self._server = _ThreadingHTTPServer(("127.0.0.1", self._port), _Handler)
+            self._server = _ThreadingHTTPServer(
+                ("127.0.0.1", self._port), _Handler,
+                expected_token=self._token,
+                on_sp_saved=self._on_sp_saved,
+                capture_state_fn=self._capture_state)
         except OSError:
             logger.warning("Config server: port %d unavailable", self._port)
             return False

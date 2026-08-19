@@ -11,8 +11,8 @@ def _start_server():
     """Start a config server on a random port, return (server, port)."""
     import threading
     s = config_server.ConfigServer()
-    config_server._Handler.expected_token = s._token
-    s._server = config_server._ThreadingHTTPServer(("127.0.0.1", 0), config_server._Handler)
+    s._server = config_server._ThreadingHTTPServer(
+        ("127.0.0.1", 0), config_server._Handler, expected_token=s._token)
     port = s._server.server_address[1]
     s._thread = threading.Thread(target=s._server.serve_forever, daemon=True)
     s._thread.start()
@@ -85,6 +85,7 @@ class TestTokenAuth(unittest.TestCase):
         h = SimpleNamespace(
             path=f"/api/state?token={self.token}",
             headers={},
+            server=SimpleNamespace(expected_token=self.token),
         )
         with patch("services.config_server.secrets.compare_digest",
                    wraps=_secrets.compare_digest) as spy:
@@ -512,7 +513,6 @@ class TestCaptureStateField(unittest.TestCase):
 
     def tearDown(self):
         self.server.stop()
-        config_server._Handler.capture_state_fn = None
 
     def _get_state(self):
         status, data = _request(self.port, "GET", f"/api/state?token={self.token}")
@@ -520,17 +520,17 @@ class TestCaptureStateField(unittest.TestCase):
         return json.loads(data)
 
     def test_default_is_false_without_getter(self):
-        config_server._Handler.capture_state_fn = None
+        self.server._server.capture_state_fn = None
         self.assertIs(self._get_state()["mp"]["capture_active"], False)
 
     def test_stub_true_flows_through(self):
-        config_server._Handler.capture_state_fn = lambda: True
+        self.server._server.capture_state_fn = lambda: True
         self.assertIs(self._get_state()["mp"]["capture_active"], True)
 
     def test_broken_getter_degrades_to_false(self):
         def boom():
             raise RuntimeError("no capture ctrl")
-        config_server._Handler.capture_state_fn = boom
+        self.server._server.capture_state_fn = boom
         with self.assertLogs("magic-proxy.config_server", level="ERROR"):
             parsed = self._get_state()
         self.assertIs(parsed["mp"]["capture_active"], False)
