@@ -159,3 +159,117 @@ class TestQuitOrder(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStaleInstanceEdge(unittest.TestCase):
+    def test_empty_argv_basename_never_matches(self):
+        from services import lifecycle_runtime as lr
+        with patch.object(lr.sys, "argv", [""]):
+            self.assertFalse(lr._is_stale_instance("python3 app.py"))
+
+    def test_kill_failure_logs_and_continues(self):
+        from services import lifecycle_runtime as lr
+        owner = MagicMock(pid=4242, name="Magic", cmd="python3 app.py")
+        with patch.object(lr.port_check, "who_owns", return_value=owner), \
+             patch.object(lr.port_check, "kill",
+                          return_value=(False, "EPERM")), \
+             patch.object(lr.os, "getpid", return_value=1), \
+             patch.object(lr.sys, "argv", ["app.py"]), \
+             self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
+            lr._clear_stale_ports(9528, 9527)
+        self.assertTrue(any("Failed to kill" in m for m in logs.output))
+
+    def test_read_suanpan_port_falls_back_on_error(self):
+        from services import lifecycle_runtime as lr
+        with patch.object(lr.config_store, "suanpan_listen",
+                          side_effect=RuntimeError("boom")):
+            self.assertEqual(lr._read_suanpan_port(), 9527)
+        with patch.object(lr.config_store, "suanpan_listen",
+                          return_value="127.0.0.1:9530"):
+            self.assertEqual(lr._read_suanpan_port(), 9530)
+
+
+class TestExposedProperties(unittest.TestCase):
+    """属性面是 app.py 的合法引用通道——钉死五个 getter 的身份等同。"""
+
+    def test_properties_return_the_constructed_submodules(self):
+        svc = _make_coordinator()
+        self.assertIs(svc.suanpan, svc._suanpan)
+        self.assertIs(svc.capture_ctrl, svc._capture_ctrl)
+        self.assertIs(svc.sys_proxy, svc._sys_proxy)
+        self.assertIs(svc.capture, svc._capture)
+        self.assertIs(svc.config_server, svc._config_server)
+
+
+class TestInternalizedReload(unittest.TestCase):
+    """reload 链内化：_on_sp_saved 直达 suanpan.reload，不出模块。"""
+
+    def test_on_sp_saved_reloads_suanpan(self):
+        svc = _make_coordinator()
+        with patch.object(svc._suanpan, "reload") as mock_reload:
+            svc._on_sp_saved()
+        mock_reload.assert_called_once_with()
+
+
+class TestStartAllFailureBranches(unittest.TestCase):
+    def test_config_server_start_failure_warns_but_gateway_still_starts(self):
+        svc = _make_coordinator()
+        with patch.object(svc._config_server, "start", return_value=False), \
+             patch.object(svc._suanpan, "start", return_value=True) as sp_start, \
+             patch("services.lifecycle_runtime._clear_stale_ports"), \
+             patch("services.lifecycle_runtime._read_suanpan_port",
+                   return_value=9527), \
+             self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
+            svc.start_all()
+        sp_start.assert_called_once()
+        self.assertTrue(any("Config server failed" in m for m in logs.output))
+
+    def test_suanpan_start_failure_warns(self):
+        svc = _make_coordinator()
+        with patch.object(svc._config_server, "start", return_value=True), \
+             patch.object(svc._suanpan, "start", return_value=False), \
+             patch("services.lifecycle_runtime._clear_stale_ports"), \
+             patch("services.lifecycle_runtime._read_suanpan_port",
+                   return_value=9527), \
+             self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
+            svc.start_all()
+        self.assertTrue(any("Suanpan gateway auto-start failed" in m
+                            for m in logs.output))
+
+    def test_empty_cmd_never_matches(self):
+        from services import lifecycle_runtime as lr
+        self.assertFalse(lr._is_stale_instance(""))
+
+    def test_no_owner_or_self_owner_skipped(self):
+        from services import lifecycle_runtime as lr
+        self_pid = 99
+        for owner in (None, MagicMock(pid=self_pid, cmd="python3 app.py")):
+            with patch.object(lr.port_check, "who_owns", return_value=owner), \
+                 patch.object(lr.port_check, "kill") as mock_kill, \
+                 patch.object(lr.os, "getpid", return_value=self_pid):
+                lr._clear_stale_ports(9528, 9527)
+            mock_kill.assert_not_called()
+
+    def test_foreign_process_left_alone_with_warning(self):
+        from services import lifecycle_runtime as lr
+        owner = MagicMock(pid=1234, name="httpd", cmd="/usr/sbin/httpd -p 9528")
+        with patch.object(lr.port_check, "who_owns", return_value=owner), \
+             patch.object(lr.port_check, "kill") as mock_kill, \
+             patch.object(lr.os, "getpid", return_value=1), \
+             patch.object(lr.sys, "argv", ["app.py"]), \
+             self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
+            lr._clear_stale_ports(9528, 9527)
+        mock_kill.assert_not_called()
+        self.assertTrue(any("not our process" in m for m in logs.output))
+
+    def test_successful_kill_logs_info(self):
+        from services import lifecycle_runtime as lr
+        owner = MagicMock(pid=4242, name="Magic", cmd="python3 app.py")
+        with patch.object(lr.port_check, "who_owns", return_value=owner), \
+             patch.object(lr.port_check, "kill",
+                          return_value=(True, None)), \
+             patch.object(lr.os, "getpid", return_value=1), \
+             patch.object(lr.sys, "argv", ["app.py"]), \
+             self.assertLogs("magic-proxy.lifecycle", level="INFO") as logs:
+            lr._clear_stale_ports(9528, 9527)
+        self.assertTrue(any("Killed PID 4242" in m for m in logs.output))
