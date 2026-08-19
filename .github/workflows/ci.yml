@@ -21,7 +21,7 @@ jobs:
         run: python -m pytest -q tests/
       - name: Compile check
         run: |
-          python -m py_compile app.py util.py mitmdump_entry.py tunnel/proxy.py services/config_server.py services/suanpan_runtime.py capture/capture.py capture/ai_capture_addon.py sysctl/system_proxy.py shellui/webview_window.py suanpan/main.py suanpan/router.py
+          python -m py_compile app.py util.py capture/mitmdump_entry.py tunnel/proxy.py services/config_server.py services/suanpan_runtime.py capture/capture.py capture/ai_capture_addon.py sysctl/system_proxy.py shellui/webview_window.py suanpan/main.py suanpan/router.py
           bash -n build.sh scripts/build_dmg.sh scripts/notarize.sh
 
   build:
