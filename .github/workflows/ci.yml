@@ -22,7 +22,7 @@ jobs:
       - name: Compile check
         run: |
           python -m py_compile app.py util.py mitmdump_entry.py tunnel/proxy.py services/config_server.py services/suanpan_runtime.py capture/capture.py capture/ai_capture_addon.py sysctl/system_proxy.py shellui/webview_window.py suanpan/main.py suanpan/router.py
-          bash -n build.sh build_dmg.sh notarize.sh
+          bash -n build.sh scripts/build_dmg.sh scripts/notarize.sh
 
   build:
     runs-on: macos-latest
@@ -46,7 +46,7 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' 'dist/Magic AI Router.app/Contents/Info.plist')" = "true"
           codesign --verify --strict --deep "dist/Magic AI Router.app"
           MAGIC_PROXY_SMOKE_TEST=1 "dist/Magic AI Router.app/Contents/MacOS/Magic AI Router"
-          bash build_dmg.sh
+          bash scripts/build_dmg.sh
       - uses: actions/upload-artifact@v4
         with:
           name: mage-ai-router-unsigned-arm64
