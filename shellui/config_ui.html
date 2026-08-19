@@ -637,6 +637,85 @@ function ccBackupNote(pv){
   return b.will?`写入前备份 → ${b.path}（${b.note}）`:b.note;
 }
 
+// ── 保存流（Save Flow）——两阶段保存状态机（架构审查候选 1 深化）─────
+// 全库最深的 implementation 从渲染层下沉至此：校验 → PUT 配置 → CC 同步
+// 预览（失败关闭）→ 确认弹窗 → setup 写入 → baseline 推进 → 分支 toast。
+// 一切副作用经 deps 注入（真 fetch / 测试桩 = 两个真 adapter）；快照是
+// collect 之后的纯数据。两次真实事故（99999 端口写库、幽灵 api_key 保存）
+// 都发生在这条流上——node 测试从此直接钉住状态机。
+const EDITABLE_VIEWS=['tunnel','proxy','providers','rules','system'];
+function dirtyProjection(base,S,baseRoles,roles){
+  // 纯派生：哪些页面有真实 diff、各几项。recomputeDirty 与 saveFlow 共用，
+  // 保证「按钮上的计数」与「保存流实际处理范围」永远同一口径。
+  const views=new Set(),counts=new Map();
+  EDITABLE_VIEWS.forEach(view=>{
+    const n=countChanges(viewSnapshot(view,base,baseRoles),viewSnapshot(view,S,roles));
+    if(n){views.add(view);counts.set(view,n);}
+  });
+  return{views,counts,total:[...counts.values()].reduce((s,n)=>s+n,0)};
+}
+async function saveFlow(snap,deps,forceRulesSync){
+  const{S,ccRoles,baselineState,baselineRoles}=snap;
+  const proj=dirtyProjection(baselineState,S,baselineRoles,ccRoles);
+  const dirty=proj.views.size>0;
+  const rolesChanged=countChanges(baselineRoles,ccRoles)>0;
+  const syncRules=forceRulesSync===true||rolesChanged;
+  const out={configSaved:false,syncOk:false,cancelled:false};
+  if(!dirty&&!syncRules){deps.toast('没有需要保存的更改');return out;}
+  if(dirty){
+    const errors=validateConfig(S);
+    if(errors.length){deps.toast(errors.slice(0,3).join('；')+(errors.length>3?` 等 ${errors.length} 项`:''),true);deps.gotoFirstError(errors[0]);return out;}
+  }
+  const mpChanged=proj.views.has('tunnel')||proj.views.has('proxy');
+  const spChanged=proj.views.has('providers')||proj.views.has('rules');
+  let configSaved=false,syncMessage='';
+  deps.setSaving(true,syncRules?(dirty?'保存并同步中…':'同步中…'):'保存中…');
+  try{
+    if(dirty){
+      const r=await deps.fetch(deps.api,{method:'PUT',headers:apiHeaders(deps.token,{'Content-Type':'application/json'}),body:JSON.stringify(S)});
+      const d=await r.json();
+      if(!d.ok){deps.toast((d.errors||['未知错误']).join('；'),true);return out;}
+      deps.commitConfig(cloneData(S));configSaved=true;out.configSaved=true;
+    }
+    if(syncRules){
+      // #3 验收 9：写入外部 ~/.claude/settings.json 前先取只读预览并让用户
+      // 确认。预览失败按失败关闭——拿不到真实 diff 就绝不落盘；already
+      // 状态无变更，免确认直接走幂等路径。
+      let go=true;
+      try{
+        const pr=await deps.fetch('/api/cc-sync-preview',{method:'POST',headers:apiHeaders(deps.token,{'Content-Type':'application/json'}),body:JSON.stringify({roles:ccRoles})});
+        const pv=await pr.json();
+        if(!pv.ok){go=false;deps.toast('同步预览失败：'+(pv.msg||'未知错误')+'，未写入',true);}
+        else if(!pv.already)go=await deps.confirmSync(pv);
+      }catch(e){go=false;deps.toast('同步预览失败：'+e.message+'，未写入',true);}
+      if(!go){
+        if(configSaved){deps.stampSaved(deps.now());deps.toast('网关配置已保存；已取消写入 Claude Code（同步仍标记未保存）');}
+        else deps.toast('已取消，未写入 Claude Code');
+        out.cancelled=true;return out;
+      }
+      const r=await deps.fetch('/api/setup-claude-code',{method:'POST',headers:apiHeaders(deps.token,{'Content-Type':'application/json'}),body:JSON.stringify({roles:ccRoles})});
+      const d=await r.json();
+      if(!d.ok){deps.toast((configSaved?'网关配置已保存，但 ':'')+'同步失败：'+(d.msg||'未知错误'),true);return out;}
+      deps.commitRoles(cloneData(ccRoles));syncMessage=d.msg||'已同步到 Claude Code';out.syncOk=true;
+    }
+    deps.stampSaved(deps.now());
+    if(configSaved){
+      const names=[...proj.views].map(v=>deps.viewTitle(v)).join('、');
+      let msg=`已保存 ${proj.total} 项（${names}）`;
+      if(mpChanged&&spChanged)msg+=' — 代理需重新连接（隧道页「重新连接」或菜单栏），AI 路由已自动重载';
+      else if(mpChanged)msg+=' — 点击隧道页「重新连接」或菜单栏生效';
+      else if(spChanged)msg+=' — AI 路由已自动重载';
+      if(syncMessage)msg+='；'+syncMessage;
+      deps.toast(msg);
+    }else deps.toast(syncMessage);
+  }catch(e){
+    deps.toast((configSaved?'配置已保存，后续操作失败：':'保存失败：')+e.message,true);
+  }finally{
+    deps.setSaving(false);
+  }
+  return out;
+}
+
 // ════════════════════════════════════════════════════════════════
 // LAYER 2 — runtime state, bridge, views (DOM + templates)
 // ════════════════════════════════════════════════════════════════
@@ -674,18 +753,10 @@ function nativeSend(type,payload){
     window.webkit.messageHandlers.bridge.postMessage({type:type,payload:payload||{}});
 }
 function notifyNative(){nativeSend('dirtyState',{dirty:dirty});}
-const EDITABLE_VIEWS=['tunnel','proxy','providers','rules','system'];
 function totalDirtyCount(){return[...dirtyCounts.values()].reduce((sum,n)=>sum+n,0);}
 function recomputeDirty(){
-  const nextViews=new Set(),nextCounts=new Map();
-  EDITABLE_VIEWS.forEach(view=>{
-    const count=countChanges(
-      viewSnapshot(view,baselineState,baselineRoles),
-      viewSnapshot(view,S,ccRoles),
-    );
-    if(count){nextViews.add(view);nextCounts.set(view,count);}
-  });
-  dirtyViews=nextViews;dirtyCounts=nextCounts;dirty=dirtyViews.size>0;
+  const p=dirtyProjection(baselineState,S,baselineRoles,ccRoles);
+  dirtyViews=p.views;dirtyCounts=p.counts;dirty=dirtyViews.size>0;
   updateStatus();notifyNative();
 }
 function collectAndRecompute(){collect();recomputeDirty();}
@@ -871,68 +942,25 @@ function ccConfirmSync(pv){
 }
 
 async function saveAll(forceRulesSync){
+  // 薄胶水：读表单 → 接线 deps → 交给 LAYER 1 状态机。保存流的全部逻辑
+  // （校验/两阶段写入/失败关闭/取消/baseline 推进/分支 toast）在 saveFlow，
+  // node 测试直接钉住；本函数只剩 DOM 接线与重入保护。
   if(saving)return;
   collect(true);recomputeDirty();
-  const changedViews=[...dirtyViews],changedCount=totalDirtyCount();
-  const rolesChanged=countChanges(baselineRoles,ccRoles)>0;
-  const syncRules=forceRulesSync===true||rolesChanged;
-  if(!dirty&&!syncRules){toast('没有需要保存的更改');return;}
-  if(dirty){
-    const errors=validateConfig(S);
-    if(errors.length){toast(errors.slice(0,3).join('；')+(errors.length>3?` 等 ${errors.length} 项`:''),true);gotoFirstError(errors[0]);return;}
-  }
-  const mpChanged=dirtyViews.has('tunnel')||dirtyViews.has('proxy');
-  const spChanged=dirtyViews.has('providers')||dirtyViews.has('rules');
-  let configSaved=false,syncMessage='';
-  setSavingState(true,syncRules?(dirty?'保存并同步中…':'同步中…'):'保存中…');
-  try{
-    if(dirty){
-      const r=await fetch(API,{method:'PUT',headers:apiHeaders(TOKEN,{'Content-Type':'application/json'}),body:JSON.stringify(S)});
-      const d=await r.json();
-      if(!d.ok){toast((d.errors||['未知错误']).join('；'),true);return;}
-      baselineState=cloneData(S);configSaved=true;
-    }
-    if(syncRules){
-      // #3 验收 9：写入外部 ~/.claude/settings.json 前先取只读预览并让用户
-      // 确认（目标文件 / 变更 diff / 备份策略）。预览失败按失败关闭——
-      // 拿不到真实 diff 就绝不落盘。already 状态无变更，免确认直接走幂等路径。
-      let go=true;
-      try{
-        const pr=await fetch('/api/cc-sync-preview',{method:'POST',headers:apiHeaders(TOKEN,{'Content-Type':'application/json'}),body:JSON.stringify({roles:ccRoles})});
-        const pv=await pr.json();
-        if(!pv.ok){go=false;toast('同步预览失败：'+(pv.msg||'未知错误')+'，未写入',true);}
-        else if(!pv.already)go=await ccConfirmSync(pv);
-      }catch(e){go=false;toast('同步预览失败：'+e.message+'，未写入',true);}
-      if(!go){
-        if(configSaved){lastSavedAt=new Date().toLocaleTimeString('zh-CN');toast('网关配置已保存；已取消写入 Claude Code（同步仍标记未保存）');}
-        else toast('已取消，未写入 Claude Code');
-        recomputeDirty();
-        return;
-      }
-      const r=await fetch('/api/setup-claude-code',{method:'POST',headers:apiHeaders(TOKEN,{'Content-Type':'application/json'}),body:JSON.stringify({roles:ccRoles})});
-      const d=await r.json();
-      if(!d.ok){
-        recomputeDirty();
-        toast((configSaved?'网关配置已保存，但 ':'')+'同步失败：'+(d.msg||'未知错误'),true);
-        return;
-      }
-      baselineRoles=cloneData(ccRoles);syncMessage=d.msg||'已同步到 Claude Code';
-    }
-    lastSavedAt=new Date().toLocaleTimeString('zh-CN');recomputeDirty();
-    if(configSaved){
-      const names=changedViews.map(v=>VIEWS[v].title).join('、');
-      let msg=`已保存 ${changedCount} 项（${names}）`;
-      if(mpChanged&&spChanged)msg+=' — 代理需重新连接（隧道页「重新连接」或菜单栏），AI 路由已自动重载';
-      else if(mpChanged)msg+=' — 点击隧道页「重新连接」或菜单栏生效';
-      else if(spChanged)msg+=' — AI 路由已自动重载';
-      if(syncMessage)msg+='；'+syncMessage;
-      toast(msg);
-    }else toast(syncMessage);
-  }catch(e){
-    recomputeDirty();toast((configSaved?'配置已保存，后续操作失败：':'保存失败：')+e.message,true);
-  }finally{
-    setSavingState(false);
-  }
+  await saveFlow(
+    {S,ccRoles,baselineState,baselineRoles},
+    {
+      fetch:(...a)=>fetch(...a),api:API,token:TOKEN,
+      confirmSync:ccConfirmSync,toast,gotoFirstError,
+      viewTitle:v=>(VIEWS[v]||{}).title||v,
+      commitConfig:st=>{baselineState=st;},
+      commitRoles:rl=>{baselineRoles=rl;},
+      stampSaved:at=>{lastSavedAt=at;},
+      setSaving:setSavingState,
+      now:()=>new Date().toLocaleTimeString('zh-CN'),
+    },
+    forceRulesSync);
+  recomputeDirty();  // 覆盖取消/失败/成功全部出口的状态栏与 pending bar 刷新
 }
 function toast(msg,err){
   const t=document.getElementById('toast');document.getElementById('toast-msg').textContent=msg;

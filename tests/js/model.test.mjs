@@ -665,3 +665,209 @@ test("ccBackupNote renders both backup branches", () => {
   assert.equal(L.ccBackupNote(null), "");
   assert.equal(L.ccBackupNote({ ok: false }), "");
 });
+
+// ── 保存流（saveFlow）：两阶段保存状态机（架构候选 1）──────────────
+// 事故回归：99999 端口写库、幽灵 api_key 保存都发生在这条流上。
+
+function flowDeps(over = {}) {
+  const calls = { toasts: [], saving: [], stamps: [], setups: [], previews: [], puts: [] };
+  const deps = {
+    api: "/api/state",
+    token: "T0KEN",
+    fetch: over.fetch ?? (async () => { throw new Error("unexpected fetch"); }),
+    confirmSync: over.confirmSync ?? (async (pv) => { calls.confirmed = pv; return true; }),
+    toast: (m, e) => calls.toasts.push({ m, e: !!e }),
+    gotoFirstError: (err) => { calls.goto = err; },
+    viewTitle: (v) => ({ tunnel: "代理隧道", proxy: "网络设置", providers: "供应商", rules: "Claude Code 同步" }[v] || v),
+    commitConfig: (st) => { calls.commitConfig = st; },
+    commitRoles: (rl) => { calls.commitRoles = rl; },
+    stampSaved: (at) => { calls.stamps.push(at); },
+    setSaving: (on, label) => { calls.saving.push([on, label]); },
+    now: () => "12:00:00",
+  };
+  return { deps, calls };
+}
+function fetchStub(routes) {
+  return async (url, opts) => {
+    const key = `${url}:${opts && opts.method}`;
+    const hit = routes[key];
+    if (!hit) throw new Error("unexpected fetch " + key);
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    const payload = typeof hit === "function" ? hit(body) : hit;
+    return { json: async () => payload };
+  };
+}
+function flowSnap(mutate) {
+  const base = L.normalizeState({ mp: { tunnels: [{ name: "t1", ssh_host: "h", ssh_port: 22, auth_type: "key" }] } });
+  const S = L.cloneData(base);
+  if (mutate) mutate(S, base);
+  return { S, baselineState: base, ccRoles: {}, baselineRoles: {} };
+}
+
+test("saveFlow: clean snapshot with no force is a no-op", async () => {
+  const { deps, calls } = flowDeps();
+  const out = await L.saveFlow(flowSnap(), deps, false);
+  assert.equal(out.configSaved, false);
+  assert.deepEqual(calls.toasts.map(t => t.m), ["没有需要保存的更改"]);
+  assert.equal(calls.saving.length, 0, "early return must not flip saving state");
+});
+
+test("saveFlow 事故回归A: 99999 端口在校验处被拦截，绝不发 PUT", async () => {
+  const snap = flowSnap((S) => { S.mp.http_listen_port = 99999; });
+  let fetched = 0;
+  const { deps, calls } = flowDeps({ fetch: async () => { fetched++; throw new Error("must not fetch"); } });
+  const out = await L.saveFlow(snap, deps, false);
+  assert.equal(fetched, 0, "invalid port must never reach the wire");
+  assert.ok(calls.toasts[0].e);
+  assert.match(calls.toasts[0].m, /HTTP 监听端口无效/);
+  assert.equal(calls.goto, "HTTP 监听端口无效");
+  assert.equal(out.configSaved, false);
+  assert.equal(calls.commitConfig, undefined, "no baseline advance");
+});
+
+test("saveFlow 事故回归B: 清空密钥后的快照与 baseline 同形 ⇒ 零网络、零写入", async () => {
+  // 幽灵 api_key 事故的模型层断言：collect 后 api_key=null 与掩码 baseline
+  // 不可构成 dirty——保存流因此一个请求都不发。
+  const snap = flowSnap();
+  snap.baselineState.sp.providers = { p1: { name: "p1", api_key: null, api_key_set: true } };
+  snap.S.sp.providers = { p1: { name: "p1", api_key: null, api_key_set: true } };
+  let fetched = 0;
+  const { deps, calls } = flowDeps({ fetch: async () => { fetched++; throw new Error("must not fetch"); } });
+  await L.saveFlow(snap, deps, false);
+  assert.equal(fetched, 0);
+  assert.match(calls.toasts[0].m, /没有需要保存的更改/);
+});
+
+test("saveFlow: config-only happy path commits clone and composes toast", async () => {
+  const snap = flowSnap((S) => { S.mp.socks5_port = 1081; });
+  const { deps, calls } = flowDeps({ fetch: fetchStub({ "/api/state:PUT": { ok: true } }) });
+  const out = await L.saveFlow(snap, deps, false);
+  assert.equal(out.configSaved, true);
+  assert.deepEqual(calls.commitConfig, snap.S, "PUT ok advances baseline to a clone of S");
+  assert.equal(calls.commitRoles, undefined, "no sync when roles unchanged");
+  assert.deepEqual(calls.saving, [[true, "保存中…"], [false, undefined]]);
+  assert.equal(calls.stamps.length, 1);
+  assert.match(calls.toasts.at(-1).m, /已保存 1 项（网络设置）/);
+});
+
+test("saveFlow: cross-page save names both pages and both effects", async () => {
+  const snap = flowSnap((S) => { S.mp.socks5_port = 1081; S.sp.providers = { p1: { name: "p1", enabled: true } }; });
+  const { deps, calls } = flowDeps({ fetch: fetchStub({ "/api/state:PUT": { ok: true } }) });
+  await L.saveFlow(snap, deps, false);
+  const m = calls.toasts.at(-1).m;
+  assert.match(m, /已保存 2 项（网络设置、供应商）/);
+  assert.match(m, /代理需重新连接/);
+  assert.match(m, /AI 路由已自动重载/);
+});
+
+test("saveFlow: PUT failure toasts server errors and never commits", async () => {
+  const snap = flowSnap((S) => { S.mp.socks5_port = 1081; });
+  const { deps, calls } = flowDeps({ fetch: fetchStub({ "/api/state:PUT": { ok: false, errors: ["端口冲突"] } }) });
+  const out = await L.saveFlow(snap, deps, false);
+  assert.equal(out.configSaved, false);
+  assert.ok(calls.toasts[0].e);
+  assert.match(calls.toasts[0].m, /端口冲突/);
+  assert.equal(calls.commitConfig, undefined);
+  assert.deepEqual(calls.saving.at(-1), [false, undefined], "finally still releases saving");
+});
+
+test("saveFlow: preview failure is fail-closed — setup never fires", async () => {
+  const snap = flowSnap();
+  let setups = 0;
+  const { deps, calls } = flowDeps({
+    fetch: fetchStub({
+      "/api/cc-sync-preview:POST": { ok: false, msg: "boom" },
+      "/api/setup-claude-code:POST": () => { setups++; return { ok: true }; },
+    }),
+  });
+  const out = await L.saveFlow(snap, deps, true);
+  assert.equal(setups, 0, "no diff ⇒ no write");
+  assert.equal(out.cancelled, true);
+  assert.ok(calls.toasts.some(t => /同步预览失败：boom/.test(t.m)));
+});
+
+test("saveFlow: user cancel after config save keeps roles dirty", async () => {
+  const snap = flowSnap((S) => { S.mp.socks5_port = 1081; });
+  snap.ccRoles = { opus: { model: "GLM_MAX/glm-5.2", ctx_1m: true } };
+  const { deps, calls } = flowDeps({
+    fetch: fetchStub({ "/api/state:PUT": { ok: true }, "/api/cc-sync-preview:POST": { ok: true, already: false, changes: [] } }),
+    confirmSync: async () => false,
+  });
+  const out = await L.saveFlow(snap, deps, true);
+  assert.equal(out.cancelled, true);
+  assert.equal(out.configSaved, true);
+  assert.ok(calls.commitConfig, "config baseline advanced before the modal");
+  assert.equal(calls.commitRoles, undefined, "roles baseline NOT advanced — stays dirty");
+  assert.match(calls.toasts.at(-1).m, /网关配置已保存；已取消写入/);
+  assert.equal(calls.stamps.length, 1);
+});
+
+test("saveFlow: confirmed sync writes once and stamps roles baseline", async () => {
+  const snap = flowSnap();
+  snap.ccRoles = { opus: { model: "GLM_MAX/glm-5.2", ctx_1m: true } };
+  let setupBody = null;
+  const { deps, calls } = flowDeps({
+    fetch: fetchStub({
+      "/api/state:PUT": { ok: true },
+      "/api/cc-sync-preview:POST": { ok: true, already: false, changes: [{ key: "X", action: "add", old: null, new: "y" }] },
+      "/api/setup-claude-code:POST": (b) => { setupBody = b; return { ok: true, msg: "已配置 → 网关" }; },
+    }),
+  });
+  const out = await L.saveFlow(snap, deps, false);
+  assert.equal(out.syncOk, true);
+  assert.equal(out.configSaved, true, "roles diff marks the rules view dirty — config PUT rides along (parity with the original flow)");
+  assert.deepEqual(setupBody.roles, snap.ccRoles);
+  assert.deepEqual(calls.commitRoles, snap.ccRoles);
+  assert.ok(calls.confirmed, "preview shown to the user before write");
+  assert.match(calls.toasts.at(-1).m, /已配置 → 网关/);
+});
+
+test("saveFlow: already-configured preview skips the modal (idempotent path)", async () => {
+  const snap = flowSnap();
+  snap.ccRoles = { opus: { model: "GLM_MAX/glm-5.2", ctx_1m: true } };
+  const { deps, calls } = flowDeps({
+    fetch: fetchStub({
+      "/api/state:PUT": { ok: true },
+      "/api/cc-sync-preview:POST": { ok: true, already: true, changes: [] },
+      "/api/setup-claude-code:POST": { ok: true, action: "already", msg: "已指向本网关" },
+    }),
+  });
+  const out = await L.saveFlow(snap, deps, true);
+  assert.equal(out.syncOk, true);
+  assert.equal(calls.confirmed, undefined, "no modal for a no-op write");
+  assert.match(calls.toasts.at(-1).m, /已指向本网关/);
+});
+
+test("saveFlow: setup failure after config save reports both facts", async () => {
+  const snap = flowSnap((S) => { S.mp.socks5_port = 1081; });
+  snap.ccRoles = { opus: { model: "GLM_MAX/glm-5.2", ctx_1m: true } };
+  const { deps, calls } = flowDeps({
+    fetch: fetchStub({
+      "/api/state:PUT": { ok: true },
+      "/api/cc-sync-preview:POST": { ok: true, already: false, changes: [{}] },
+      "/api/setup-claude-code:POST": { ok: false, msg: "disk full" },
+    }),
+  });
+  const out = await L.saveFlow(snap, deps, true);
+  assert.equal(out.configSaved, true);
+  assert.equal(out.syncOk, false);
+  assert.ok(calls.commitConfig);
+  assert.equal(calls.commitRoles, undefined);
+  assert.match(calls.toasts.at(-1).m, /网关配置已保存，但 同步失败：disk full/);
+});
+
+test("saveFlow: network exception surfaces as save-failed toast", async () => {
+  const snap = flowSnap((S) => { S.mp.socks5_port = 1081; });
+  const { deps, calls } = flowDeps({ fetch: async () => { throw new Error("offline"); } });
+  const out = await L.saveFlow(snap, deps, false);
+  assert.equal(out.configSaved, false);
+  assert.match(calls.toasts.at(-1).m, /保存失败：offline/);
+  assert.deepEqual(calls.saving.at(-1), [false, undefined]);
+});
+
+test("dirtyProjection: single-field change marks exactly that view", () => {
+  const snap = flowSnap((S) => { S.mp.socks5_port = 1081; });
+  const p = L.dirtyProjection(snap.baselineState, snap.S, {}, {});
+  assert.deepEqual([...p.views], ["proxy"]);
+  assert.equal(p.total, 1);
+});

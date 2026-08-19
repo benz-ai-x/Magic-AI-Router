@@ -40,6 +40,10 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 约定：Python 只递数据，绝不命名 JS 的 DOM 选择器、绝不手写 JS 源码（`json.dumps` 是唯一转义层）；dirty 等界面状态以 JS 为真相源，Python 侧仅为镜像，关窗拦截（`windowShouldClose_`）读镜像。
 
+### 保存流（Save Flow）
+
+设置界面的两阶段保存状态机（`shellui/config_ui.html` LAYER 1 的 `saveFlow`）：校验 → 保存网关配置（PUT /api/state）→ CC 同步预览（失败关闭）→ 用户确认弹窗 → 写入 Claude Code → baseline 推进 → 分支 toast。一切副作用（fetch/弹窗/toast/baseline 写回）经 deps 注入——真实现与测试桩是同一 seam 的两个 adapter，node 测试直接钉住状态机。调用方（LAYER 2 的 `saveAll`）只做表单 collect 与接线；dirty 真相源在 JS，经 `dirtyProjection` 与保存流同口径。
+
 ### 配置存储（ConfigStore）
 
 两个配置文件（`~/.magic-proxy.json` 与 `~/.suanpan.yaml`）路径的唯一权威注册表 + 共享安全写管线，位于 `mpconf/config_store.py`。所有读取方在调用时从 `PATHS` 注册表取路径——测试只需 `patch.dict(config_store.PATHS)` 单点重定向，任何测试都无法再写真实配置文件。

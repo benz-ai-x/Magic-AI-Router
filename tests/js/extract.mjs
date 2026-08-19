@@ -23,7 +23,7 @@ export function extractLayer(n) {
 export function loadLayer(n) {
   const src = extractLayer(n);
   // Collect top-level const/let/function names and return them.
-  const names = [...src.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm)]
+  const names = [...src.matchAll(/^(?:async\s+)?(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm)]
     .map((x) => x[1]);
   const factory = new Function(`${src}\nreturn {${names.join(",")}};`);
   return factory();
