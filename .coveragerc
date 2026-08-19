@@ -7,7 +7,7 @@ omit =
     shellui/log_window.py
     capture/ca_trust.py
     # Trivial entry points
-    mitmdump_entry.py
+    capture/mitmdump_entry.py
     tools/generate_icon.py
     suanpan/__main__.py
     # Test files themselves

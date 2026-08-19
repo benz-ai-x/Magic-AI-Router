@@ -19,8 +19,8 @@ CANONICAL = "Magic AI Router"
 _PACKAGING_PINS = {
     "app.py": 'name="Magic AI Router"',
     "build.sh": '--name "Magic AI Router"',
-    "build_dmg.sh": 'APP_NAME="Magic AI Router"',
-    "notarize.sh": 'APP_NAME="Magic AI Router"',
+    "scripts/build_dmg.sh": 'APP_NAME="Magic AI Router"',
+    "scripts/notarize.sh": 'APP_NAME="Magic AI Router"',
 }
 
 

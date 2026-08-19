@@ -14,7 +14,7 @@
 #                    omit to auto-pick the only Developer ID Application cert.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Magic AI Router"
 APP="$ROOT/dist/$APP_NAME.app"
 KEYCHAIN_PROFILE="magic-proxy-notary"
@@ -82,7 +82,7 @@ xcrun stapler validate "$APP"
 
 # ── 4. 用已签名 app 重建 dmg ────────────────────────────────────
 echo "▶ 4/6  重建 dmg + codesign dmg"
-bash "$ROOT/build_dmg.sh" >/dev/null
+bash "$ROOT/scripts/build_dmg.sh" >/dev/null
 DMG="$ROOT/dist/$APP_NAME-$VERSION.dmg"
 [ -f "$DMG" ] || { echo "未生成预期 DMG: $DMG"; exit 1; }
 # dmg 必须也用 Developer ID 签名,否则 spctl --assess 报 "no usable signature"

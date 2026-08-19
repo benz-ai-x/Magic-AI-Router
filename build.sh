@@ -64,7 +64,7 @@ build_mitmdump() {
         --distpath dist-mitmdump \
         --workpath build-mitmdump \
         --specpath build-mitmdump \
-        mitmdump_entry.py
+        capture/mitmdump_entry.py
 
     deactivate
     echo "mitmdump build complete: dist-mitmdump/mitmdump/mitmdump"

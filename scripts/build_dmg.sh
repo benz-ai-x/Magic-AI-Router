@@ -5,7 +5,7 @@
 # so the user can drag-to-install).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Magic AI Router"
 APP="$ROOT/dist/$APP_NAME.app"
 

@@ -43,7 +43,7 @@ bash build.sh
 cp -R "dist/Magic AI Router.app" /Applications/
 
 # 发布分发（签名 + 公证）
-bash notarize.sh
+bash scripts/notarize.sh
 ```
 
 ## 架构
@@ -51,8 +51,6 @@ bash notarize.sh
 ```
 app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有）
 util.py ── resource_path（frozen 平铺 / dev 按域包子目录查找）+ truncate + build_stamp + version_display
-mitmdump_entry.py ── 抓包构建入口（mitmproxy mitmdump 包装）
-
 mpconf/ ── 配置栈
   config.py ── 配置 I/O（load/save/merge/migrate）；http_listen_port 字段 + 读时兼容旧 "host:port"
   config_store.py ── 路径注册表 PATHS + 原子写管线（mkstemp+chmod 0600+os.replace）；所有托管配置文件的唯一安全写入口
@@ -81,6 +79,7 @@ capture/ ── 抓包
   capture_store.py ── 抓包目录/文件管理（跨进程共享）
   ai_capture_addon.py ── mitmproxy addon：6 家 AI 请求抽取落 JSONL
   ca_trust.py ── 根 CA 信任检测 + 引导窗
+  mitmdump_entry.py ── 抓包构建入口（mitmproxy mitmdump 包装）
   chromium_proxy.py ── Chromium 启动代理配置
 
 sysctl/ ── 系统集成

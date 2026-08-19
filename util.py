@@ -12,7 +12,7 @@ import time
 
 # Dev-mode search dirs for bundled resources (frozen .app keeps them flat in
 # _MEIPASS via --add-data "src:."; in dev they live in their domain packages).
-_RESOURCE_DEV_DIRS = ("", "shellui", "capture", "sysctl", "docs", "assets")
+_RESOURCE_DEV_DIRS = ("", "shellui", "capture", "sysctl", "docs", "docs/examples", "assets")
 
 
 def resource_path(name: str) -> str:
