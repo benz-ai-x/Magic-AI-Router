@@ -31,7 +31,7 @@ from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")
 LOG_PATH = os.path.join(LOG_DIR, "MagicProxy.log")
-VERSION = "0.4.9"
+VERSION = "0.4.11"
 VERSION_DISPLAY = version_display(VERSION, build_stamp())
 
 log_buffer = LogBuffer()
