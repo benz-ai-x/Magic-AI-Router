@@ -24,7 +24,7 @@ Magic AI Router — macOS 菜单栏应用（壳），承载两个独立产品：
 
 ## Tech Stack
 
-Python ≥3.9（自有代码下界；**打包工具链因 mitmproxy ≥12 需构建解释器 ≥3.12**，见 ADR-022）+ rumps（菜单栏 UI）+ asyncio（HTTP→SOCKS5 代理）+ PyObjC objc/AppKit/Foundation（WKWebView 设置窗 / CA 信任引导窗 `ca_trust.py` / 日志窗 `log_window.py`）+ Pillow（图标生成）+ mitmproxy 12.2.3（抓包模式 TLS MITM）+ FastAPI + uvicorn + httpx + pydantic（Suanpan AI 路由网关）；PyInstaller 打包 `.app`（`--windowed` + `LSUIElement=true`）；SSH 隧道经系统 `ssh` / `sshpass`（密码认证）；SSH 密码走 macOS Keychain。详见 ADR-000 + ADR-022。版本号见 `build.sh`。
+Python ≥3.9（自有代码下界；**打包工具链因 mitmproxy ≥12 需构建解释器 ≥3.12**，见 ADR-001）+ rumps（菜单栏 UI）+ asyncio（HTTP→SOCKS5 代理）+ PyObjC objc/AppKit/Foundation（WKWebView 设置窗 / CA 信任引导窗 `ca_trust.py` / 日志窗 `log_window.py`）+ Pillow（图标生成）+ mitmproxy 12.2.3（抓包模式 TLS MITM）+ FastAPI + uvicorn + httpx + pydantic（Suanpan AI 路由网关）；PyInstaller 打包 `.app`（`--windowed` + `LSUIElement=true`）；SSH 隧道经系统 `ssh` / `sshpass`（密码认证）；SSH 密码走 macOS Keychain。详见 ADR-000 + ADR-001。版本号见 `build.sh`。
 
 ## 命令
 
@@ -93,13 +93,13 @@ sysctl/ ── 系统集成
 services/ ── 服务
   config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token + body 上限）
   suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
-  claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json，经 config_store.atomic_write；env 契约见 ADR-024）
+  claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json，经 config_store.atomic_write；env 契约见 ADR-003）
   service_coordinator.py ── tick/sync_sleep/stop_all 编排
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围 / 缓存 / 路由来源）+ 供应商连通性探测
   stats.py ── 运行统计
 
 suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM 后端）
-  config.py ── Pydantic 配置 schema + YAML 加载/回写 + API key 掩码契约（api_key_set 布尔，真实 key 不出进程；见 ADR-023）
+  config.py ── Pydantic 配置 schema + YAML 加载/回写 + API key 掩码契约（api_key_set 布尔，真实 key 不出进程；见 ADR-002）
   main.py ── FastAPI app factory + 路由 handler
   middleware.py ── APIKey + BodyLimit 中间件
   proxy.py ── 流式代理转发 + 传输级重试
@@ -120,11 +120,11 @@ suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM �
 
 ### Magic Proxy — `~/.magic-proxy.json`
 
-支持多隧道，`auth_type` 为 `key`（默认）或 `password`（需 `sshpass`）。密码走 macOS Keychain。监听地址存 `http_listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-023）。
+支持多隧道，`auth_type` 为 `key`（默认）或 `password`（需 `sshpass`）。密码走 macOS Keychain。监听地址存 `http_listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-002）。
 
 ### Suanpan AI 路由 — `~/.suanpan.yaml`
 
-参考 `suanpan.example.yaml`。首次启动时自动创建最小默认配置。监听地址存 `listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-023）。
+参考 `suanpan.example.yaml`。首次启动时自动创建最小默认配置。监听地址存 `listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-002）。
 
 ## 注意事项
 

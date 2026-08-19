@@ -1,6 +1,6 @@
-"""PyInstaller entry point for the bundled mitmdump helper (ADR-022).
+"""PyInstaller entry point for the bundled mitmdump helper (ADR-001).
 
-Not invoked by app.py yet -- that wiring is ADR-022 Task 2/4. This module
+Not invoked by app.py yet -- that wiring is ADR-001 Task 2/4. This module
 exists solely so `PyInstaller` has a concrete script to analyze; it just
 delegates straight into mitmproxy's own CLI entry point.
 """

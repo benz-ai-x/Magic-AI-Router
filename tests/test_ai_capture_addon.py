@@ -1,4 +1,4 @@
-"""TDD suite for ai_capture_addon (ADR-022 Task 3).
+"""TDD suite for ai_capture_addon (ADR-001 Task 3).
 
 Pure functions (identify / extract_request / reassemble / build_record /
 write_jsonl) carry no mitmproxy dependency, so they run under plain pytest.

@@ -1,4 +1,4 @@
-"""Tests for ca_trust module (ADR-022 Task 4 AC-3: CA trust detection +
+"""Tests for ca_trust module (ADR-001 Task 4 AC-3: CA trust detection +
 first-run guidance). Trust-state detection and the privileged trust command
 are pure functions mocked at the subprocess boundary (same convention as
 test_system_proxy.py) -- the PyObjC guide window itself is exercised via

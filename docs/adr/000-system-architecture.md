@@ -5,11 +5,11 @@
 - 决策者：tech-lead
 - 影响范围：项目全栈（已上线 v0.1.2 的 brownfield macOS 应用）
 
-> **更新注记（2026-08-13）：** 本 ADR 记录的是 v0.1.2 → v0.4.0 时期的架构决策。后续变更见 ADR-022（TLS MITM 抓包）、ADR-023（配置表示收敛与 API key 布尔契约）、ADR-024（Claude Code 环境变量契约）。当前版本、模块清单、菜单结构等易过期信息以 `CLAUDE.md` 为权威源——本文不再同步版本号和行数。已删特性：tiktoken 依赖、long_context/background/think 路由场景（见 CONTEXT.md L87）。`proxy_runtime.py` 已不存在（`ProxyRuntime` 在 `proxy.py`）。
+> **更新注记（2026-08-13）：** 本 ADR 记录的是 v0.1.2 → v0.4.0 时期的架构决策。后续变更见 ADR-001（TLS MITM 抓包）、ADR-002（配置表示收敛与 API key 布尔契约）、ADR-003（Claude Code 环境变量契约）。当前版本、模块清单、菜单结构等易过期信息以 `CLAUDE.md` 为权威源——本文不再同步版本号和行数。已删特性：tiktoken 依赖、long_context/background/think 路由场景（见 CONTEXT.md L87）。`proxy_runtime.py` 已不存在（`ProxyRuntime` 在 `proxy.py`）。
 
 ## 上下文
 
-Magic Proxy 是一个**已存在**的 macOS 菜单栏应用：通过 SSH 隧道把远端 SOCKS5 代理暴露成本地 HTTP 代理，带实时流量统计。纯 Python 3 实现，可打包为原生 `.app` 并经 Developer ID 签名 + Apple 公证分发。本 ADR 首版基线为 v0.1.2；当前版本见 `build.sh`（易过期信息以 `CLAUDE.md` 为权威源）——v0.4.0 引入 Suanpan AI 路由网关 + Webview 配置界面 + 架构重构（详见 §v0.4.0 更新）；TLS MITM 抓包 feature 决策见 ADR-022。
+Magic Proxy 是一个**已存在**的 macOS 菜单栏应用：通过 SSH 隧道把远端 SOCKS5 代理暴露成本地 HTTP 代理，带实时流量统计。纯 Python 3 实现，可打包为原生 `.app` 并经 Developer ID 签名 + Apple 公证分发。本 ADR 首版基线为 v0.1.2；当前版本见 `build.sh`（易过期信息以 `CLAUDE.md` 为权威源）——v0.4.0 引入 Suanpan AI 路由网关 + Webview 配置界面 + 架构重构（详见 §v0.4.0 更新）；TLS MITM 抓包 feature 决策见 ADR-001。
 
 AppGenesisForge（AGF）团队模板刚装入本项目，其 ADR-000 模板默认技术栈（React + FastAPI + Postgres）与 Magic Proxy 完全不符。本 ADR 是按**实际代码**（`grep` import + 通读各模块）回填的真实架构基线，替换模板示例。目的是让后续任何 feature / 技术选型有一个与代码一致的起点，并显式记录存量栈里**已知的风险**（见「备选方案 / 影响」段的 rumps 维护状态）。
 
@@ -20,7 +20,7 @@ AppGenesisForge（AGF）团队模板刚装入本项目，其 ADR-000 模板默�
 | 类别 | 选型 | 理由（经代码核实） |
 |---|---|---|
 | 项目形态 | macOS 菜单栏常驻代理工具，单平台 macOS | 已上线 v0.1.2 的存量应用；菜单栏图标常驻（🟢🟡🔴），后台跑 SSH 隧道 + HTTP→SOCKS5 代理 |
-| 语言 | Python ≥3.9（自有代码）；打包工具链 ≥3.12 | `port_check.py:24,107` 用 `tuple[int, str]` 内建泛型订阅（PEP 585），需 3.9+；shebang `#!/usr/bin/env python3`；无 `python_requires` pin。**v0.3.0**：打包因 mitmproxy `requires-python>=3.12` 需构建解释器 ≥3.12（见 ADR-022 + 下「v0.3.0 更新」注） |
+| 语言 | Python ≥3.9（自有代码）；打包工具链 ≥3.12 | `port_check.py:24,107` 用 `tuple[int, str]` 内建泛型订阅（PEP 585），需 3.9+；shebang `#!/usr/bin/env python3`；无 `python_requires` pin。**v0.3.0**：打包因 mitmproxy `requires-python>=3.12` 需构建解释器 ≥3.12（见 ADR-001 + 下「v0.3.0 更新」注） |
 | 菜单栏 UI | `rumps`（基于 PyObjC） | `app.py:14 import rumps`；rumps 包裹 NSStatusItem/NSMenu/NSRunLoop，最小样板搭菜单栏 + Timer 每秒刷新；主线程跑 NSRunLoop，后台 daemon 线程跑 asyncio |
 | 配置界面 | WKWebView（PyObjC）+ Web 配置服务 | `webview_window.py` 开 WKWebView 窗口加载自包含 `config_ui.html`（侧边栏分组：代理 / AI 路由）；`config_server.py`（`:9528`）提供 JSON CRUD + bearer token + 余额/用量查询。v0.4.0 取代已删的原生 `prefs.py` 配置窗。PyObjC 同时是 rumps 的传递依赖 |
 | 代理核心 | `asyncio`（stdlib）HTTP→SOCKS5 | `proxy.py:2 import asyncio`；单事件循环多路复用，无 thread-per-connection；`proxy.py` 手写 SOCKS5 握手 + HTTP CONNECT 解析 |
@@ -40,7 +40,7 @@ AppGenesisForge（AGF）团队模板刚装入本项目，其 ADR-000 模板默�
 
 **线程模型（核实自 `app.py` + `proxy.py` + `suanpan_runtime.py`）：** 主线程跑 rumps NSRunLoop（菜单栏 UI）。后台 daemon 线程跑三个独立服务：① asyncio 事件循环（本地代理 `ProxyRuntime` :8888）；② Suanpan 网关（uvicorn :9527，延迟导入）；③ Web 配置服务（`config_server.py` :9528，`http.server`）。**Config server（:9528）与 AI 路由网关（:9527）是两个独立端口，不可合并。**`stats.py` 用 `threading.Lock` 保护跨线程流量统计读写；rumps.Timer 每秒触发菜单刷新。
 
-**v0.3.0 更新 — TLS MITM 抓包 feature**（决策见 [ADR-022](022-mitm-packet-capture.md)，本节仅同步基线、不重述决策）：新增「抓包模式」经 mitmproxy 级联解密 HTTPS、抽 6 家 AI（OpenAI/Anthropic/DeepSeek/豆包/Qwen/MiniMax）请求·响应落 JSONL（`~/.magic-proxy-captures/<date>.jsonl`）；数据流 `浏览器 → mitmdump:8080（MITM 看明文）→ proxy.py:8888（upstream HTTP，零改动）→ SSH SOCKS5:1080 → 真实服务器`。新依赖 **mitmproxy 12.2.3**（`mitmdump` 子进程；PyInstaller 自带 hooks 打包，Task 1 spike 通过）。**打包工具链下界从 3.9 抬到 3.12**（mitmproxy ≥11.1.0 的 PyPI `requires-python>=3.12`；构建解释器约束、非用户系统约束——**自有代码下界仍 ≥3.9**）。新增 4 模块见「项目目录」的 `[v0.3.0/ADR-022]` 标注项。
+**v0.3.0 更新 — TLS MITM 抓包 feature**（决策见 [ADR-001](001-mitm-packet-capture.md)，本节仅同步基线、不重述决策）：新增「抓包模式」经 mitmproxy 级联解密 HTTPS、抽 6 家 AI（OpenAI/Anthropic/DeepSeek/豆包/Qwen/MiniMax）请求·响应落 JSONL（`~/.magic-proxy-captures/<date>.jsonl`）；数据流 `浏览器 → mitmdump:8080（MITM 看明文）→ proxy.py:8888（upstream HTTP，零改动）→ SSH SOCKS5:1080 → 真实服务器`。新依赖 **mitmproxy 12.2.3**（`mitmdump` 子进程；PyInstaller 自带 hooks 打包，Task 1 spike 通过）。**打包工具链下界从 3.9 抬到 3.12**（mitmproxy ≥11.1.0 的 PyPI `requires-python>=3.12`；构建解释器约束、非用户系统约束——**自有代码下界仍 ≥3.9**）。新增 4 模块见「项目目录」的 `[v0.3.0/ADR-001]` 标注项。
 
 **v0.4.0 更新 — Suanpan AI 路由网关 + Webview 配置 + 架构重构**：① 新增 Suanpan 网关（`suanpan/` 子包，FastAPI + uvicorn，:9527）将多家 LLM 后端统一为 Anthropic Messages API，按 内联覆盖 → `SUBAGENT-MODEL` 标签 → 模型规则 → 默认 链路路由；② 以 WKWebView + Web 配置服务（`config_server.py` :9528 + `config_ui.html` + `webview_window.py`）取代原生 `prefs.py` 配置窗（`prefs.py` 已删）；③ `app.py` 瘦身为纯编排器，拆出 `config.py` / `menu_builder.py` / `sys_proxy_controller.py` / `retry_scheduler.py` / `host_key_flow.py` / `subprocess_monitor.py`（`SSHMonitor`/`CaptureMonitor` 共同基类）/ `capture_store.py` 等模块；④ 新增 `sleep_blocker.py`（防睡眠）+ `login_item.py`（开机自启）。Suanpan 依赖为 `>=` 下界（非 `==` pin）。当前架构以 `CLAUDE.md` 为权威源。
 
@@ -97,11 +97,11 @@ config_ui.html          # [v0.4.0] 自包含 Web 配置面板（侧边栏导航�
 webview_window.py       # [v0.4.0] WKWebView 窗口
 suanpan_runtime.py      # [v0.4.0] Suanpan 网关线程化运行时（延迟导入）
 suanpan/                # [v0.4.0] AI 路由网关子包（FastAPI :9527，详见 CLAUDE.md）
-capture.py              # [v0.3.0/ADR-022] mitmdump 子进程管理（抓包模式）
+capture.py              # [v0.3.0/ADR-001] mitmdump 子进程管理（抓包模式）
 capture_store.py        # [v0.4.0] 抓包目录/文件管理（跨进程共享）
-ai_capture_addon.py     # [v0.3.0/ADR-022] mitmproxy addon：6 家 AI 请求·响应抽取落 JSONL
-ca_trust.py             # [v0.3.0/ADR-022] 根 CA 信任检测 + 首次 PyObjC 引导窗
-mitmdump_entry.py       # [v0.3.0/ADR-022] PyInstaller 冻结 .app 内 mitmdump 入口 shim
+ai_capture_addon.py     # [v0.3.0/ADR-001] mitmproxy addon：6 家 AI 请求·响应抽取落 JSONL
+ca_trust.py             # [v0.3.0/ADR-001] 根 CA 信任检测 + 首次 PyObjC 引导窗
+mitmdump_entry.py       # [v0.3.0/ADR-001] PyInstaller 冻结 .app 内 mitmdump 入口 shim
 system_proxy.py         # networksetup 包装：事务式 apply/clear + 崩溃恢复
 sleep_blocker.py        # [v0.3.7] 防系统睡眠（代理运行期）
 login_item.py           # [v0.3.7] macOS 登录项（开机自启）
@@ -154,8 +154,8 @@ tests/                  # pytest 测试套（数量以 `pytest tests/` 为准）
 
 | 选型 | 选定版本 | 最新稳定版 | 与最新版差距 | 维护状态 | 信息来源（含原文摘录） |
 |---|---|---|---|---|---|
-| Python | 未 pin（自有代码 ≥3.9；**打包工具链 ≥3.12**，v0.3.0 起） | — | — | — | 代码内证（无 `python_requires`）；打包下界 3.12 因 mitmproxy `requires-python>=3.12`（ADR-022 §版本与查证 实测 2026-07-08） |
-| mitmproxy（v0.3.0，抓包） | 12.2.3（`requirements-dev.txt` `==`） | 12.2.3（2026-05-12） | 取最新 | Active | 决策 + 查证见 [ADR-022](022-mitm-packet-capture.md)；`requirements-dev.txt` `mitmproxy==12.2.3`；PyInstaller 自带 hooks（`mitmproxy/utils/pyinstaller/`）打包，Task 1 spike 通过 |
+| Python | 未 pin（自有代码 ≥3.9；**打包工具链 ≥3.12**，v0.3.0 起） | — | — | — | 代码内证（无 `python_requires`）；打包下界 3.12 因 mitmproxy `requires-python>=3.12`（ADR-001 §版本与查证 实测 2026-07-08） |
+| mitmproxy（v0.3.0，抓包） | 12.2.3（`requirements-dev.txt` `==`） | 12.2.3（2026-05-12） | 取最新 | Active | 决策 + 查证见 [ADR-001](001-mitm-packet-capture.md)；`requirements-dev.txt` `mitmproxy==12.2.3`；PyInstaller 自带 hooks（`mitmproxy/utils/pyinstaller/`）打包，Task 1 spike 通过 |
 | rumps | `requirements-dev.txt` `rumps==0.4.0` | 0.4.0（2022-10-14） | 无（已 pin 到基线最新，但「最新」本身就旧） | ⚠️ **Stale**——最后一次 PyPI 发布 2022-10-14，近 4 年无新版；GitHub 偶有 commit 但无正式 release。当前仍可在 macOS 工作，属需监控的存量风险 | [pypi.org/project/rumps](https://pypi.org/project/rumps/) — "Latest release. Released: Oct 14, 2022"；[github.com/jaredks/rumps](https://github.com/jaredks/rumps) |
 | PyObjC（pyobjc-core / pyobjc-framework-Cocoa） | `requirements-dev.txt` `==12.2.1` | 12.2.1（2026-06-19） | 无（已 pin 到基线最新） | Active | [pypi.org/project/pyobjc-core](https://pypi.org/project/pyobjc-core/) — "12.2.1 Jun 19, 2026; 12.2 May 30, 2026; 12.1 Nov 14, 2025"；注：`webview_window.py`/`ca_trust.py`/`log_window.py` 直接用 objc/AppKit/Foundation，且 rumps 传递依赖 PyObjC |
 | PyInstaller | `requirements-dev.txt` `pyinstaller==6.21.0` | 6.21.0 | 无（已 pin 到基线最新） | Active | [pyinstaller.org](https://pyinstaller.org/) — "PyInstaller 6.21.0 documentation"；[github.com/pyinstaller/pyinstaller/releases](https://github.com/pyinstaller/pyinstaller/releases) |

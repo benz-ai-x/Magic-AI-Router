@@ -1,4 +1,4 @@
-"""mitmdump subprocess manager (ADR-022 Task 2).
+"""mitmdump subprocess manager (ADR-001 Task 2).
 
 Inherits the shared SubprocessMonitor lifecycle (start/stop/check/reap).
 Config flows one-way via env vars to the mitmproxy addon; the addon only
@@ -34,7 +34,7 @@ LOOPBACK_HOST = "127.0.0.1"
 
 def cleanup_expired_captures(capture_dir: str, retention_days: int) -> int:
     """Delete daily JSONL capture files older than the retention window
-    (ADR-022 Task 5 AC-1).
+    (ADR-001 Task 5 AC-1).
 
     Semantics (locked): retention_days > 0 -> delete files whose age in
     days is >= retention_days (keeps exactly retention_days days of data,

@@ -307,7 +307,7 @@ SQLite `proxy_request_logs` 分列保存四类 token、四类 cost，以及 `inp
 - Anthropic 流式和非流式响应都提取 input/output/cache-read/cache-create 四桶；
 - 统计页的命中率口径与 CC-Switch 后端一致。
 
-实现依据：[Magic compat](https://github.com/benz-ai-x/Magic-AI-Router/blob/27145fff7db5d7b3a0e45ddba54f0adcec151735/suanpan/compat.py#L42-L117)、[转发路径](https://github.com/benz-ai-x/Magic-AI-Router/blob/27145fff7db5d7b3a0e45ddba54f0adcec151735/suanpan/proxy.py#L143-L197)、[usage extractor](https://github.com/benz-ai-x/Magic-AI-Router/blob/27145fff7db5d7b3a0e45ddba54f0adcec151735/suanpan/usage_extractor.py#L1-L95)、[ADR-025](https://github.com/benz-ai-x/Magic-AI-Router/blob/27145fff7db5d7b3a0e45ddba54f0adcec151735/docs/adr/025-prompt-caching-and-prefix-stability.md#L1-L60)。
+实现依据：[Magic compat](https://github.com/benz-ai-x/Magic-AI-Router/blob/27145fff7db5d7b3a0e45ddba54f0adcec151735/suanpan/compat.py#L42-L117)、[转发路径](https://github.com/benz-ai-x/Magic-AI-Router/blob/27145fff7db5d7b3a0e45ddba54f0adcec151735/suanpan/proxy.py#L143-L197)、[usage extractor](https://github.com/benz-ai-x/Magic-AI-Router/blob/27145fff7db5d7b3a0e45ddba54f0adcec151735/suanpan/usage_extractor.py#L1-L95)、[ADR-004](https://github.com/benz-ai-x/Magic-AI-Router/blob/27145fff7db5d7b3a0e45ddba54f0adcec151735/docs/adr/004-prompt-caching-and-prefix-stability.md#L1-L60)。
 
 尚未覆盖的 CC-Switch 能力：
 

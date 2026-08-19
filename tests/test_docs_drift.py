@@ -16,8 +16,8 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 ADR_000 = ROOT / "docs" / "adr" / "000-system-architecture.md"
 CLAUDE_MD = ROOT / "CLAUDE.md"
-ADR_024 = ROOT / "docs" / "adr" / "024-claude-code-env-contract.md"
-ADR_025 = ROOT / "docs" / "adr" / "025-prompt-caching-and-prefix-stability.md"
+ADR_024 = ROOT / "docs" / "adr" / "003-claude-code-env-contract.md"
+ADR_025 = ROOT / "docs" / "adr" / "004-prompt-caching-and-prefix-stability.md"
 
 # `__init__.py` is a package marker, not a module — never listed in docs.
 _SKIP = frozenset({"__init__.py"})
@@ -79,53 +79,53 @@ class TestVersionSingleSource:
 
 
 class TestConfigStoreDocstringContract:
-    """mpconf/config_store.py must use the current ADR-023 vocabulary."""
+    """mpconf/config_store.py must use the current ADR-002 vocabulary."""
 
     def test_no_masking_wording(self):
         text = (ROOT / "mpconf/config_store.py").read_text(encoding="utf-8")
         assert "key masking" not in text, \
-            "mpconf/config_store.py still uses the pre-ADR-023 'key masking' wording"
+            "mpconf/config_store.py still uses the pre-ADR-002 'key masking' wording"
         assert "api_key_set" in text, \
             "mpconf/config_store.py docstring should name the api_key_set contract"
 
 
 class TestClaudeCodeEnvContractDocumented:
     """#45: the env-var scheme claude_code_setup writes must be documented
-    in ADR-024 — cross-checked against the code so the doc can't drift."""
+    in ADR-003 — cross-checked against the code so the doc can't drift."""
 
     def test_adr_024_exists(self):
-        assert ADR_024.exists(), "docs/adr/024-claude-code-env-contract.md missing"
+        assert ADR_024.exists(), "docs/adr/003-claude-code-env-contract.md missing"
 
     def test_every_env_var_documented(self):
         from services.claude_code_setup import _ROLES
         text = ADR_024.read_text(encoding="utf-8")
         env_vars = [env_var for _, _, env_var, _ in _ROLES]
         for var in env_vars:
-            assert var in text, f"{var} not documented in ADR-024"
+            assert var in text, f"{var} not documented in ADR-003"
 
     def test_contract_terms_documented(self):
         text = ADR_024.read_text(encoding="utf-8")
         for term in ("ctx_1m", "[1M]", "ANTHROPIC_BASE_URL",
                      "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"):
-            assert term in text, f"{term} not documented in ADR-024"
+            assert term in text, f"{term} not documented in ADR-003"
 
 
 class TestPromptCachingAdrDocumented:
-    """ADR-025: the caching architecture terms the code relies on
+    """ADR-004: the caching architecture terms the code relies on
     (anthropic_native, json_mode, the usage buckets) must stay documented."""
 
     def test_adr_025_exists(self):
-        assert ADR_025.exists(), "docs/adr/025-prompt-caching-and-prefix-stability.md missing"
+        assert ADR_025.exists(), "docs/adr/004-prompt-caching-and-prefix-stability.md missing"
 
     def test_caching_contract_terms_documented(self):
         text = ADR_025.read_text(encoding="utf-8")
         for term in ("anthropic_native", "json_mode",
                      "cache_read_input_tokens", "cache_creation_input_tokens"):
-            assert term in text, f"{term} not documented in ADR-025"
+            assert term in text, f"{term} not documented in ADR-004"
 
     def test_prefix_stability_rule_documented(self):
         text = ADR_025.read_text(encoding="utf-8")
-        assert "确定性" in text, "deterministic-normalization rule not documented in ADR-025"
+        assert "确定性" in text, "deterministic-normalization rule not documented in ADR-004"
         assert "缓存" in text
 
 

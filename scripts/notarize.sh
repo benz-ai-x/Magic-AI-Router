@@ -53,7 +53,7 @@ if [ -n "${MP_APP_PASSWORD:-}" ]; then
 fi
 
 # ── 1. codesign .app(深签 + hardened runtime + 时间戳)─────────
-# --deep 已覆盖 ADR-022 抓包模式打包进 Contents/Resources|Frameworks/mitmdump/
+# --deep 已覆盖 ADR-001 抓包模式打包进 Contents/Resources|Frameworks/mitmdump/
 # 的嵌套 mitmdump 可执行文件（build.sh 现默认 bundle，Task 5）——deep sign
 # 会递归对 bundle 内所有嵌套二进制用同一身份 + hardened runtime + 时间戳重签，
 # 不需要为 mitmdump 单独加一条 codesign 命令。下面额外对该嵌套二进制单独

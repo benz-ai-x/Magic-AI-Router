@@ -1,4 +1,4 @@
-"""Root CA trust detection + first-run guidance window (ADR-022 Task 4 AC-3).
+"""Root CA trust detection + first-run guidance window (ADR-001 Task 4 AC-3).
 
 Trusts ONLY the public leaf certificate mitmdump generates on first launch
 into its default confdir (~/.mitmproxy/mitmproxy-ca-cert.pem). The private
@@ -12,7 +12,7 @@ than silently assuming a state we couldn't actually confirm.
 Trusting is a genuine macOS security-store mutation and always goes through
 `security add-trusted-cert`, which triggers an interactive OS admin password
 prompt -- that prompt is the actual user-consent gate and cannot be
-bypassed by this code (see ADR-022 §证书信任 UX). This module never calls
+bypassed by this code (see ADR-001 §证书信任 UX). This module never calls
 it without the user first clicking "信任并继续" in CATrustGuideWindow.
 """
 import logging

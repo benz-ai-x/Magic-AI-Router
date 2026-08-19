@@ -1,8 +1,9 @@
-# ADR-025: Prompt caching 架构与网关前缀稳定性契约
+# ADR-004: Prompt caching 架构与网关前缀稳定性契约
 
 - 状态：Accepted
 - 日期：2026-08-16
 - 决策者：tech-lead（用户确认）
+- 原编号：ADR-025（2026-08-19 仓库重建后重编号压缩间隙）
 - 影响范围：suanpan/compat.py、suanpan/config.py、suanpan/proxy.py、suanpan/usage_extractor.py
 - 关联：#48（anthropic_native）、#49（非流式记账）；调研依据 deepseek-harness（DeepSeek 官方 agent harness，`packages/llm/llm-deepseek/`）
 

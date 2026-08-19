@@ -1,4 +1,4 @@
-"""Tests for app.py's capture-mode integration (ADR-022 Task 4).
+"""Tests for app.py's capture-mode integration (ADR-001 Task 4).
 
 The pure capture logic (state machine, menu titles, mitmdump resolution) now
 lives on CaptureController and is tested directly in test_capture_controller.py.

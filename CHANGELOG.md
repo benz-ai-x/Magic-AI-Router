@@ -22,12 +22,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 ## [v0.4.7] — 2026-08-13 — 架构深化 + 覆盖率 100% + 安全修复（#37）
 
 ### Changed
-- **架构深化（4 候选 + ADR-023）**：ServiceCoordinator 瘦身；`http_listen`/`listen` 收敛为整型端口字段 + 读时兼容旧格式；原子写收敛到 `config_store`；`claude_code_setup` 独立模块。
+- **架构深化（4 候选 + ADR-002）**：ServiceCoordinator 瘦身；`http_listen`/`listen` 收敛为整型端口字段 + 读时兼容旧格式；原子写收敛到 `config_store`；`claude_code_setup` 独立模块。
 - **UI 信息架构优化（#36）**：导航副标题 + 面板分组对齐产品 + 状态页引导文案 + Base URL 预设提示。
 - **余额配额行结构化（#34）**：`normalize_balance` 返回结构化 quotas 数据，UI 统一渲染。
 
 ### Added
-- **ADR-023**：配置表示与掩码决策固化（`api_key_set` 布尔契约，真实 key 不出进程）。
+- **ADR-002**：配置表示与掩码决策固化（`api_key_set` 布尔契约，真实 key 不出进程）。
 
 ### Fixed
 - **安全 + 正确性（#37，15 项）**：明文密码不落盘 + keychain 日志脱敏；token 常量时间比较 + body 上限 + 负数 Content-Length 防护；SSE CRLF 兼容 + 逗号 target 校验 + auth_header 大小写；PyObjC 方法名规避单下划线 + CA 路径延迟计算。

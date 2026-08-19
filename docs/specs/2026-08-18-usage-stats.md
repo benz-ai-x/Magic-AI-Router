@@ -4,13 +4,13 @@
 
 ## Problem Statement
 
-我把 Claude Code 接到 Suanpan 网关后面跑第三方供应商（GLM / KIMI / DeepSeek）。**Prompt caching 是这套架构省钱省延迟的核心机制**——ADR-025 的前缀稳定性契约、`anthropic_native` 开关，整个架构纪律都是为了让上游缓存能命中。但我现在完全看不见缓存有没有命中：
+我把 Claude Code 接到 Suanpan 网关后面跑第三方供应商（GLM / KIMI / DeepSeek）。**Prompt caching 是这套架构省钱省延迟的核心机制**——ADR-004 的前缀稳定性契约、`anthropic_native` 开关，整个架构纪律都是为了让上游缓存能命中。但我现在完全看不见缓存有没有命中：
 
 - 「运行状态」页只有一张全时段供应商表（调用 / Input / Output / 错误），没有缓存读/写、没有命中率、没有时间维度
 - 我无法回答：「缓存命中率是多少？」「今天用了多少 token？」「请求是走 rule 命中还是 default 兜底？」「开了 anthropic_native 之后命中率有没有真的上来？」
 - 全时段聚合让「昨天改了配置有没有效果」这类问题无法验证
 
-数据其实早已完整落账——`usage.jsonl` 每条记录含四桶（input / cache_read / cache_creation / output）、时间戳、scenario、latency、status。**缺的只是聚合与展示**。ADR-025 决策 4 明确把「缓存命中率的滚动聚合与 UI」留作 backlog，本 issue 兑现它。
+数据其实早已完整落账——`usage.jsonl` 每条记录含四桶（input / cache_read / cache_creation / output）、时间戳、scenario、latency、status。**缺的只是聚合与展示**。ADR-004 决策 4 明确把「缓存命中率的滚动聚合与 UI」留作 backlog，本 issue 兑现它。
 
 ## Solution
 
@@ -24,7 +24,7 @@
 4. **供应商分组表**：现有调用/Input/Output/错误 + 新增缓存读、缓存写、命中率列
 5. **路由来源分组表**：inline / subagent / rule / default 四类 scenario 的调用数与命中率——全网的独家数据（cc-switch / ccusage 都拿不到路由路径）
 
-**缓存命中率口径**：`cache_read / (input + cache_read + cache_creation)`。四桶不相交（ADR-025 决策 2），分母即计费输入总量；DeepSeek 无写指标（creation=0）自动兼容；分母为 0 显示 `—` 而非 0%。
+**缓存命中率口径**：`cache_read / (input + cache_read + cache_creation)`。四桶不相交（ADR-004 决策 2），分母即计费输入总量；DeepSeek 无写指标（creation=0）自动兼容；分母为 0 显示 `—` 而非 0%。
 
 ## User Stories
 
@@ -34,7 +34,7 @@
 4. 作为网关用户，当某 Anthropic 家族供应商命中率长期为 0 时，我想看到一条轻提示（「检查该供应商是否开启 Anthropic 原生模式」），以便发现配置遗漏
 5. 作为网关用户，我想切换今日 / 近 7 天 / 全部，以便回答「今天 vs 累计」两类问题
 6. 作为刚改了路由配置的用户，我想用时间段对比改前改后的命中率和用量分布，以便验证改动效果
-7. 作为网关用户，我想看每日趋势表，以便发现用量突增或命中率骤降（骤降可能意味着归一化形状变化打冷了缓存——ADR-025 决策 3 的预警）
+7. 作为网关用户，我想看每日趋势表，以便发现用量突增或命中率骤降（骤降可能意味着归一化形状变化打冷了缓存——ADR-004 决策 3 的预警）
 8. 作为网关用户，我想按路由来源（inline / subagent / rule / default）看调用分布，以便理解规则命中率和兜底流量占比
 9. 作为网关用户，我想在路由来源分组里看到各 scenario 的缓存命中率，以便判断哪类流量的缓存效率低
 10. 作为网关用户，我想看到错误数与平均延迟随时间范围联动变化，以便按时间段评估供应商稳定性
@@ -48,7 +48,7 @@
 
 ## Implementation Decisions
 
-- **唯一新逻辑在聚合层**：扩展 `balance_usage` 的 usage 聚合（现有 `fetch_usage` 纯函数接缝，吃 raw config dict）。**写路径零改动**——四桶、ts、scenario、latency、status 全部已在账上（ADR-025 决策 2/4）
+- **唯一新逻辑在聚合层**：扩展 `balance_usage` 的 usage 聚合（现有 `fetch_usage` 纯函数接缝，吃 raw config dict）。**写路径零改动**——四桶、ts、scenario、latency、status 全部已在账上（ADR-004 决策 2/4）
 - **API**：`GET /api/usage` 增加 `range` 查询参数（`today` | `7d` | `all`，默认 `all`），config_server 对取值做白名单校验。响应在现有 `{total, providers}` 形状上扩展，旧键保持兼容：
   - `total` / `providers[*]` 各增 `cache_read_tokens`、`cache_creation_tokens`、`cache_hit_rate`（0–1 浮点或 null）、`errors` 保持
   - 新增 `daily`（按 CST 日历日分桶，含各桶与命中率）与 `scenarios`（按 scenario 分组）两个数组/映射

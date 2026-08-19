@@ -13,7 +13,7 @@ Entry points:
   "name": optional display name for *_MODEL_NAME vars}.  When None,
   derives from Suanpan routing rules (backward compatible).
 - The gateway listen always comes from config_store.suanpan_listen()
-  (the canonical ADR-023 resolver).
+  (the canonical ADR-002 resolver).
 - Backs up existing ~/.claude/settings.json to .bak on the FIRST write only
   (re-runs never clobber the user's pre-gateway backup) and reports replaced
   ANTHROPIC_BASE_URL/AUTH_TOKEN values (token never echoed in plaintext).
@@ -160,7 +160,7 @@ def _roles_to_env(roles: dict) -> dict:
 
 def _mask_old(key, old):
     """Display form of a replaced value. The user's real auth token must
-    never leave the process (ADR-023 masking spirit) — only ANTHROPIC_AUTH_TOKEN
+    never leave the process (ADR-002 masking spirit) — only ANTHROPIC_AUTH_TOKEN
     carries a secret; URLs and model names are not sensitive."""
     if key == "ANTHROPIC_AUTH_TOKEN" and old not in (None, "", "mage-router"):
         return "（已设置，不回显）"

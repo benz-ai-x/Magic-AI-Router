@@ -1,4 +1,4 @@
-"""Tests for capture module (mitmdump subprocess manager, ADR-022 Task 2).
+"""Tests for capture module (mitmdump subprocess manager, ADR-001 Task 2).
 
 CaptureMonitor intentionally mirrors proxy.py's SSHMonitor lifecycle pattern
 (start/stop/status/log/crash-detection), so this suite mixes two styles:
@@ -366,7 +366,7 @@ class TestRealSubprocessLifecycle(unittest.TestCase):
 
 
 class TestCleanupExpiredCaptures(unittest.TestCase):
-    """ADR-022 Task 5 AC-1. Locked semantics: retention_days > 0 -> delete
+    """ADR-001 Task 5 AC-1. Locked semantics: retention_days > 0 -> delete
     daily files whose age >= retention_days (keeps exactly retention_days
     days, today inclusive); retention_days <= 0 -> no-op, keep everything."""
 

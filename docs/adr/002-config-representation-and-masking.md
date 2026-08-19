@@ -1,8 +1,9 @@
-# ADR-023: 配置表示收敛与 API key 掩码布尔契约
+# ADR-002: 配置表示收敛与 API key 掩码布尔契约
 
 - 状态：Accepted
 - 日期：2026-08-12
 - 决策者：tech-lead（用户确认）
+- 原编号：ADR-023（2026-08-19 仓库重建后重编号压缩间隙）
 - 影响范围：config.py、suanpan/config.py、config_server.py、provider_auth.py、config_ui.html、config_store.py、claude_code_setup.py
 
 ## 上下文

@@ -12,7 +12,7 @@ if ! command -v "$MAIN_PYTHON_BIN" >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# mitmdump packaging (ADR-022 capture mode). Bundled by DEFAULT as of Task 5
+# mitmdump packaging (ADR-001 capture mode). Bundled by DEFAULT as of Task 5
 # finalization -- capture mode is now a shipped feature, not opt-in build
 # tooling (was gated behind --with-mitmdump during the Task 1 Go/No-Go
 # spike).
@@ -27,20 +27,20 @@ fi
 # evidence: progress/backend-dev.md (Task 1 + Task 5 entries).
 #
 # NOTE (verify-before-assert finding, Task 1): mitmproxy 12.x requires
-# Python >=3.12, NOT >=3.10 as ADR-022's Global Constraints / version table
+# Python >=3.12, NOT >=3.10 as ADR-001's Global Constraints / version table
 # currently state (confirmed against live PyPI metadata: mitmproxy 11.1.0+
 # and all 12.x releases declare Requires-Python >=3.12; only 11.0.2
 # supports 3.10). Also: CVE-2025-23217 (the ADR's stated reason to avoid
 # 11.x) is a GitHub Security Advisory confirmed mitmweb-only ("The
 # mitmproxy and mitmdump tools are unaffected") -- irrelevant to this
 # project, which only ships mitmdump. This build step therefore targets
-# Python 3.12, pending tech-lead's ADR-022/ADR-000 revision (Task 5 Step 3,
+# Python 3.12, pending tech-lead's ADR-001/ADR-000 revision (Task 5 Step 3,
 # explicitly out of scope for this script -- see progress/backend-dev.md).
 # This does NOT change the main app build below, which still targets the
 # existing >=3.9 floor.
 # ---------------------------------------------------------------------------
 build_mitmdump() {
-    echo "--- Building bundled mitmdump (ADR-022 capture mode) ---"
+    echo "--- Building bundled mitmdump (ADR-001 capture mode) ---"
     rm -rf dist-mitmdump build-mitmdump
 
     local py_bin="${MITM_PYTHON_BIN:-python3.12}"

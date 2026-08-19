@@ -1,4 +1,4 @@
-"""Magic AI Router — AI capture mitmproxy addon (ADR-022 Task 3).
+"""Magic AI Router — AI capture mitmproxy addon (ADR-001 Task 3).
 
 Loaded read-only into a frozen ``mitmdump`` via ``-s ai_capture_addon.py``.
 Identifies AI chat traffic (OpenAI / Anthropic / DeepSeek / Doubao / Qwen /
@@ -126,7 +126,7 @@ def extract_request(variant, body):
     """Normalize a request body to {model, stream, system, messages}.
 
     ``messages`` is the verbatim conversation (system kept in-band per the
-    ADR-022 example); ``system`` mirrors the system/instructions text at the
+    ADR-001 example); ``system`` mirrors the system/instructions text at the
     top level for uniform grep across providers (top-level for anthropic /
     responses, in-band system role otherwise). ``None`` when absent.
     """
@@ -431,7 +431,7 @@ def reassemble(variant, is_stream, body_text):
 # --------------------------------------------------------------------------
 
 def build_record(meta, status_code, resp_text, bytes_down, capture_raw_sse=False):
-    """Assemble one JSONL record. Preserves the ADR-022 field set and adds
+    """Assemble one JSONL record. Preserves the ADR-001 field set and adds
     additive fields. Response reassembly is fault-isolated: on failure the
     record carries ``capture_error`` and the raw body is kept unconditionally
     (raw kept opt-in via ``capture_raw_sse`` otherwise)."""

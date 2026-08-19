@@ -1,8 +1,9 @@
-# ADR-022: TLS MITM 通讯报文捕获（需求 5）
+# ADR-001: TLS MITM 通讯报文捕获（需求 5）
 
 - 状态：Proposed
 - 日期：2026-07-08
 - 决策者：tech-lead
+- 原编号：ADR-022（2026-08-19 仓库重建后重编号压缩间隙）
 - 影响范围：proxy.py（HTTP→SOCKS5 代理核心）、app.py（子进程生命周期 + 菜单栏 UI）、新增 capture 模块、打包链（build.sh / PyInstaller）、Python 运行时下界
 
 ## 上下文
@@ -152,10 +153,10 @@ MITM 必须发生在 **browser ↔ 本地代理**这一段（本地解密、看�
 | PyInstaller（受影响：打包 mitmproxy） | 未锁定（本地实测 6.20.0） | 6.21.0 | 落后 1 patch | Active | 同 ADR-000；打包 mitmproxy 的 hidden-imports 需 spike 验证（spike 通过） |
 | Python（构建解释器下界） | **≥3.12**（我方自有代码下界仍 3.9） | 3.14.x（开发机实测 3.14.4） | 下界取 3.12（mitmproxy 硬底），非取最新 | Active | 由 mitmproxy `requires-python >=3.12` 倒逼（见 mitmproxy 行）；我方代码 tech-lead 复核零 3.12-breaker（15 个 .py），本可 3.9，3.12 纯为把 mitmproxy 打进冻结 app |
 
-**回填规则**：spike + 落地后由执行层回填实际 pin 版本，commit message 加 `docs(adr): backfill ADR-022 verification for [pkg]`。
+**回填规则**：spike + 落地后由执行层回填实际 pin 版本，commit message 加 `docs(adr): backfill ADR-001 verification for [pkg]`。
 
 **关键验证结论**（影响架构）：
 - mitmproxy **upstream 模式只支持 HTTP/HTTPS 上游代理，不支持 SOCKS5 上游**（官方文档确认；SOCKS5 仅是 mitmproxy 的监听模式）。故级联架构 = mitmproxy → proxy.py（upstream HTTP）→ SSH SOCKS5，而非 mitmproxy 直接连 SSH SOCKS5。
 - OpenAI / Anthropic / DeepSeek / 豆包 / Qwen / MiniMax 的 Python SDK **均不做 cert pinning**（走 httpx + 系统/OS 信任库），信任根 CA 后 MITM 即可工作（来源：[OpenAI 社区](https://community.openai.com/t/how-can-i-disable-ssl-verification-when-using-openai-api-in-python/110837) 多帖证实企业代理 TLS 拦截场景靠加根 CA 解决——反证无 pinning）。
-- mitmproxy + PyInstaller 有已知打包难题（[官方论坛](https://discourse.mitmproxy.org/t/use-mitmproxy-with-pyinstaller/1436) / [pyinstaller#9017](https://github.com/pyinstaller/pyinstaller/issues/9017)），是本路线最大工程风险，须 spike。**（spike 2026-07-08 通过：PyInstaller 成功打包 mitmdump，无需 standalone binary fallback，ADR-023 不落盘。）**
+- mitmproxy + PyInstaller 有已知打包难题（[官方论坛](https://discourse.mitmproxy.org/t/use-mitmproxy-with-pyinstaller/1436) / [pyinstaller#9017](https://github.com/pyinstaller/pyinstaller/issues/9017)），是本路线最大工程风险，须 spike。**（spike 2026-07-08 通过：PyInstaller 成功打包 mitmdump，无需 standalone binary fallback，ADR-002 不落盘。）**
 - **CVE-2025-23217 与本项目无关**（更正）：该 CVE 是 mitmweb 的 API 认证绕过（[GHSA-wg33-5h85-7q5p](https://github.com/advisories/GHSA-wg33-5h85-7q5p)，仅 mitmweb ≤11.1.0、11.1.2 已修，官方明确"the mitmproxy and mitmdump tools are unaffected"）。本项目用 **mitmdump**，故该 CVE 不构成版本 / 下界驱动——决策表中早前"避开 11.x CVE"表述已更正。真正的 3.12 下界驱动是 mitmproxy 的 PyPI `requires-python >=3.12`。

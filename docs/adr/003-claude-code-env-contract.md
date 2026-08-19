@@ -1,13 +1,14 @@
-# ADR-024: Claude Code 环境变量契约
+# ADR-003: Claude Code 环境变量契约
 
 - 状态：Accepted
 - 日期：2026-08-14
 - 决策者：tech-lead（用户确认）
+- 原编号：ADR-024（2026-08-19 仓库重建后重编号压缩间隙）
 - 影响范围：claude_code_setup.py、config_server.py、config_ui.html
 
 ## 上下文
 
-`claude_code_setup.py` 把 Claude Code 指向 Suanpan 网关并写入一组模型映射环境变量。整套「角色 → 环境变量」行为契约此前只在代码里，CONTEXT.md / CLAUDE.md / ADR 均无记载（ADR-023 只规定了 `claude_settings` PATHS 条目与原子写契约，未规定写什么）。#42/#43/#44 又相继钉死了推导语义、subagent 意图与元数据载荷形状——若不落文档，未来架构审查会重新争议这些已决问题。
+`claude_code_setup.py` 把 Claude Code 指向 Suanpan 网关并写入一组模型映射环境变量。整套「角色 → 环境变量」行为契约此前只在代码里，CONTEXT.md / CLAUDE.md / ADR 均无记载（ADR-002 只规定了 `claude_settings` PATHS 条目与原子写契约，未规定写什么）。#42/#43/#44 又相继钉死了推导语义、subagent 意图与元数据载荷形状——若不落文档，未来架构审查会重新争议这些已决问题。
 
 ## 决策
 
@@ -26,7 +27,7 @@
 - **`[1M]` 后缀**：模型值末尾可加 `[1M]`，由角色的 `ctx_1m` 布尔开关控制（#44 由 `one_m` 更名而来，旧键在 `_roles_to_env` 保留只读 fallback）。1M 只是给 Claude Code 的上下文能力声明，不改路由。
 - **wipe-set 派生自 `_ROLES`**：写入前只删除本模块拥有的模型键，永不动用户自己设的其他 `ANTHROPIC_DEFAULT_*_MODEL`。
 - **幂等**：BASE_URL / beta 开关 / 全部模型映射均已是目标值时返回 `action: "already"`，不重复写。
-- **写入路径**：经 `config_store.atomic_write`（0600 + `.bak` 备份），见 ADR-023。
+- **写入路径**：经 `config_store.atomic_write`（0600 + `.bak` 备份），见 ADR-002。
 
 ### 决策 2：角色推导语义（`default_roles()`，种子来源）
 
@@ -41,7 +42,7 @@
 ## 否决
 
 - **URL query string 传 bearer token**：token 只在 `Authorization: Bearer` 头（#39，常量时间比较）。
-- **掩码字符串回传 UI**：`api_key_set` 布尔契约，见 ADR-023。
+- **掩码字符串回传 UI**：`api_key_set` 布尔契约，见 ADR-002。
 - **subagent 抄 `router.default`**：丢掉「子代理用便宜模型」区分（#43 已否决并修）。
 
 ## 测试
