@@ -1,0 +1,54 @@
+# Suanpan (算盘) AI Router — example configuration
+#
+# Copy to ~/.suanpan.yaml and fill in providers, or start the gateway first
+# and configure everything via the app's settings window (偏好设置, :9528).
+#
+# All providers expose the Anthropic Messages API (POST /v1/messages).
+# The router decides which backend handles each request by priority:
+#   1. Inline override  — model field contains "provider/model"
+#   2. <SUBAGENT-MODEL> — escape-hatch tag in system prompt
+#   3. Prefix rules     — model name starts with match_prefix
+#   4. Default          — catch-all fallback
+
+listen_port: 9527
+# api_key: "gate-key-here"       # optional: require this key on all requests
+request_timeout_s: 3600
+body_limit_mb: 50
+
+usage_log:
+  enabled: true
+  path: ~/.suanpan/usage.jsonl
+
+providers:
+  # Each provider needs base_url + auth.  Use api_key (inline) or api_key_env
+  # (reads from an environment variable).  auth_header must match the provider's
+  # convention: "x-api-key" (Anthropic) or "Authorization" (OpenAI-compatible).
+  #
+  # anthropic_native: true (optional) — the backend natively accepts full
+  # Anthropic body shapes, so the gateway skips its compatibility stripping.
+  # This preserves cache_control markers (prompt caching), document blocks
+  # and beta tool fields. Only set it on backends that accept them (real
+  # Anthropic, GLM's /api/anthropic endpoint, …) — e.g. DeepSeek rejects
+  # array-form system prompts and must keep the default (false).
+
+  anthropic:
+    base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+    auth_header: x-api-key
+    anthropic_native: true
+
+  deepseek:
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    auth_header: Authorization
+
+# Router default uses "provider/model-id" format.
+router:
+  default: anthropic/claude-sonnet-4-20250514
+
+rules:
+  # Route by model-name prefix (checked in order, first match wins).
+  # - match_prefix: claude-haiku
+  #   route_to: anthropic/claude-haiku-4-5-20251001
+  # - match_prefix: claude-3-5-sonnet
+  #   route_to: anthropic/claude-sonnet-4-20250514

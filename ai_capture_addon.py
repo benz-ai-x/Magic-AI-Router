@@ -1,0 +1,616 @@
+"""Magic AI Router — AI capture mitmproxy addon (ADR-022 Task 3).
+
+Loaded read-only into a frozen ``mitmdump`` via ``-s ai_capture_addon.py``.
+Identifies AI chat traffic (OpenAI / Anthropic / DeepSeek / Doubao / Qwen /
+MiniMax), extracts request prompts + reassembles the (possibly SSE-streamed)
+response, and appends one JSON line per flow to
+``$MAGIC_PROXY_CAPTURE_DIR/<local-date>.jsonl``. Non-AI traffic passes through
+untouched. Zero IPC: config in via env at spawn, captures out to disk only.
+
+The pure functions below carry no mitmproxy dependency so they unit-test under
+plain pytest; the addon hooks are thin duck-typed adapters over them.
+"""
+import json
+import logging
+import os
+import time
+from datetime import datetime, timezone
+
+from capture_store import append_json
+
+log = logging.getLogger("ai_capture_addon")
+MAX_CAPTURE_FLOW_BYTES = 5 * 1024 * 1024
+MAX_CAPTURE_TEXT_CHARS = 1_000_000
+
+
+def identify(host, path):
+    """Map (host, path) to (provider, variant), or None to pass through.
+
+    Host matched by suffix (robust to sub-domains / regions); path pins the
+    chat endpoint so non-chat calls (embeddings / images / models) pass through.
+    """
+    host = (host or "").lower()
+    path = (path or "").split("?", 1)[0].split("#", 1)[0]
+
+    def ends(*suffixes):
+        return any(host.endswith(s) for s in suffixes)
+
+    if ends("api.openai.com"):
+        if path == "/v1/chat/completions":
+            return ("openai", "chat.completions")
+        if path == "/v1/responses":
+            return ("openai", "responses")
+        return None
+    if ends("api.anthropic.com"):
+        if path == "/v1/messages":
+            return ("anthropic", "messages")
+        return None
+    if ends("api.deepseek.com"):
+        if path.endswith("/chat/completions"):
+            return ("deepseek", "chat.completions")
+        return None
+    if ends("volces.com") and "ark" in host:
+        if path == "/api/v3/chat/completions":
+            return ("doubao", "chat.completions")
+        return None
+    if ends("dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"):
+        if path == "/compatible-mode/v1/chat/completions":
+            return ("qwen", "chat.completions")
+        if path == "/api/v1/services/aigc/text-generation/generation":
+            return ("qwen", "dashscope.native")
+        return None
+    if ends("api.minimaxi.com", "api.minimax.io", "api.minimax.chat"):
+        if path == "/v1/text/chatcompletion_v2":
+            return ("minimax", "chat.completions")
+        if path == "/v1/text/chatcompletion_pro":
+            return ("minimax", "minimax.pro")
+        return None
+    return None
+
+
+# --------------------------------------------------------------------------
+# Request extraction (verbatim prompt fidelity; non-text parts placeholdered)
+# --------------------------------------------------------------------------
+
+# Non-text modality carriers -> human-readable placeholder. Matched by content
+# block "type" (OpenAI/Anthropic) or by bare modality key (DashScope native).
+_PLACEHOLDER = {
+    "image": "[image]", "image_url": "[image]", "input_image": "[image]",
+    "audio": "[audio]", "input_audio": "[audio]",
+    "video": "[video]", "input_video": "[video]",
+    "file": "[file]", "document": "[file]", "input_file": "[file]",
+    "tool_result": "[tool_result]", "tool_use": "[tool_use]",
+}
+
+
+def _part_to_text(part):
+    if isinstance(part, str):
+        return part
+    if not isinstance(part, dict):
+        return ""
+    if isinstance(part.get("text"), str):  # text/input_text blocks + {"text": ...}
+        return part["text"]
+    kind = part.get("type", "")
+    if kind in _PLACEHOLDER:
+        return _PLACEHOLDER[kind]
+    for key, placeholder in _PLACEHOLDER.items():  # DashScope bare-key parts
+        if key in part:
+            return placeholder
+    return ""
+
+
+def _content_to_text(content):
+    """Normalize a message ``content`` (str | block-array | None) to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(_part_to_text(p) for p in content)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _norm_messages(messages):
+    """role/content messages -> [{role, content-as-text}] (verbatim roles)."""
+    return [
+        {"role": m.get("role"), "content": _content_to_text(m.get("content"))}
+        for m in (messages or [])
+    ]
+
+
+def _first_system(messages):
+    return next((m["content"] for m in messages if m["role"] in ("system", "developer")), None)
+
+
+def extract_request(variant, body):
+    """Normalize a request body to {model, stream, system, messages}.
+
+    ``messages`` is the verbatim conversation (system kept in-band per the
+    ADR-022 example); ``system`` mirrors the system/instructions text at the
+    top level for uniform grep across providers (top-level for anthropic /
+    responses, in-band system role otherwise). ``None`` when absent.
+    """
+    body = body or {}
+    model = body.get("model")
+    stream = bool(body.get("stream", False))
+
+    if variant == "chat.completions":
+        msgs = _norm_messages(body.get("messages"))
+        return {"model": model, "stream": stream, "system": _first_system(msgs), "messages": msgs}
+
+    if variant == "responses":
+        inp = body.get("input")
+        if isinstance(inp, str):
+            msgs = [{"role": "user", "content": inp}]
+        elif isinstance(inp, list):
+            msgs = [{"role": it.get("role", "user"), "content": _content_to_text(it.get("content"))}
+                    for it in inp]
+        else:
+            msgs = []
+        return {"model": model, "stream": stream, "system": body.get("instructions"), "messages": msgs}
+
+    if variant == "messages":  # Anthropic — system is top-level
+        system = _content_to_text(body.get("system")) if body.get("system") is not None else None
+        return {"model": model, "stream": stream, "system": system,
+                "messages": _norm_messages(body.get("messages"))}
+
+    if variant == "dashscope.native":  # Qwen — messages nested under input
+        inp = body.get("input") or {}
+        msgs = _norm_messages(inp.get("messages"))
+        system = _first_system(msgs)
+        if system is None and isinstance(inp.get("system"), str):
+            system = inp["system"]
+        params = body.get("parameters") or {}
+        return {"model": model, "stream": bool(params.get("incremental_output", False)),
+                "system": system, "messages": msgs}
+
+    if variant == "minimax.pro":  # legacy — sender_type + bot_setting
+        role_map = {"USER": "user", "BOT": "assistant", "SYSTEM": "system", "FUNCTION": "tool"}
+        msgs = []
+        for m in body.get("messages") or []:
+            content = m["text"] if "text" in m else _content_to_text(m.get("content"))
+            msgs.append({"role": role_map.get(m.get("sender_type"), "user"), "content": content})
+        bot_setting = body.get("bot_setting") or []
+        system = bot_setting[0].get("content") if bot_setting and isinstance(bot_setting[0], dict) else None
+        return {"model": model, "stream": stream, "system": system, "messages": msgs}
+
+    return {"model": model, "stream": stream, "system": None, "messages": []}
+
+
+# --------------------------------------------------------------------------
+# Response reassembly — 4 SSE families (+ non-streaming direct parse)
+# --------------------------------------------------------------------------
+
+def _iter_sse(text):
+    """Yield (event_name, data_str) per SSE event; comment / id / retry lines ignored.
+
+    Normalize CRLF -> LF first: SSE line endings are spec'd as CRLF, and a raw
+    ``\\n\\n`` split would fail to separate ``\\r\\n\\r\\n`` events (merging the
+    whole stream into one block)."""
+    for block in text.replace("\r\n", "\n").split("\n\n"):
+        name, data_lines = None, []
+        for line in block.split("\n"):
+            if line.startswith("event:"):
+                name = line[6:].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        if data_lines:
+            yield name, "\n".join(data_lines)
+
+
+def _blank_result():
+    return {"reassembled": "", "reasoning": None, "tool_calls": [],
+            "finish_reason": None, "usage": None, "event_count": 0}
+
+
+def _tool_list(acc):
+    return [{"name": v["name"], "arguments": "".join(v["args"])} for _, v in sorted(acc.items())]
+
+
+def _reassemble_openai_stream(text, r):
+    answer, reasoning, tools = [], [], {}
+    for _, data in _iter_sse(text):
+        r["event_count"] += 1
+        if data.strip() == "[DONE]":
+            continue
+        try:
+            j = json.loads(data)
+        except ValueError:
+            continue
+        if j.get("usage"):
+            r["usage"] = j["usage"]
+        choices = j.get("choices") or []
+        if not choices:
+            continue
+        choice = choices[0]
+        if choice.get("finish_reason"):
+            r["finish_reason"] = choice["finish_reason"]
+        delta = choice.get("delta") or {}
+        if isinstance(delta.get("content"), str):
+            answer.append(delta["content"])
+        if isinstance(delta.get("reasoning_content"), str):
+            reasoning.append(delta["reasoning_content"])
+        for call in delta.get("tool_calls") or []:
+            slot = tools.setdefault(call.get("index", 0), {"name": None, "args": []})
+            fn = call.get("function") or {}
+            if fn.get("name"):
+                slot["name"] = fn["name"]
+            if isinstance(fn.get("arguments"), str):
+                slot["args"].append(fn["arguments"])
+    r["reassembled"] = "".join(answer)
+    r["reasoning"] = "".join(reasoning) or None
+    r["tool_calls"] = _tool_list(tools)
+    return r
+
+
+def _reassemble_anthropic_stream(text, r):
+    blocks, usage = {}, {}
+    for name, data in _iter_sse(text):
+        r["event_count"] += 1
+        try:
+            j = json.loads(data)
+        except ValueError:
+            continue
+        etype = j.get("type") or name
+        if etype == "message_start":
+            usage.update((j.get("message") or {}).get("usage") or {})
+        elif etype in ("content_block_start", "content_block_delta"):
+            slot = blocks.setdefault(j.get("index", 0),
+                                     {"type": None, "text": [], "thinking": [], "name": None, "args": []})
+            if etype == "content_block_start":
+                cb = j.get("content_block") or {}
+                slot["type"] = cb.get("type")
+                if cb.get("name"):
+                    slot["name"] = cb["name"]
+            else:
+                delta = j.get("delta") or {}
+                dtype = delta.get("type")
+                if dtype == "text_delta":
+                    slot["text"].append(delta.get("text", ""))
+                elif dtype == "thinking_delta":
+                    slot["thinking"].append(delta.get("thinking", ""))
+                elif dtype == "input_json_delta":
+                    slot["args"].append(delta.get("partial_json", ""))
+        elif etype == "message_delta":
+            if (j.get("delta") or {}).get("stop_reason"):
+                r["finish_reason"] = j["delta"]["stop_reason"]
+            usage.update(j.get("usage") or {})
+    ordered = [blocks[i] for i in sorted(blocks)]
+    r["reassembled"] = "".join(t for b in ordered for t in b["text"])
+    r["reasoning"] = "".join(t for b in ordered for t in b["thinking"]) or None
+    r["tool_calls"] = [{"name": b["name"], "arguments": "".join(b["args"])}
+                       for b in ordered if b["type"] == "tool_use" or b["args"]]
+    r["usage"] = usage or None
+    return r
+
+
+def _reassemble_responses_stream(text, r):
+    answer, reasoning, tools = [], [], {}
+    for name, data in _iter_sse(text):
+        r["event_count"] += 1
+        try:
+            j = json.loads(data)
+        except ValueError:
+            continue
+        etype = j.get("type") or name
+        if etype == "response.output_text.delta":
+            answer.append(j.get("delta", ""))
+        elif etype in ("response.reasoning_text.delta", "response.reasoning_summary_text.delta"):
+            reasoning.append(j.get("delta", ""))
+        elif etype == "response.output_item.added":
+            item = j.get("item") or {}
+            if item.get("type") == "function_call":
+                slot = tools.setdefault(j.get("output_index", 0), {"name": None, "args": []})
+                if item.get("name"):
+                    slot["name"] = item["name"]
+        elif etype == "response.function_call_arguments.delta":
+            tools.setdefault(j.get("output_index", 0), {"name": None, "args": []})["args"].append(j.get("delta", ""))
+        elif etype in ("response.completed", "response.incomplete"):
+            resp = j.get("response") or {}
+            r["usage"] = resp.get("usage") or r["usage"]
+            r["finish_reason"] = resp.get("status") or r["finish_reason"]
+    r["reassembled"] = "".join(answer)
+    r["reasoning"] = "".join(reasoning) or None
+    r["tool_calls"] = _tool_list(tools)
+    return r
+
+
+def _reassemble_dashscope_stream(text, r):
+    parts, last, cumulative, prev = [], "", True, ""
+    for _, data in _iter_sse(text):
+        r["event_count"] += 1
+        try:
+            j = json.loads(data)
+        except ValueError:
+            continue
+        if j.get("usage"):
+            r["usage"] = j["usage"]
+        out = j.get("output") or {}
+        txt = out.get("text")
+        finish = out.get("finish_reason")
+        if txt is None and out.get("choices"):
+            choice = out["choices"][0]
+            txt = (choice.get("message") or {}).get("content")
+            finish = choice.get("finish_reason") or finish
+        if finish and finish != "null":
+            r["finish_reason"] = finish
+        if txt is not None:
+            if prev and not txt.startswith(prev):
+                cumulative = False
+            parts.append(txt)
+            last, prev = txt, txt
+    r["reassembled"] = last if cumulative else "".join(parts)
+    return r
+
+
+def _reassemble_non_stream(variant, text, r):
+    r["event_count"] = 1
+    try:
+        j = json.loads(text)
+    except ValueError:
+        return r
+
+    if variant == "messages":  # Anthropic
+        texts, thinks, tools = [], [], []
+        for block in j.get("content") or []:
+            btype = block.get("type")
+            if btype == "text":
+                texts.append(block.get("text", ""))
+            elif btype == "thinking":
+                thinks.append(block.get("thinking", ""))
+            elif btype == "tool_use":
+                tools.append({"name": block.get("name"),
+                              "arguments": json.dumps(block.get("input", {}), ensure_ascii=False)})
+        r.update(reassembled="".join(texts), reasoning="".join(thinks) or None,
+                 tool_calls=tools, finish_reason=j.get("stop_reason"), usage=j.get("usage"))
+        return r
+
+    if variant == "responses":  # OpenAI Responses
+        texts = [c.get("text", "") for item in j.get("output") or []
+                 for c in item.get("content") or [] if c.get("type") in ("output_text", "text")]
+        r.update(reassembled="".join(texts), finish_reason=j.get("status"), usage=j.get("usage"))
+        return r
+
+    if variant == "dashscope.native":  # Qwen native
+        out = j.get("output") or {}
+        txt, finish = out.get("text"), out.get("finish_reason")
+        if txt is None and out.get("choices"):
+            choice = out["choices"][0]
+            txt = (choice.get("message") or {}).get("content")
+            finish = choice.get("finish_reason") or finish
+        r.update(reassembled=txt or "", finish_reason=finish, usage=j.get("usage"))
+        return r
+
+    if variant == "minimax.pro":  # legacy
+        choices = j.get("choices") or []
+        txt = ""
+        if choices:
+            messages = choices[0].get("messages") or []
+            txt = messages[0].get("text", "") if messages else ""
+            r["finish_reason"] = choices[0].get("finish_reason")
+        r.update(reassembled=txt or j.get("reply", ""), usage=j.get("usage"))
+        return r
+
+    # chat.completions (openai / deepseek / doubao / qwen-compat / minimax-v2)
+    choices = j.get("choices") or []
+    if choices:
+        msg = choices[0].get("message") or {}
+        r["reassembled"] = msg.get("content") or ""
+        if isinstance(msg.get("reasoning_content"), str):
+            r["reasoning"] = msg["reasoning_content"]
+        r["tool_calls"] = [{"name": (c.get("function") or {}).get("name"),
+                            "arguments": (c.get("function") or {}).get("arguments", "")}
+                           for c in msg.get("tool_calls") or []]
+        r["finish_reason"] = choices[0].get("finish_reason")
+    r["usage"] = j.get("usage")
+    return r
+
+
+# variant -> streaming reassembler; default is the OpenAI-style data: family.
+_STREAM_REASSEMBLERS = {
+    "messages": _reassemble_anthropic_stream,
+    "responses": _reassemble_responses_stream,
+    "dashscope.native": _reassemble_dashscope_stream,
+}
+
+
+def reassemble(variant, is_stream, body_text):
+    """Reassemble a response body into {reassembled, reasoning, tool_calls,
+    finish_reason, usage, event_count}. ``body_text`` is the SSE stream when
+    ``is_stream`` else the JSON response text."""
+    r = _blank_result()
+    if not body_text:
+        return r
+    if is_stream:
+        return _STREAM_REASSEMBLERS.get(variant, _reassemble_openai_stream)(body_text, r)
+    return _reassemble_non_stream(variant, body_text, r)
+
+
+# --------------------------------------------------------------------------
+# Record assembly + JSONL sink
+# --------------------------------------------------------------------------
+
+def build_record(meta, status_code, resp_text, bytes_down, capture_raw_sse=False):
+    """Assemble one JSONL record. Preserves the ADR-022 field set and adds
+    additive fields. Response reassembly is fault-isolated: on failure the
+    record carries ``capture_error`` and the raw body is kept unconditionally
+    (raw kept opt-in via ``capture_raw_sse`` otherwise)."""
+    record = {
+        "ts": meta.get("ts"), "flow_id": meta.get("flow_id"), "method": meta.get("method"),
+        "url": meta.get("url"), "host": meta.get("host"), "provider": meta.get("provider"),
+        "api_variant": meta.get("variant"), "model": meta.get("model"),
+        "stream": meta.get("stream", False), "status_code": status_code,
+        "request": {"system": meta.get("system"), "messages": meta.get("messages", [])},
+        "usage": None, "bytes_up": meta.get("bytes_up"), "bytes_down": bytes_down,
+        "duration_ms": meta.get("duration_ms"), "capture_error": None,
+    }
+    is_stream = meta.get("stream", False)
+    try:
+        rr = reassemble(meta.get("variant"), is_stream, resp_text)
+        response = {"reassembled": rr["reassembled"], "reasoning": rr["reasoning"],
+                    "tool_calls": rr["tool_calls"], "finish_reason": rr["finish_reason"],
+                    "event_count": rr["event_count"]}
+        record["usage"] = rr["usage"]
+        if capture_raw_sse and is_stream:
+            response["sse_chunks"] = [data for _, data in _iter_sse(resp_text)]
+    except Exception as exc:  # noqa: BLE001 — capture must never break the proxy path
+        record["capture_error"] = f"{type(exc).__name__}: {exc}"
+        response = {"reassembled": None}
+    if record["capture_error"] is not None:
+        response["raw"] = resp_text  # keep raw unconditionally for failed reassembly
+    record["response"] = response
+    return record
+
+
+def write_jsonl(record, capture_dir):
+    """Append one JSON line to ``<capture_dir>/<local-date>.jsonl`` (created on
+    demand). ``ensure_ascii=False`` keeps CJK prompts human-readable for grep/jq."""
+    return append_json(record, capture_dir)
+
+
+# --------------------------------------------------------------------------
+# mitmproxy addon — thin duck-typed adapter over the pure functions above
+# --------------------------------------------------------------------------
+
+_DEFAULT_DIR = os.path.expanduser("~/.magic-proxy-captures")
+
+
+def _env_flag(name):
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _utc_now_iso():
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+
+
+def _truncate_value(value):
+    """Bound captured request text while preserving its JSON shape."""
+    truncated = False
+    if isinstance(value, str):
+        if len(value) > MAX_CAPTURE_TEXT_CHARS:
+            return value[:MAX_CAPTURE_TEXT_CHARS], True
+        return value, False
+    if isinstance(value, list):
+        result = []
+        for item in value:
+            bounded, cut = _truncate_value(item)
+            result.append(bounded)
+            truncated = truncated or cut
+        return result, truncated
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            bounded, cut = _truncate_value(item)
+            result[key] = bounded
+            truncated = truncated or cut
+        return result, truncated
+    return value, False
+
+
+class AICaptureAddon:
+    """Read-only mitmproxy addon. Config flows in via env at ``load``; captures
+    flow out to JSONL only (zero IPC). Hooks never raise — a capture failure
+    must not disturb the proxied traffic."""
+
+    def __init__(self):
+        self.capture_dir = _DEFAULT_DIR
+        self.capture_raw_sse = False
+        self.preserve_streaming = False
+
+    def load(self, loader=None):
+        self.capture_dir = os.environ.get("MAGIC_PROXY_CAPTURE_DIR") or _DEFAULT_DIR
+        self.capture_raw_sse = _env_flag("MAGIC_PROXY_CAPTURE_RAW_SSE")
+        self.preserve_streaming = _env_flag("MAGIC_PROXY_PRESERVE_STREAMING")
+
+    # -- hooks -------------------------------------------------------------
+    def request(self, flow):
+        ident = identify(flow.request.pretty_host, flow.request.path)
+        if ident is None:
+            return  # non-AI (or non-chat) traffic passes through untouched
+        provider, variant = ident
+        # Decode UTF-8 explicitly rather than flow.request.get_text(): these APIs
+        # are always UTF-8 (SSE mandates it), but the Content-Type often omits an
+        # explicit charset, and mitmproxy's charset guess garbles multibyte CJK.
+        # .content is content-encoding (gzip/br) decoded; we own the charset.
+        try:
+            body = json.loads((flow.request.content or b"").decode("utf-8", "replace") or "{}")
+        except ValueError:
+            body = {}
+        req = extract_request(variant, body)
+        bounded_messages, request_truncated = _truncate_value(req["messages"])
+        bounded_system, system_truncated = _truncate_value(req["system"])
+        flow.metadata["ai_capture"] = {
+            "ts": _utc_now_iso(), "flow_id": flow.id, "method": flow.request.method,
+            "url": flow.request.url, "host": flow.request.pretty_host,
+            "provider": provider, "variant": variant, "model": req["model"],
+            "stream": req["stream"], "system": bounded_system, "messages": bounded_messages,
+            "request_truncated": request_truncated or system_truncated,
+            "bytes_up": len(flow.request.raw_content or b""), "t0": time.monotonic(),
+        }
+
+    def responseheaders(self, flow):
+        # Opt-in: tee streamed chunks (pass through unchanged) to preserve live
+        # browser streaming while still capturing. Default is buffered (below).
+        if not self.preserve_streaming:
+            return
+        meta = flow.metadata.get("ai_capture")
+        if not (meta and meta["stream"]):
+            return
+        buffer = bytearray()
+        meta["_response_total_bytes"] = 0
+
+        def tee(chunk):
+            meta["_response_total_bytes"] += len(chunk)
+            remaining = MAX_CAPTURE_FLOW_BYTES - len(buffer)
+            if remaining > 0:
+                buffer.extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                meta["response_truncated"] = True
+            return chunk  # read-only: never modify the proxied bytes
+
+        flow.response.stream = tee
+        meta["_tee"] = buffer
+
+    def response(self, flow):
+        meta = flow.metadata.get("ai_capture")
+        if not meta or meta.get("_written"):
+            return
+        try:
+            if "_tee" in meta:
+                raw = bytes(meta["_tee"])
+                resp_text = raw.decode("utf-8", "replace")
+                bytes_down = meta.get("_response_total_bytes", len(raw))
+            else:
+                content = flow.response.content or b""
+                bytes_down = len(flow.response.raw_content or b"")
+                meta["response_truncated"] = len(content) > MAX_CAPTURE_FLOW_BYTES
+                resp_text = content[:MAX_CAPTURE_FLOW_BYTES].decode("utf-8", "replace")
+            meta["duration_ms"] = int((time.monotonic() - meta["t0"]) * 1000)
+            record = build_record(meta, flow.response.status_code, resp_text,
+                                  bytes_down, capture_raw_sse=self.capture_raw_sse)
+            record["request"]["truncated"] = bool(meta.get("request_truncated"))
+            record["response"]["truncated"] = bool(meta.get("response_truncated"))
+            record["response"]["captured_bytes"] = len(resp_text.encode("utf-8"))
+            write_jsonl(record, self.capture_dir)
+            meta["_written"] = True
+        except Exception:  # noqa: BLE001 — never raise out of a hook
+            log.exception("ai_capture: failed to record flow %s", meta.get("flow_id"))
+
+    def error(self, flow):
+        meta = flow.metadata.get("ai_capture")
+        if not meta or meta.get("_written"):
+            return
+        try:
+            meta["duration_ms"] = int((time.monotonic() - meta["t0"]) * 1000)
+            raw = bytes(meta["_tee"]).decode("utf-8", "replace") if "_tee" in meta else ""
+            record = build_record(meta, None, raw, len(raw), capture_raw_sse=self.capture_raw_sse)
+            record["capture_error"] = record["capture_error"] or "flow error / aborted before completion"
+            record.setdefault("response", {})["raw"] = raw
+            write_jsonl(record, self.capture_dir)
+            meta["_written"] = True
+        except Exception:  # noqa: BLE001
+            log.exception("ai_capture: failed to record errored flow %s", meta.get("flow_id"))
+
+
+addons = [AICaptureAddon()]

@@ -1,0 +1,686 @@
+"""Tests for balance_usage.py — balance normalization + usage aggregation.
+
+Migrated from test_config_server.TestNormalizeBalance (the functions moved to
+balance_usage.py), plus new tests that exercise fetch_balance / fetch_usage
+directly — now possible because they take a config dict instead of reading
+~/.suanpan.yaml internally.
+"""
+import io
+import json
+import os
+import tempfile
+import unittest
+import urllib.error
+from datetime import datetime
+from unittest.mock import patch
+
+import balance_usage
+
+
+def _sp(providers):
+    return {"providers": providers}
+
+
+def _models_payload(*ids):
+    return json.dumps({"data": [{"id": i} for i in ids]}).encode()
+
+
+def _usage_record(**overrides):
+    record = {
+        "ts": "2026-08-19T12:00:00+08:00",
+        "provider": "p",
+        "scenario": "default",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "status": 200,
+        "latency_ms": 1,
+    }
+    record.update(overrides)
+    return record
+
+
+class _FakeResp:
+    """Context-manager response double for urllib.request.urlopen."""
+
+    def __init__(self, body):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def _http_error(code):
+    return urllib.error.HTTPError("http://x", code, "err", {}, io.BytesIO(b""))
+
+
+class TestFetchModels(unittest.TestCase):
+    """fetch_models(sp_raw, name) → {"models": [...]} | {"error": ...}."""
+
+    PROVIDERS = {
+        "deepseek": {
+            "base_url": "https://api.deepseek.com/anthropic",
+            "api_key": "sk-test",
+        },
+    }
+
+    def _fetch(self, sp=None, name="deepseek"):
+        return balance_usage.fetch_models(sp if sp is not None else _sp(self.PROVIDERS), name)
+
+    def test_unknown_provider_error(self):
+        r = self._fetch(name="ghost")
+        self.assertIn("error", r)
+
+    def test_missing_key_error(self):
+        sp = _sp({"deepseek": {"base_url": "https://api.deepseek.com"}})
+        r = self._fetch(sp)
+        self.assertIn("error", r)
+
+    def test_parses_data_ids_deduped_in_order(self):
+        with patch("urllib.request.urlopen", return_value=_FakeResp(_models_payload("a", "b", "a"))) as m:
+            r = self._fetch()
+        self.assertEqual(r, {"models": ["a", "b"]})
+        self.assertEqual(m.call_args[0][0].full_url, "https://api.deepseek.com/anthropic/v1/models")
+
+    def test_404_falls_back_to_models_without_v1(self):
+        def side_effect(req, timeout=0):
+            if req.full_url.endswith("/v1/models"):
+                raise _http_error(404)
+            return _FakeResp(_models_payload("m1"))
+
+        with patch("urllib.request.urlopen", side_effect=side_effect) as m:
+            r = self._fetch()
+        self.assertEqual(r, {"models": ["m1"]})
+        self.assertEqual(m.call_args_list[-1][0][0].full_url, "https://api.deepseek.com/anthropic/models")
+
+    def test_404_falls_back_to_models_without_v1(self):
+        def side_effect(req, timeout=0):
+            if req.full_url.endswith("/v1/models"):
+                raise _http_error(404)
+            return _FakeResp(_models_payload("m1"))
+
+        with patch("urllib.request.urlopen", side_effect=side_effect) as m:
+            r = self._fetch()
+        self.assertEqual(r, {"models": ["m1"]})
+        self.assertEqual(m.call_args_list[-1][0][0].full_url, "https://api.deepseek.com/anthropic/models")
+
+    def test_404_falls_back_to_origin_root(self):
+        """Providers whose base_url has a path prefix (e.g. /anthropic) may only
+        serve /models at the origin root."""
+        def side_effect(req, timeout=0):
+            if "/anthropic/" in req.full_url:
+                raise _http_error(404)
+            return _FakeResp(_models_payload("deepseek-chat"))
+
+        with patch("urllib.request.urlopen", side_effect=side_effect) as m:
+            r = self._fetch()
+        self.assertEqual(r, {"models": ["deepseek-chat"]})
+        self.assertEqual(m.call_args_list[-1][0][0].full_url, "https://api.deepseek.com/v1/models")
+
+    def test_all_candidates_404_returns_error(self):
+        with patch("urllib.request.urlopen", side_effect=_http_error(404)):
+            r = self._fetch()
+        self.assertIn("error", r)
+
+    def test_x_api_key_auth_header(self):
+        sp = _sp({"deepseek": {**self.PROVIDERS["deepseek"], "auth_header": "x-api-key"}})
+        with patch("urllib.request.urlopen", return_value=_FakeResp(_models_payload("a"))) as m:
+            self._fetch(sp)
+        headers = m.call_args[0][0].headers
+        self.assertEqual(headers.get("X-api-key"), "sk-test")
+        self.assertIn("Anthropic-version", headers)
+
+    def test_bearer_auth_header_by_default(self):
+        with patch("urllib.request.urlopen", return_value=_FakeResp(_models_payload("a"))) as m:
+            self._fetch()
+        self.assertEqual(m.call_args[0][0].headers.get("Authorization"), "Bearer sk-test")
+
+    def test_non_404_http_error(self):
+        with patch("urllib.request.urlopen", side_effect=_http_error(401)):
+            r = self._fetch()
+        self.assertIn("error", r)
+
+    def test_network_error(self):
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("boom")):
+            r = self._fetch()
+        self.assertIn("error", r)
+
+    def test_malformed_response_error(self):
+        with patch("urllib.request.urlopen", return_value=_FakeResp(b'{"nope": 1}')):
+            r = self._fetch()
+        self.assertIn("error", r)
+
+
+class TestNormalizeBalance(unittest.TestCase):
+    # ── simple balance providers (no quotas) ──
+    def test_deepseek_format(self):
+        raw = {"balance_infos": [{"total_balance": "39.98", "topped_up_balance": "40.00", "currency": "CNY"}]}
+        result = balance_usage.normalize_balance(raw, "余额")
+        self.assertIn("¥39.98", result["primary"])
+        self.assertIn("充值", result["secondary"])
+        self.assertNotIn("quotas", result)
+
+    def test_glm_account_balance(self):
+        raw = {"data": {"balance": 0.05, "totalSpendAmount": 199.95}}
+        result = balance_usage.normalize_balance(raw, "账户余额")
+        self.assertIn("¥0.05", result["primary"])
+        self.assertIn("199.95", result["secondary"])
+        self.assertNotIn("quotas", result)
+
+    def test_unknown_format(self):
+        raw = {"unknown": "data"}
+        result = balance_usage.normalize_balance(raw, "test")
+        self.assertEqual(result["primary"], "—")
+        self.assertNotIn("quotas", result)
+
+    def test_unknown_format_redacts_raw_values(self):
+        """Fallback must never echo raw provider response values into the UI
+        (a provider could reflect the API key back).  Key names survive."""
+        raw = {"error": {"code": 401, "api_key": "sk-leak-me"},
+               "message": "unauthorized sk-leak-me"}
+        result = balance_usage.normalize_balance(raw, "test")
+        rendered = json.dumps(result, ensure_ascii=False)
+        self.assertNotIn("sk-leak-me", rendered)
+        self.assertNotIn("unauthorized", rendered)
+        self.assertIn("error", rendered)  # structure hint stays for debugging
+        self.assertIn("message", rendered)
+
+    def test_deepseek_has_no_pct(self):
+        raw = {"balance_infos": [{"total_balance": "39.98", "topped_up_balance": "40.00", "currency": "CNY"}]}
+        self.assertIsNone(balance_usage.normalize_balance(raw, "余额").get("pct"))
+
+    # ── GLM Coding Plan (quotas from limits[]) ──
+    def test_glm_coding_plan(self):
+        raw = {"data": {"level": "pro", "limits": [{"unit": 5, "percentage": 85}]}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        self.assertEqual(result["primary"], "PRO")
+        self.assertEqual(result["label"], "Coding Plan")
+        self.assertEqual(result["pct"], 85)
+        qs = result["quotas"]
+        self.assertEqual(len(qs), 1)
+        self.assertEqual(qs[0]["period"], "每月")
+        self.assertEqual(qs[0]["pct"], 85)
+
+    def test_glm_coding_plan_includes_current_detail(self):
+        raw = {"data": {"level": "pro", "limits": [
+            {"unit": 5, "percentage": 85, "currentValue": 1700, "usage": 2000}]}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        q = result["quotas"][0]
+        self.assertEqual(q["period"], "每月")
+        self.assertEqual(q["used"], 1700)
+        self.assertEqual(q["limit"], 2000)
+        self.assertIsNone(q["reset"])
+
+    def test_glm_coding_plan_pct_from_limits(self):
+        # pct = 各窗口 percentage 的最大值（最紧的那个窗口决定颜色）
+        raw = {"data": {"level": "pro", "limits": [
+            {"unit": 5, "percentage": 3},
+            {"unit": 3, "percentage": 86}]}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        self.assertEqual(result["pct"], 86)
+
+    def test_glm_coding_plan_sorts_by_duration(self):
+        """Quotas sorted ascending by time-window length: 5小时 < 每周 < 每月."""
+        raw = {"data": {"level": "pro", "limits": [
+            {"unit": 5, "percentage": 50},   # 每月
+            {"unit": 3, "percentage": 20},   # 5小时
+            {"unit": 6, "percentage": 30},   # 每周
+        ]}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        periods = [q["period"] for q in result["quotas"]]
+        self.assertEqual(periods, ["5小时", "每周", "每月"])
+
+    def test_glm_coding_plan_no_detail_fields(self):
+        """When a GLM limit has only percentage (no currentValue/usage),
+        used/limit are None."""
+        raw = {"data": {"level": "pro", "limits": [{"unit": 5, "percentage": 85}]}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        q = result["quotas"][0]
+        self.assertIsNone(q["used"])
+        self.assertIsNone(q["limit"])
+
+    # ── KIMI Coding Plan (quotas: main + windowed) ──
+    def test_kimi_format(self):
+        raw = {"usage": {"limit": "100", "used": "42"},
+               "user": {"membership": {"level": "LEVEL_PRO"}}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        self.assertEqual(result["primary"], "Pro")
+        qs = result["quotas"]
+        self.assertEqual(len(qs), 1)
+        self.assertEqual(qs[0]["period"], "主配额")
+        self.assertEqual(qs[0]["used"], 42)
+        self.assertEqual(qs[0]["limit"], 100)
+        self.assertEqual(qs[0]["pct"], 42)
+        self.assertIsNone(qs[0]["reset"])
+
+    def test_kimi_includes_reset_time(self):
+        raw = {"usage": {"limit": "100", "used": "42", "resetTime": "2026-09-01T00:00:00Z"},
+               "user": {"membership": {"level": "LEVEL_PRO"}}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        self.assertEqual(result["quotas"][0]["period"], "主配额")
+        self.assertIn("9月1日", result["quotas"][0]["reset"])
+
+    def test_kimi_limits_window_shows_5h_quota(self):
+        # Real API response shape: usage=周额度, limits[]=windowed quotas
+        raw = {
+            "user": {"membership": {"level": "LEVEL_ADVANCED"}},
+            "usage": {"limit": "100", "used": "37", "resetTime": "2026-08-16T03:00:46Z"},
+            "limits": [{
+                "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                "detail": {"limit": "100", "used": "33",
+                           "resetTime": "2026-08-10T13:00:46Z"},
+            }],
+        }
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        qs = result["quotas"]
+        self.assertEqual(len(qs), 2)
+        # 主配额 first, then 5小时 window
+        self.assertEqual(qs[0]["period"], "主配额")
+        self.assertEqual(qs[0]["used"], 37)
+        self.assertEqual(qs[0]["limit"], 100)
+        self.assertEqual(qs[0]["pct"], 37)
+        self.assertIn("8月16日", qs[0]["reset"])
+        self.assertEqual(qs[1]["period"], "5小时")
+        self.assertEqual(qs[1]["used"], 33)
+        self.assertEqual(qs[1]["limit"], 100)
+        self.assertEqual(qs[1]["pct"], 33)
+        self.assertIn("8月10日", qs[1]["reset"])
+        self.assertEqual(result["pct"], 37)  # max across all windows
+
+    def test_kimi_pct_field_drives_color(self):
+        raw = {"usage": {"limit": "100", "used": "85"},
+               "user": {"membership": {"level": "LEVEL_PRO"}}}
+        self.assertEqual(balance_usage.normalize_balance(raw, "x")["pct"], 85)
+
+    def test_kimi_pct_max_across_windows(self):
+        """pct = max percentage across main + windowed quotas."""
+        raw = {
+            "usage": {"limit": "100", "used": "20"},
+            "user": {"membership": {"level": "LEVEL_PRO"}},
+            "limits": [{
+                "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                "detail": {"limit": "100", "used": "90"},
+            }],
+        }
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        self.assertEqual(result["pct"], 90)  # 90 > 20
+
+
+class TestFetchBalance(unittest.TestCase):
+    def test_disabled_provider_skipped(self):
+        sp = {"providers": {"x": {"enabled": False}}}
+        self.assertEqual(balance_usage.fetch_balance(sp),
+                         [{"provider": "x", "enabled": False}])
+
+    def test_unsupported_provider_marked(self):
+        sp = {"providers": {"x": {"base_url": "https://unknown.example.com"}}}
+        result = balance_usage.fetch_balance(sp)
+        self.assertFalse(result[0]["supported"])
+
+    def test_supported_provider_without_key(self):
+        sp = {"providers": {"x": {"base_url": "https://api.deepseek.com"}}}
+        result = balance_usage.fetch_balance(sp)
+        self.assertEqual(result[0]["error"], "未配置 API Key")
+
+
+class TestFetchUsage(unittest.TestCase):
+    def test_missing_log_returns_zero(self):
+        result = balance_usage.fetch_usage({"usage_log": {"path": "/nonexistent/x.jsonl"}})
+        self.assertEqual(result["total"]["calls"], 0)
+        self.assertEqual(result["providers"], {})
+
+    def test_missing_usage_log_config_reads_schema_default_path(self):
+        entry = json.dumps(_usage_record(input_tokens=1, output_tokens=1)) + "\n"
+        with tempfile.TemporaryDirectory() as home:
+            log_dir = os.path.join(home, ".suanpan", "logs")
+            os.makedirs(log_dir)
+            with open(os.path.join(log_dir, "usage.jsonl"), "w") as f:
+                f.write(entry)
+            with patch.dict(os.environ, {"HOME": home}):
+                result = balance_usage.fetch_usage({})
+        self.assertEqual(result["total"]["calls"], 1)
+
+    def test_aggregates_jsonl_entries(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps(_usage_record(
+                provider="deepseek", input_tokens=10, output_tokens=5,
+                status=200, latency_ms=100)) + "\n")
+            f.write(json.dumps(_usage_record(
+                provider="deepseek", input_tokens=20, output_tokens=5,
+                status=500, latency_ms=200)) + "\n")
+            f.write("not-json-line\n")  # skipped
+            path = f.name
+        try:
+            result = balance_usage.fetch_usage({"usage_log": {"path": path}})
+        finally:
+            os.unlink(path)
+        self.assertEqual(result["total"]["calls"], 2)
+        self.assertEqual(result["total"]["input_tokens"], 30)
+        self.assertEqual(result["total"]["errors"], 1)
+        self.assertEqual(result["total"]["avg_latency_ms"], 150)
+        self.assertEqual(result["providers"]["deepseek"]["calls"], 2)
+
+    def test_aggregates_four_token_buckets_and_cache_hit_rate(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps(_usage_record(
+                provider="deepseek", input_tokens=10, cache_read_tokens=90,
+                output_tokens=5, status=200, latency_ms=100)) + "\n")
+            f.write(json.dumps(_usage_record(
+                provider="glm", input_tokens=20, cache_read_tokens=30,
+                cache_creation_tokens=50, output_tokens=15, status=500,
+                latency_ms=300)) + "\n")
+            path = f.name
+        try:
+            result = balance_usage.fetch_usage({"usage_log": {"path": path}})
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(result["total"]["cache_read_tokens"], 120)
+        self.assertEqual(result["total"]["cache_creation_tokens"], 50)
+        self.assertEqual(result["total"]["cache_hit_rate"], 0.6)
+        self.assertEqual(result["total"]["errors"], 1)
+        self.assertEqual(result["total"]["avg_latency_ms"], 200)
+        self.assertEqual(result["providers"]["deepseek"]["cache_hit_rate"], 0.9)
+        self.assertEqual(result["providers"]["glm"]["cache_hit_rate"], 0.3)
+
+    def test_groups_usage_by_cst_day_and_route_source(self):
+        entries = [
+            {
+                "ts": "2026-08-18T09:00:00+08:00", "provider": "deepseek",
+                "scenario": "rule", "input_tokens": 10,
+                "cache_read_tokens": 10, "cache_creation_tokens": 0,
+                "output_tokens": 4, "status": 200, "latency_ms": 100,
+            },
+            {
+                "ts": "2026-08-18T10:00:00+08:00", "provider": "deepseek",
+                "scenario": "default", "input_tokens": 0,
+                "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                "output_tokens": 1, "status": 502, "latency_ms": 300,
+            },
+            {
+                "ts": "2026-08-19T11:00:00+08:00", "provider": "glm",
+                "scenario": "inline", "input_tokens": 20,
+                "cache_read_tokens": 30, "cache_creation_tokens": 50,
+                "output_tokens": 2, "status": 200, "latency_ms": 500,
+            },
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            for entry in entries:
+                f.write(json.dumps(entry) + "\n")
+            path = f.name
+        try:
+            result = balance_usage.fetch_usage({"usage_log": {"path": path}})
+        finally:
+            os.unlink(path)
+
+        self.assertEqual([day["date"] for day in result["daily"]],
+                         ["2026-08-18", "2026-08-19"])
+        self.assertEqual(result["daily"][0]["calls"], 2)
+        self.assertEqual(result["daily"][0]["errors"], 1)
+        self.assertEqual(result["daily"][0]["cache_hit_rate"], 0.5)
+        self.assertEqual(result["scenarios"]["rule"]["cache_hit_rate"], 0.5)
+        self.assertIsNone(result["scenarios"]["default"]["cache_hit_rate"])
+        self.assertEqual(result["scenarios"]["inline"]["calls"], 1)
+
+    def test_today_and_seven_day_ranges_use_cst_calendar_boundaries(self):
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                value = cls(2026, 8, 19, 12, 0, tzinfo=balance_usage.CST)
+                return value.astimezone(tz) if tz else value.replace(tzinfo=None)
+
+        timestamps = [
+            "2026-08-19T00:00:00+08:00",  # today, exact lower boundary
+            "2026-08-18T16:30:00Z",       # today after conversion to CST
+            "2026-08-13T00:00:00+08:00",  # seventh calendar day, included
+            "2026-08-12T23:59:59+08:00",  # just outside seven days
+            "2026-08-20T00:00:00+08:00",  # future, excluded from rolling ranges
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            for ts in timestamps:
+                f.write(json.dumps({
+                    "ts": ts, "provider": "p", "scenario": "rule",
+                    "input_tokens": 1, "output_tokens": 1,
+                    "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                    "status": 200, "latency_ms": 1,
+                }) + "\n")
+            path = f.name
+        try:
+            with patch.object(balance_usage, "datetime", FrozenDateTime):
+                today = balance_usage.fetch_usage(
+                    {"usage_log": {"path": path}}, "today")
+                seven_days = balance_usage.fetch_usage(
+                    {"usage_log": {"path": path}}, "7d")
+                all_time = balance_usage.fetch_usage(
+                    {"usage_log": {"path": path}}, "all")
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(today["total"]["calls"], 2)
+        self.assertEqual([d["date"] for d in today["daily"]], ["2026-08-19"])
+        self.assertEqual(seven_days["total"]["calls"], 3)
+        self.assertEqual(all_time["total"]["calls"], 5)
+
+    def test_corrupt_and_non_object_lines_are_skipped(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write("not-json\n")
+            f.write(json.dumps(["not", "a", "usage entry"]) + "\n")
+            f.write(json.dumps({
+                "provider": "bad", "input_tokens": "unknown",
+                "output_tokens": 1, "status": "broken",
+            }) + "\n")
+            f.write(json.dumps(_usage_record(
+                scenario="rule", input_tokens=1, output_tokens=2,
+                latency_ms=3)) + "\n")
+            path = f.name
+        try:
+            result = balance_usage.fetch_usage({"usage_log": {"path": path}})
+        finally:
+            os.unlink(path)
+        self.assertEqual(result["total"]["calls"], 1)
+
+    def test_invalid_utf8_line_is_skipped(self):
+        valid = (json.dumps(_usage_record(input_tokens=1)) + "\n").encode()
+        with tempfile.NamedTemporaryFile("wb", suffix=".jsonl", delete=False) as f:
+            f.write(b"\xff\xfe\n")
+            f.write(valid)
+            path = f.name
+        try:
+            result = balance_usage.fetch_usage(
+                {"usage_log": {"path": path}}, "all")
+        finally:
+            os.unlink(path)
+        self.assertEqual(result["total"]["calls"], 1)
+
+    def test_incomplete_object_and_invalid_timestamp_are_skipped(self):
+        valid = {
+            "ts": "2026-08-19T12:00:00+08:00", "provider": "p",
+            "scenario": "rule", "input_tokens": 1, "output_tokens": 2,
+            "cache_read_tokens": 0, "cache_creation_tokens": 0,
+            "status": 200, "latency_ms": 3,
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write("{}\n")
+            f.write(json.dumps({**valid, "ts": "not-a-date"}) + "\n")
+            f.write(json.dumps(valid) + "\n")
+            path = f.name
+        try:
+            result = balance_usage.fetch_usage(
+                {"usage_log": {"path": path}}, "all")
+        finally:
+            os.unlink(path)
+        self.assertEqual(result["total"]["calls"], 1)
+        self.assertEqual(set(result["providers"]), {"p"})
+        self.assertEqual([day["date"] for day in result["daily"]],
+                         ["2026-08-19"])
+
+    def test_arbitrarily_large_integer_fields_do_not_crash(self):
+        huge = 10 ** 400
+        entry = {
+            "ts": "2026-08-19T12:00:00+08:00", "provider": "p",
+            "scenario": "default", "input_tokens": huge,
+            "output_tokens": 0, "cache_read_tokens": 0,
+            "cache_creation_tokens": 0, "status": 200, "latency_ms": huge,
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps(entry) + "\n")
+            path = f.name
+        try:
+            result = balance_usage.fetch_usage(
+                {"usage_log": {"path": path}}, "all")
+        finally:
+            os.unlink(path)
+        self.assertEqual(result["total"]["calls"], 1)
+        self.assertEqual(result["total"]["input_tokens"], huge)
+        self.assertEqual(result["total"]["avg_latency_ms"], huge)
+
+    def test_empty_log_returns_complete_empty_shape(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            path = f.name
+        try:
+            result = balance_usage.fetch_usage({"usage_log": {"path": path}})
+        finally:
+            os.unlink(path)
+        self.assertEqual(result["total"]["calls"], 0)
+        self.assertIsNone(result["total"]["cache_hit_rate"])
+        self.assertEqual(result["providers"], {})
+        self.assertEqual(result["daily"], [])
+        self.assertEqual(result["scenarios"], {})
+
+    def test_rotated_log_is_not_included(self):
+        entry = json.dumps(_usage_record(input_tokens=1, output_tokens=1)) + "\n"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "usage.jsonl")
+            with open(path, "w") as current:
+                current.write(entry)
+            with open(path + ".1", "w") as rotated:
+                rotated.write(entry * 5)
+            result = balance_usage.fetch_usage({"usage_log": {"path": path}})
+        self.assertEqual(result["total"]["calls"], 1)
+
+
+class TestTestProviderUnknown(unittest.TestCase):
+    def test_unknown_provider_returns_error(self):
+        result = balance_usage.test_provider(_sp({}), "nonexistent")
+        self.assertNotIn("ok", result)
+        self.assertIn("不存在", result["error"])
+
+
+class TestTestProviderValidation(unittest.TestCase):
+    def test_empty_base_url_returns_error(self):
+        result = balance_usage.test_provider(
+            _sp({"p": {"base_url": "", "api_key": "k", "models": ["m"]}}), "p")
+        self.assertIn("base_url", result["error"])
+
+    def test_no_api_key_returns_error(self):
+        result = balance_usage.test_provider(
+            _sp({"p": {"base_url": "https://x.com", "api_key": None, "models": ["m"]}}), "p")
+        self.assertIn("API Key", result["error"])
+
+    def test_no_models_returns_error(self):
+        result = balance_usage.test_provider(
+            _sp({"p": {"base_url": "https://x.com", "api_key": "k", "models": []}}), "p")
+        self.assertIn("模型", result["error"])
+
+
+class TestTestProviderRequest(unittest.TestCase):
+    """Test the HTTP request path with mocked urllib."""
+    _provider = {"base_url": "https://api.test.com", "api_key": "sk-test",
+                 "auth_header": "x-api-key", "models": ["test-model"]}
+
+    def _mock_resp(self, body_dict, status=200):
+        import io
+        resp = unittest.mock.MagicMock()
+        resp.read.return_value = json.dumps(body_dict).encode()
+        resp.__enter__ = unittest.mock.MagicMock(return_value=resp)
+        resp.__exit__ = unittest.mock.MagicMock(return_value=False)
+        return resp
+
+    @patch("urllib.request.urlopen")
+    def test_successful_request_returns_ok(self, mock_urlopen):
+        mock_urlopen.return_value = self._mock_resp({
+            "model": "test-model",
+            "content": [{"type": "text", "text": "Hello!"}],
+        })
+        result = balance_usage.test_provider(_sp({"p": self._provider}), "p")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["model"], "test-model")
+        self.assertEqual(result["reply"], "Hello!")
+
+    @patch("urllib.request.urlopen")
+    def test_successful_request_empty_reply(self, mock_urlopen):
+        mock_urlopen.return_value = self._mock_resp({
+            "model": "test-model", "content": [],
+        })
+        result = balance_usage.test_provider(_sp({"p": self._provider}), "p")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["reply"], "")
+
+    @patch("urllib.request.urlopen")
+    def test_http_error_returns_message(self, mock_urlopen):
+        err = urllib.error.HTTPError(
+            "https://api.test.com/v1/messages", 400,
+            "Bad Request", {},
+            io.BytesIO(json.dumps({"error": {"message": "Model not exist."}}).encode()))
+        mock_urlopen.side_effect = err
+        result = balance_usage.test_provider(_sp({"p": self._provider}), "p")
+        self.assertIn("Model not exist", result["error"])
+
+    @patch("urllib.request.urlopen")
+    def test_network_error_returns_exception(self, mock_urlopen):
+        mock_urlopen.side_effect = ConnectionError("timeout")
+        result = balance_usage.test_provider(_sp({"p": self._provider}), "p")
+        self.assertIn("ConnectionError", result["error"])
+
+    @patch("urllib.request.urlopen")
+    def test_model_override(self, mock_urlopen):
+        mock_urlopen.return_value = self._mock_resp({
+            "model": "custom-model",
+            "content": [{"type": "text", "text": "hi"}],
+        })
+        result = balance_usage.test_provider(
+            _sp({"p": self._provider}), "p", model="custom-model")
+        self.assertTrue(result["ok"])
+        # Verify the request body used the override model
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data.decode())
+        self.assertEqual(body["model"], "custom-model")
+
+    def test_missing_api_key_returns_error(self):
+        provider = {"base_url": "https://api.test.com", "enabled": True}
+        result = balance_usage.test_provider(_sp({"p": provider}), "p")
+        self.assertIn("API Key", result["error"])
+
+
+class TestResolveProviderKey(unittest.TestCase):
+    def test_none_key_falls_back_to_env(self):
+        os.environ["TEST_BU_KEY"] = "sk-from-env"
+        try:
+            p = {"api_key": None, "api_key_env": "TEST_BU_KEY"}
+            self.assertEqual(balance_usage.resolve_api_key(p), "sk-from-env")
+        finally:
+            del os.environ["TEST_BU_KEY"]
+
+    def test_no_key_no_env_returns_none(self):
+        self.assertIsNone(balance_usage.resolve_api_key({"api_key": None}))
+
+
+class TestFmtReset(unittest.TestCase):
+    def test_valid_iso_formatted(self):
+        result = balance_usage._fmt_reset("2026-08-10T14:30:00Z")
+        self.assertIn("8月10日", result)
+
+    def test_invalid_iso_returns_prefix(self):
+        result = balance_usage._fmt_reset("not-a-timestamp-value")
+        self.assertEqual(result, "not-a-timestamp-")
+
+
+if __name__ == "__main__":
+    unittest.main()

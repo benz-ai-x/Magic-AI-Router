@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest -q tests/
+      - name: Compile check
+        run: |
+          python -m py_compile app.py proxy.py config_server.py webview_window.py suanpan_runtime.py capture.py ai_capture_addon.py system_proxy.py suanpan/main.py suanpan/router.py
+          bash -n build.sh build_dmg.sh notarize.sh
+
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements-lock.txt
+      - name: Build app and DMG
+        run: |
+          MAIN_PYTHON_BIN=python MITM_PYTHON_BIN=python bash build.sh
+          test -x "dist/Magic AI Router.app/Contents/Resources/mitmdump/mitmdump"
+          "dist/Magic AI Router.app/Contents/Resources/mitmdump/mitmdump" --version
+          VERSION=$(grep -E '^VERSION=' build.sh | head -1 | sed -E 's/VERSION="([^"]*)"/\1/')
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 'dist/Magic AI Router.app/Contents/Info.plist')" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' 'dist/Magic AI Router.app/Contents/Info.plist')" = "true"
+          codesign --verify --strict --deep "dist/Magic AI Router.app"
+          MAGIC_PROXY_SMOKE_TEST=1 "dist/Magic AI Router.app/Contents/MacOS/Magic AI Router"
+          bash build_dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mage-ai-router-unsigned-arm64
+          path: |
+            dist/Magic AI Router.app
+            dist/Magic AI Router-*.dmg

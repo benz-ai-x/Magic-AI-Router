@@ -1,0 +1,119 @@
+# CLAUDE.md
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in `benz-ai-x/Magic-AI-Router` (via `gh` CLI, inferred from `origin`; 2026-08-19 删除后重建，历史 issue 未迁移，本地副本在 `docs/specs/`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the five canonical triage labels (`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo: `CONTEXT.md` + `docs/adr/` at the root. See `docs/agents/domain.md`.
+
+## 概述
+
+Magic AI Router — macOS 菜单栏应用（壳），承载两个独立产品：Magic Proxy（SSH 隧道 HTTP→SOCKS5 代理 + TLS 抓包）和 Suanpan（AI 请求路由网关）。纯 Python 3 实现，可打包为原生 .app。
+
+> **模块清单、菜单结构等易过期信息以代码为准**（`tests/test_docs_drift.py` 做防漂移守卫）；版本号见 `build.sh`。
+
+> 用户可见名是 **Magic AI Router**（见 `build.sh` / `app.py`）；内部代码和历史文档中常称 Magic Proxy / Magic-AI-Router。
+
+## Tech Stack
+
+Python ≥3.9（自有代码下界；**打包工具链因 mitmproxy ≥12 需构建解释器 ≥3.12**，见 ADR-022）+ rumps（菜单栏 UI）+ asyncio（HTTP→SOCKS5 代理）+ PyObjC objc/AppKit/Foundation（WKWebView 设置窗 / CA 信任引导窗 `ca_trust.py` / 日志窗 `log_window.py`）+ Pillow（图标生成）+ mitmproxy 12.2.3（抓包模式 TLS MITM）+ FastAPI + uvicorn + httpx + pydantic（Suanpan AI 路由网关）；PyInstaller 打包 `.app`（`--windowed` + `LSUIElement=true`）；SSH 隧道经系统 `ssh` / `sshpass`（密码认证）；SSH 密码走 macOS Keychain。详见 ADR-000 + ADR-022。版本号见 `build.sh`。
+
+## 命令
+
+```
+# 开发模式
+python3 app.py
+
+# 安装依赖
+pip3 install -r requirements-dev.txt
+
+# 测试
+pytest tests/
+
+# 打包 .app
+bash build.sh
+cp -R "dist/Magic AI Router.app" /Applications/
+
+# 发布分发（签名 + 公证）
+bash notarize.sh
+```
+
+## 架构
+
+```
+app.py ── 编排器：__init__ + _on_tick + 菜单回调
+  ├── config.py ── 配置 I/O（load/save/merge/migrate）；http_listen_port 字段 + 读时兼容旧 "host:port"
+  ├── config_store.py ── 路径注册表 PATHS + 原子写管线（mkstemp+chmod 0600+os.replace）；所有托管配置文件的唯一安全写入口
+  ├── netloc.py ── host:port 解析/格式化/loopback 校验的唯一所有者
+  ├── provider_auth.py ── 供应商认证纯逻辑（resolve_api_key + build_outbound_headers）
+  ├── proxy.py ── asyncio HTTP→SOCKS5 代理 + SSHMonitor + ProxyRuntime
+  ├── async_runtime.py ── daemon 线程 + asyncio 循环 + 代际计数停止（ProxyRuntime/Suanpan 共用）
+  ├── connection_coordinator.py ── SSH 连接/重试/host-key 流程编排
+  ├── service_coordinator.py ── tick/sync_sleep/stop_all 编排（瘦身后；子模块由 app.py 直接持有）
+  ├── subprocess_monitor.py ── 子进程生命周期基类（SSHMonitor/CaptureMonitor 继承）
+  ├── menu_builder.py ── 菜单栏 UI 构建 + 状态图标
+  ├── sys_proxy_controller.py ── 系统代理收敛状态机
+  ├── retry_scheduler.py ── SSH 重试退避调度
+  ├── host_key_flow.py ── SSH 主机密钥信任流程
+  ├── host_key.py ── SSH known_hosts 管理
+  ├── config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token + body 上限）
+  ├── balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围 / 缓存 / 路由来源）+ 供应商连通性探测
+  ├── config_ui.html ── 自包含 Web 配置面板（三层架构：LAYER 1 纯逻辑可 node:test / VIEWS 注册表 / 渲染层）
+  ├── bridge_protocol.py ── 设置窗 JS↔Python 消息协议（纯 Python 核心，可单测）
+  ├── webview_window.py ── WKWebView 窗口（ObjC 薄 adapter）
+  ├── suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
+  ├── capture.py ── mitmdump 子进程管理（抓包模式）
+  ├── capture_controller.py ── 抓包启停 + 信任缓存控制
+  ├── capture_store.py ── 抓包目录/文件管理（跨进程共享）
+  ├── ai_capture_addon.py ── mitmproxy addon：6 家 AI 请求抽取落 JSONL
+  ├── claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json，经 config_store.atomic_write；env 契约见 ADR-024）
+  ├── ca_trust.py ── 根 CA 信任检测 + 引导窗
+  ├── system_proxy.py ── networksetup 包装：事务式 + 崩溃恢复
+  ├── util.py ── resource_path（PyInstaller _MEIPASS）+ truncate + build_stamp + version_display
+  ├── 其他小模块：stats / keychain / port_check / sleep_blocker / login_item / chromium_proxy / log_window / generate_icon / mitmdump_entry
+
+suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM 后端）
+  config.py ── Pydantic 配置 schema + YAML 加载/回写 + API key 掩码契约（api_key_set 布尔，真实 key 不出进程；见 ADR-023）
+  main.py ── FastAPI app factory + 路由 handler
+  middleware.py ── APIKey + BodyLimit 中间件
+  proxy.py ── 流式代理转发 + 传输级重试
+  compat.py ── 供应商请求 body 归一化（system 扁平化 / document 块剥离 / beta 字段剥离）
+  usage_extractor.py ── UsageExtractor SSE 用量提取（CRLF 兼容 + max-merge 跨供应商）
+  router.py ── 路由决策（内联覆盖 → SUBAGENT 标签 → 规则 → 默认）
+  usage_log.py ── 追加写 JSONL + 50MB 轮转 + 内存滚动总计
+  __main__.py ── `python3 -m suanpan` 独立启动入口
+```
+
+**线程模型：** 主线程跑 rumps NSRunLoop（菜单栏）。后台 daemon 线程跑：asyncio 事件循环（代理服务 ProxyRuntime）、Suanpan 网关（uvicorn）、config server（http.server）。
+
+**菜单结构：** 状态行 → 代理隧道 ▸（含连接控制）→ AI 路由 ▸ → 抓包 ▸ → 页脚
+
+**偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 网络设置）+ AI 路由（供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。
+
+## 配置
+
+### Magic Proxy — `~/.magic-proxy.json`
+
+支持多隧道，`auth_type` 为 `key`（默认）或 `password`（需 `sshpass`）。密码走 macOS Keychain。监听地址存 `http_listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-023）。
+
+### Suanpan AI 路由 — `~/.suanpan.yaml`
+
+参考 `suanpan.example.yaml`。首次启动时自动创建最小默认配置。监听地址存 `listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-023）。
+
+## 注意事项
+
+- 菜单栏状态图标用 `MenubarIcon.png` 染色（绿=已连接 / 黄=连接中 / 灰=未连接）
+- PyObjC 方法名不能以单下划线开头（会被当成 ObjC selector）
+- 打包后的 .app 设置 LSUIElement=true，不显示 Dock 图标
+- Suanpan 网关依赖为延迟导入——未安装时 app 正常启动，网关功能不可用并提示安装命令
+- Config server（:9528）和 AI 路由网关（:9527）是两个独立端口，不可合并
+- 配置通过 webview 设置界面管理（`config_ui.html`）
+- 测试覆盖率 100%（pytest + node；`pytest --cov` 口径见 `.coveragerc` omit 清单）

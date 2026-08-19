@@ -1,0 +1,471 @@
+"""Coverage push: close the remaining gaps in the config stack.
+
+Covers previously-uncovered lines in:
+- config_server.py (lines 37, 55, 63, 122-127, 135-136, 165, 173-174, 192, 194-197)
+- config.py (lines 134-135 — ValueError swallow in http_listen back-compat)
+- claude_code_setup.py (lines 31, 34-37, 41, 60, 97)
+- bridge_protocol.py (lines 39-40, 67-69)
+- capture_controller.py (lines 67, 71)
+
+Lives in its own file so it doesn't collide with sibling coverage PRs.
+"""
+import json
+import os
+import tempfile
+import threading
+import unittest
+from http.client import HTTPConnection
+from unittest.mock import MagicMock, patch
+
+import bridge_protocol
+import capture_controller
+import claude_code_setup
+import config
+import config_server
+from capture_controller import CaptureController
+
+
+# ── config_server helpers ──────────────────────────────────────────────
+
+def _start_server():
+    """Start a config server on a random port, return (server, port)."""
+    s = config_server.ConfigServer()
+    config_server._Handler.expected_token = s._token
+    s._server = config_server._ThreadingHTTPServer(
+        ("127.0.0.1", 0), config_server._Handler)
+    port = s._server.server_address[1]
+    s._thread = threading.Thread(target=s._server.serve_forever, daemon=True)
+    s._thread.start()
+    return s, port
+
+
+def _request(port, method, path, body=None, token=None, host_header=None):
+    conn = HTTPConnection("127.0.0.1", port, timeout=5)
+    headers = {}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if host_header is not None:
+        headers["Host"] = host_header
+    conn.request(method, path, body=body, headers=headers)
+    resp = conn.getresponse()
+    data = resp.read().decode()
+    conn.close()
+    return resp.status, data
+
+
+# ── config_server: _read_mp line 37 ───────────────────────────────────
+
+class TestReadMpTunnels(unittest.TestCase):
+    def test_tunnel_gets_has_password_flag(self):
+        """Line 37: tunnels get has_password set based on keychain lookup."""
+        tunnels = [{"name": "t1", "ssh_host": "h", "auth_type": "password"}]
+        with patch.object(config_server, "load_config", return_value={}), \
+             patch.object(config_server, "merge_config",
+                          return_value={"tunnels": tunnels}), \
+             patch.object(config_server.keychain, "get_password",
+                          return_value="secret"):
+            cfg = config_server._read_mp()
+        self.assertTrue(cfg["tunnels"][0]["has_password"])
+
+    def test_tunnel_has_password_false_when_no_keychain_entry(self):
+        tunnels = [{"name": "t1", "ssh_host": "h", "auth_type": "password"}]
+        with patch.object(config_server, "load_config", return_value={}), \
+             patch.object(config_server, "merge_config",
+                          return_value={"tunnels": tunnels}), \
+             patch.object(config_server.keychain, "get_password",
+                          return_value=""):
+            cfg = config_server._read_mp()
+        self.assertFalse(cfg["tunnels"][0]["has_password"])
+
+    def test_tunnel_has_password_false_when_auth_is_key(self):
+        """auth_type != password → has_password stays False; keychain is
+        never even consulted (the `and` short-circuits)."""
+        tunnels = [{"name": "t1", "ssh_host": "h", "auth_type": "key"}]
+        with patch.object(config_server, "load_config", return_value={}), \
+             patch.object(config_server, "merge_config",
+                          return_value={"tunnels": tunnels}), \
+             patch.object(config_server.keychain, "get_password",
+                          return_value="never-called") as gp:
+            cfg = config_server._read_mp()
+        self.assertFalse(cfg["tunnels"][0]["has_password"])
+        gp.assert_not_called()
+
+
+# ── config_server: _write_mp lines 55, 63 ─────────────────────────────
+
+class TestWriteMpKeychainDelete(unittest.TestCase):
+    def test_non_password_tunnel_triggers_keychain_delete(self):
+        """Lines 55 + 63: a tunnel whose auth_type is not 'password' is added
+        to pending_del and keychain.delete_password is called on it."""
+        cfg = {"tunnels": [{"name": "t1", "ssh_host": "h",
+                            "auth_type": "key"}]}
+        with patch.object(config_server, "save_config", return_value=True), \
+             patch.object(config_server.keychain, "delete_password") as dp:
+            errors = config_server._write_mp(cfg)
+        self.assertEqual(errors, [])
+        dp.assert_called_once()
+
+    def test_password_tunnel_with_pw_triggers_set_not_del(self):
+        """A password-auth tunnel WITH a new password goes to pending_set;
+        nothing hits pending_del for that tunnel."""
+        cfg = {"tunnels": [{"name": "t1", "ssh_host": "h",
+                            "auth_type": "password", "password": "pw"}]}
+        with patch.object(config_server, "save_config", return_value=True), \
+             patch.object(config_server.keychain, "set_password",
+                          return_value=True) as sp, \
+             patch.object(config_server.keychain, "delete_password") as dp:
+            errors = config_server._write_mp(cfg)
+        self.assertEqual(errors, [])
+        sp.assert_called_once()
+        dp.assert_not_called()
+
+    def test_password_set_failure_returns_error(self):
+        cfg = {"tunnels": [{"name": "t1", "ssh_host": "h",
+                            "auth_type": "password", "password": "pw"}]}
+        with patch.object(config_server, "save_config", return_value=True), \
+             patch.object(config_server.keychain, "set_password",
+                          return_value=False):
+            errors = config_server._write_mp(cfg)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("钥匙串", errors[0])
+
+    def test_save_config_failure_short_circuits_before_keychain(self):
+        cfg = {"tunnels": [{"name": "t1", "ssh_host": "h",
+                            "auth_type": "key"}]}
+        with patch.object(config_server, "save_config", return_value=False), \
+             patch.object(config_server.keychain, "delete_password") as dp:
+            errors = config_server._write_mp(cfg)
+        self.assertEqual(errors, ["配置文件写入失败"])
+        dp.assert_not_called()
+
+
+# ── config_server: agent.md route (lines 122-127) ─────────────────────
+
+class TestAgentMdRoute(unittest.TestCase):
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_agent_md_served_without_token(self):
+        """Lines 122-124: agent.md is public (loopback-only, no token)."""
+        status, data = _request(self.port, "GET", "/agent.md")
+        self.assertEqual(status, 200)
+        self.assertTrue(len(data) > 0)
+
+    def test_agent_md_404_when_resource_missing(self):
+        """Lines 125-126: OSError on reading agent.md returns JSON 404."""
+        with patch.object(config_server, "_resource_path",
+                          return_value="/nonexistent/agent.md"):
+            status, data = _request(self.port, "GET", "/agent.md")
+        self.assertEqual(status, 404)
+        self.assertIn("agent.md not found", json.loads(data)["error"])
+
+
+class TestBearerHeaderAuth(unittest.TestCase):
+    """Guard for #39: authenticated endpoints accept header-only tokens.
+
+    The settings UI sends the bearer token exclusively via the
+    Authorization header (never the URL query string).  This pins the
+    server-side half of that contract — _valid_token must accept a token
+    that arrives without any ?token= query parameter.
+    """
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_get_state_authenticates_via_header_only(self):
+        status, data = _request(self.port, "GET", "/api/state", token=self.token)
+        self.assertEqual(status, 200)
+        body = json.loads(data)
+        self.assertIn("mp", body)
+        self.assertIn("sp", body)
+
+
+# ── config_server: html OSError path (lines 135-136) ──────────────────
+
+class TestHtmlOSError(unittest.TestCase):
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_root_html_404_when_missing(self):
+        """Lines 135-136: config_ui.html not found → JSON 404."""
+        with patch.object(config_server, "_resource_path",
+                          return_value="/nonexistent/config_ui.html"):
+            status, data = _request(
+                self.port, "GET", f"/?token={self.token}")
+        self.assertEqual(status, 404)
+        self.assertIn("config_ui.html not found", json.loads(data)["error"])
+
+
+# ── config_server: setup-claude-code POST (line 165) ──────────────────
+
+class TestSetupClaudeCodeEndpoint(unittest.TestCase):
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_setup_claude_code_endpoint(self):
+        """POST /api/setup-claude-code delegates to claude_code_setup.setup()
+        (#44: the middle-man adapter is inlined away)."""
+        mock_result = {"ok": True, "action": "added", "msg": "done"}
+        with patch.object(config_server.claude_code_setup, "setup",
+                          return_value=mock_result):
+            status, data = _request(
+                self.port, "POST",
+                f"/api/setup-claude-code?token={self.token}",
+                body=json.dumps({}))
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), mock_result)
+
+    def test_cc_sync_preview_endpoint(self):
+        """POST /api/cc-sync-preview delegates to claude_code_setup.preview()
+        with the request's roles payload (#3 验收 9 read-only dry run)."""
+        mock_result = {"ok": True, "already": False, "changes": []}
+        roles = {"default": {"model": "GLM_MAX/glm-5.2", "ctx_1m": True}}
+        with patch.object(config_server.claude_code_setup, "preview",
+                          return_value=mock_result) as mock_preview:
+            status, data = _request(
+                self.port, "POST",
+                f"/api/cc-sync-preview?token={self.token}",
+                body=json.dumps({"roles": roles}))
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), mock_result)
+        mock_preview.assert_called_once_with(roles=roles)
+
+
+class TestCcDefaultRolesEndpoint(unittest.TestCase):
+    """GET /api/cc-default-roles returns the UI's role-table seed."""
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_cc_default_roles_endpoint(self):
+        roles = {"opus": {"model": "KIMI/k3", "one_m": True}}
+        with patch.object(config_server.claude_code_setup, "default_roles",
+                          return_value=roles):
+            status, data = _request(
+                self.port, "GET",
+                f"/api/cc-default-roles?token={self.token}")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), roles)
+
+
+# ── config_server: PUT 403 path (lines 173-174) ───────────────────────
+
+class TestPutForbidden(unittest.TestCase):
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_put_without_token_returns_403(self):
+        """Lines 173-174: PUT without a valid token → 403 before any work."""
+        with patch.object(config_server, "_write_mp") as wmp:
+            status, data = _request(
+                self.port, "PUT", "/api/state",
+                body=json.dumps({"mp": {}}))
+        self.assertEqual(status, 403)
+        wmp.assert_not_called()
+
+    def test_put_with_invalid_host_returns_403(self):
+        status, data = _request(
+            self.port, "PUT", f"/api/state?token={self.token}",
+            body=json.dumps({}), host_header="evil.com")
+        self.assertEqual(status, 403)
+
+
+# ── config_server: sp_save failure + on_sp_saved (lines 192, 194-197) ─
+
+class TestPutSpSaveAndCallback(unittest.TestCase):
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_sp_save_failure_appends_error(self):
+        """Line 192: sp_save returning (False, err) appends to errors → 422."""
+        with patch.object(config_server, "_write_mp", return_value=[]), \
+             patch.object(config_server.config_store, "sp_save",
+                          return_value=(False, "invalid config")):
+            status, data = _request(
+                self.port, "PUT", f"/api/state?token={self.token}",
+                body=json.dumps({"sp": {"providers": {}}}))
+        self.assertEqual(status, 422)
+        self.assertIn("invalid config", json.loads(data)["errors"])
+
+    def test_on_sp_saved_callback_invoked_on_success(self):
+        """Lines 194-195: on_sp_saved fires after a successful sp_save."""
+        callback = MagicMock()
+        with patch.object(config_server, "_write_mp", return_value=[]), \
+             patch.object(config_server.config_store, "sp_save",
+                          return_value=(True, None)):
+            config_server._Handler.on_sp_saved = callback
+            try:
+                _request(
+                    self.port, "PUT", f"/api/state?token={self.token}",
+                    body=json.dumps({"sp": {"providers": {}}}))
+            finally:
+                config_server._Handler.on_sp_saved = None
+        callback.assert_called_once()
+
+    def test_on_sp_saved_exception_swallowed(self):
+        """Lines 196-197: a raising on_sp_saved callback must not bubble up."""
+        callback = MagicMock(side_effect=RuntimeError("boom"))
+        with patch.object(config_server, "_write_mp", return_value=[]), \
+             patch.object(config_server.config_store, "sp_save",
+                          return_value=(True, None)):
+            config_server._Handler.on_sp_saved = callback
+            try:
+                status, data = _request(
+                    self.port, "PUT", f"/api/state?token={self.token}",
+                    body=json.dumps({"sp": {"providers": {}}}))
+            finally:
+                config_server._Handler.on_sp_saved = None
+        # The exception was caught; the response is still 200 OK.
+        self.assertEqual(status, 200)
+
+
+# ── config.py: lines 134-135 (http_listen ValueError swallow) ─────────
+
+class TestMergeConfigHttpListenInvalid(unittest.TestCase):
+    def test_invalid_http_listen_falls_through_to_default(self):
+        """Lines 134-135: when netloc.parse_listen raises ValueError on the
+        legacy http_listen value, the exception is swallowed and the range
+        check below resets http_listen_port to the default (8888)."""
+        cfg = {"http_listen": "bad-no-colon"}
+        merged = config.merge_config(cfg)
+        self.assertEqual(merged["http_listen_port"], 8888)
+
+
+# ── claude_code_setup.py: setup listen resolution ───────────
+
+class TestSetupListenResolution(unittest.TestCase):
+    def test_setup_uses_suanpan_listen(self):
+        """setup() resolves listen via config_store.suanpan_listen()."""
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = os.path.join(d, "settings.json")
+            with patch("claude_code_setup.config_store.suanpan_listen",
+                       return_value="127.0.0.1:8888"), \
+                 patch("claude_code_setup.config_store.sp_load_raw",
+                       return_value={}), \
+                 patch.dict("config_store.PATHS",
+                            {"claude_settings": settings_path}):
+                result = claude_code_setup.setup()
+            with open(settings_path) as f:
+                written = json.load(f)
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            written["env"]["ANTHROPIC_BASE_URL"], "http://127.0.0.1:8888")
+
+
+class TestSetupFallbackDefaultListen(unittest.TestCase):
+    def test_setup_uses_schema_default_when_sp_unreadable(self):
+        """suanpan_listen() falls back to the schema default (sandboxed
+        PATHS["sp"] doesn't exist), giving 127.0.0.1:9527."""
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = os.path.join(d, "settings.json")
+            with patch("claude_code_setup.config_store.sp_load_raw",
+                       return_value={}), \
+                 patch.dict("config_store.PATHS",
+                            {"claude_settings": settings_path}):
+                result = claude_code_setup.setup()
+            self.assertTrue(result["ok"])
+            with open(settings_path) as f:
+                written = json.load(f)
+            self.assertEqual(
+                written["env"]["ANTHROPIC_BASE_URL"],
+                "http://127.0.0.1:9527")
+
+
+class TestSetupAtomicWriteFailure(unittest.TestCase):
+    def test_atomic_write_returning_false_yields_failed(self):
+        """Line 97: atomic_write returns False → action 'failed'."""
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = os.path.join(d, "settings.json")
+            with patch("claude_code_setup.config_store.sp_load_raw",
+                       return_value={}), \
+                 patch.dict("config_store.PATHS",
+                            {"claude_settings": settings_path}), \
+                 patch("claude_code_setup.config_store.atomic_write",
+                       return_value=False):
+                result = claude_code_setup.setup()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "failed")
+
+
+# ── bridge_protocol.py: _plain dict exception (lines 39-40) ───────────
+
+class _HostileDict(dict):
+    """A dict subclass whose items() raises — must be neutralized by _plain."""
+
+    def items(self):
+        raise RuntimeError("boom")
+
+
+class TestPlainDictException(unittest.TestCase):
+    def test_dict_subclass_with_raising_items_returns_empty_dict(self):
+        """Lines 39-40: when .items() raises inside _plain's dict branch,
+        it returns {} instead of propagating."""
+        hostile = _HostileDict({"type": "dirtyState", "payload": {"dirty": True}})
+        result = bridge_protocol._plain(hostile)
+        self.assertEqual(result, {})
+
+
+# ── bridge_protocol.py: handle_message catch-all (lines 67-69) ────────
+
+class TestHandleMessageCatchAll(unittest.TestCase):
+    def test_dispatch_exception_caught_and_logged(self):
+        """Lines 67-69: if _dispatch raises, handle_message catches it,
+        logs, and returns []."""
+        core = bridge_protocol.BridgeCore()
+        with patch.object(core, "_dispatch",
+                          side_effect=RuntimeError("dispatch boom")), \
+             self.assertLogs("magic-proxy.bridge", level="ERROR"):
+            result = core.handle_message({"type": "anything"})
+        self.assertEqual(result, [])
+
+
+# ── capture_controller.py: status + error_msg properties (lines 67, 71)
+
+class TestCaptureControllerProperties(unittest.TestCase):
+    def test_status_property_proxies_monitor(self):
+        """Line 67: .status returns monitor.status."""
+        monitor = MagicMock()
+        monitor.status = "running"
+        ctrl = CaptureController(monitor, config_fn=lambda: {})
+        self.assertEqual(ctrl.status, "running")
+
+    def test_error_msg_property_proxies_monitor(self):
+        """Line 71: .error_msg returns monitor.error_msg."""
+        monitor = MagicMock()
+        monitor.error_msg = "something broke"
+        ctrl = CaptureController(monitor, config_fn=lambda: {})
+        self.assertEqual(ctrl.error_msg, "something broke")
+
+
+if __name__ == "__main__":
+    unittest.main()

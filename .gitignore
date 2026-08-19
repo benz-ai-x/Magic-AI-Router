@@ -1,0 +1,40 @@
+.superpowers/
+__pycache__/
+*.pyc
+config.json
+build/
+dist/
+build-mitmdump/
+dist-mitmdump/
+*.spec
+*.iconset/
+.build-venv-mitmdump/
+.build-venv-main/
+build_time.txt
+
+# AppGenesisForge 运行态产物（可重建，不入库；ADR-021 codemap .agf/ 等）
+**/.agf/*
+!**/.agf/config.json
+progress/board.html*
+.claude/metrics/
+
+# AGF worktree 运行时检出（每个是一份完整仓库拷贝，数百 MB，可重建）
+.claude/worktrees/
+# codemap 工具的 Python 虚拟环境（由 uv.lock 重建）
+tools/codemap/.venv/
+# macOS Finder 产物
+.DS_Store
+**/.DS_Store
+# scan-secrets 扫描器的自测夹具：内含"故意的假密钥"（AWS 文档示例 key、明显伪造的
+# ghp_aaaa… 等）用来验证扫描器命中。scan-commit 硬门会拦其新增，且按安全规范
+# 「No Equivalent Bypass」不得用 --no-verify 绕过，故不入库（需追踪须 maintainer
+# 显式豁免手动提交）。
+.claude/hooks/tests/test-scan-secrets.sh
+.claude/hooks/tests/test-secret-pattern-parity.sh
+logs/
+.coverage
+.playwright-mcp/
+.pytest_cache/
+.ruff_cache/
+.chrome-mcp/
+.claude/settings.local.json

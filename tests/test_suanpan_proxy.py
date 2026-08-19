@@ -1,0 +1,545 @@
+"""Tests for suanpan proxy + usage extractor + header handling + key resolution.
+
+Seams under test:
+- UsageExtractor: feed(chunk) → .input_tokens/.output_tokens/.cache_read_tokens/.cache_creation_tokens
+- ProviderConfig.build_outbound_headers: incoming dict + key → filtered dict with auth
+- filter_response_headers: httpx.Headers → dict without hop-by-hop
+- ProviderConfig.resolve_api_key: → key string or None
+- _send_with_retry: transport-level errors retried once; timeouts never
+"""
+import asyncio
+import json
+import unittest
+from unittest.mock import MagicMock, AsyncMock
+
+import httpx
+
+from suanpan.usage_extractor import UsageExtractor
+from suanpan.proxy import drain_and_log, filter_response_headers, _send_with_retry
+from suanpan.config import ProviderConfig
+
+
+# ── UsageExtractor ──────────────────────────────────────────────────
+
+class TestUsageExtractorEmpty(unittest.TestCase):
+    def test_no_feed_all_zeros(self):
+        ext = UsageExtractor()
+        self.assertEqual(ext.input_tokens, 0)
+        self.assertEqual(ext.output_tokens, 0)
+        self.assertEqual(ext.cache_read_tokens, 0)
+        self.assertEqual(ext.cache_creation_tokens, 0)
+
+
+class TestUsageExtractorMessageStart(unittest.TestCase):
+    def _feed_message_start(self, usage):
+        ext = UsageExtractor()
+        event = f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'usage': usage}})}\n\n"
+        ext.feed(event.encode())
+        return ext
+
+    def test_input_tokens_extracted(self):
+        ext = self._feed_message_start({"input_tokens": 1234})
+        self.assertEqual(ext.input_tokens, 1234)
+
+    def test_cache_read_tokens_extracted(self):
+        ext = self._feed_message_start({"input_tokens": 100, "cache_read_input_tokens": 500})
+        self.assertEqual(ext.cache_read_tokens, 500)
+
+    def test_cache_creation_tokens_extracted(self):
+        ext = self._feed_message_start({"input_tokens": 100, "cache_creation_input_tokens": 200})
+        self.assertEqual(ext.cache_creation_tokens, 200)
+
+    def test_missing_fields_keep_default_zero(self):
+        ext = self._feed_message_start({"input_tokens": 50})
+        self.assertEqual(ext.cache_read_tokens, 0)
+        self.assertEqual(ext.cache_creation_tokens, 0)
+
+
+class TestUsageExtractorMessageDelta(unittest.TestCase):
+    def test_output_tokens_extracted(self):
+        ext = UsageExtractor()
+        event = "data: " + json.dumps({"type": "message_delta", "usage": {"output_tokens": 567}}) + "\n\n"
+        ext.feed(event.encode())
+        self.assertEqual(ext.output_tokens, 567)
+
+    def test_delta_without_output_tokens_ignored(self):
+        ext = UsageExtractor()
+        ext.input_tokens = 100  # pre-set
+        event = "data: " + json.dumps({"type": "message_delta", "usage": {"stop_reason": "end_turn"}}) + "\n\n"
+        ext.feed(event.encode())
+        self.assertEqual(ext.output_tokens, 0)
+
+
+class TestUsageExtractorChunked(unittest.TestCase):
+    def test_event_split_across_feeds(self):
+        ext = UsageExtractor()
+        event = (
+            "data: " + json.dumps({"type": "message_start", "message": {"usage": {"input_tokens": 42}}}) + "\n\n"
+        ).encode()
+        mid = len(event) // 2
+        ext.feed(event[:mid])
+        # Not fully fed yet — should still be zeros
+        self.assertEqual(ext.input_tokens, 0)
+        ext.feed(event[mid:])
+        self.assertEqual(ext.input_tokens, 42)
+
+    def test_multiple_events_in_one_chunk(self):
+        ext = UsageExtractor()
+        start = "data: " + json.dumps({"type": "message_start", "message": {"usage": {"input_tokens": 10}}}) + "\n\n"
+        delta = "data: " + json.dumps({"type": "message_delta", "usage": {"output_tokens": 5}}) + "\n\n"
+        ext.feed((start + delta).encode())
+        self.assertEqual(ext.input_tokens, 10)
+        self.assertEqual(ext.output_tokens, 5)
+
+
+class TestUsageExtractorIgnoresJunk(unittest.TestCase):
+    def test_non_data_lines_ignored(self):
+        ext = UsageExtractor()
+        event = "event: ping\ndata: {}\n\n"
+        ext.feed(event.encode())
+        self.assertEqual(ext.input_tokens, 0)
+
+    def test_invalid_json_skipped(self):
+        ext = UsageExtractor()
+        event = b"data: not-json-at-all\n\n"
+        ext.feed(event)
+        self.assertEqual(ext.input_tokens, 0)
+
+    def test_unknown_event_type_ignored(self):
+        ext = UsageExtractor()
+        event = "data: " + json.dumps({"type": "content_block_start", "index": 0}) + "\n\n"
+        ext.feed(event.encode())
+        self.assertEqual(ext.input_tokens, 0)
+        self.assertEqual(ext.output_tokens, 0)
+
+
+# ── build_outbound_headers ──────────────────────────────────────────
+
+class TestBuildOutboundHeaders(unittest.TestCase):
+    def test_strips_hop_by_hop_headers(self):
+        incoming = {
+            "Host": "localhost:9527",
+            "Content-Length": "100",
+            "Connection": "keep-alive",
+            "Authorization": "Bearer old",
+            "X-Api-Key": "old-key",
+            "Content-Type": "application/json",
+            "X-Custom": "keep-me",
+        }
+        cfg = ProviderConfig(base_url="http://x", api_key="new-key", auth_header="x-api-key")
+        result = cfg.build_outbound_headers(incoming, "new-key")
+        self.assertNotIn("Host", result)
+        self.assertNotIn("host", result)
+        self.assertNotIn("Content-Length", result)
+        self.assertNotIn("Connection", result)
+        self.assertIn("Content-Type", result)
+        self.assertIn("X-Custom", result)
+
+    def test_x_api_key_auth_injected(self):
+        cfg = ProviderConfig(base_url="http://x", api_key="sk-123", auth_header="x-api-key")
+        result = cfg.build_outbound_headers({"Content-Type": "application/json"}, "sk-123")
+        self.assertEqual(result["x-api-key"], "sk-123")
+
+    def test_bearer_auth_injected(self):
+        cfg = ProviderConfig(base_url="http://x", api_key="sk-456", auth_header="Authorization")
+        result = cfg.build_outbound_headers({}, "sk-456")
+        self.assertEqual(result["Authorization"], "Bearer sk-456")
+
+    def test_no_api_key_passes_through_original_auth(self):
+        cfg = ProviderConfig(base_url="http://x")
+        incoming = {"Authorization": "Bearer oauth-token", "Content-Type": "application/json"}
+        result = cfg.build_outbound_headers(incoming, None)
+        self.assertEqual(result["authorization"], "Bearer oauth-token")
+
+    def test_gateway_key_not_passed_through(self):
+        """The gateway's own gate key must never reach a keyless backend."""
+        cfg = ProviderConfig(base_url="http://x")
+        incoming = {"x-api-key": "gate-key", "Content-Type": "application/json"}
+        result = cfg.build_outbound_headers(incoming, None, gateway_key="gate-key")
+        self.assertNotIn("x-api-key", result)
+        self.assertNotIn("X-Api-Key", result)
+        self.assertEqual(result["Content-Type"], "application/json")
+
+
+# ── filter_response_headers ─────────────────────────────────────────
+
+class TestFilterResponseHeaders(unittest.TestCase):
+    def test_drops_transport_headers(self):
+        class FakeHeaders:
+            """Minimal duck-type of httpx.Headers for testing."""
+            def items(self):
+                return [
+                    ("content-length", "1234"),
+                    ("transfer-encoding", "chunked"),
+                    ("connection", "close"),
+                    ("content-type", "application/json"),
+                    ("x-custom", "val"),
+                ]
+        result = filter_response_headers(FakeHeaders())
+        self.assertNotIn("content-length", result)
+        self.assertNotIn("transfer-encoding", result)
+        self.assertNotIn("connection", result)
+        self.assertEqual(result["content-type"], "application/json")
+        self.assertEqual(result["x-custom"], "val")
+
+
+# ── resolve_api_key ─────────────────────────────────────────────────
+
+class TestResolveApiKey(unittest.TestCase):
+    def test_explicit_key_returned(self):
+        cfg = ProviderConfig(base_url="http://x", api_key="sk-direct")
+        self.assertEqual(cfg.resolve_api_key(), "sk-direct")
+
+    def test_env_var_resolved(self):
+        import os
+        os.environ["TEST_SP_KEY"] = "sk-from-env"
+        try:
+            cfg = ProviderConfig(base_url="http://x", api_key_env="TEST_SP_KEY", auth_header="x-api-key")
+            self.assertEqual(cfg.resolve_api_key(), "sk-from-env")
+        finally:
+            del os.environ["TEST_SP_KEY"]
+
+    def test_neither_returns_none(self):
+        cfg = ProviderConfig(base_url="http://x")
+        self.assertIsNone(cfg.resolve_api_key())
+
+    def test_explicit_key_takes_priority_over_env(self):
+        import os
+        os.environ["TEST_SP_KEY2"] = "sk-env"
+        try:
+            cfg = ProviderConfig(base_url="http://x", api_key="sk-direct", api_key_env="TEST_SP_KEY2", auth_header="x-api-key")
+            self.assertEqual(cfg.resolve_api_key(), "sk-direct")
+        finally:
+            del os.environ["TEST_SP_KEY2"]
+
+
+# ── auth header building (behavior through build_outbound_headers) ──
+
+class TestApplyAuth(unittest.TestCase):
+    def test_x_api_key_sets_header(self):
+        cfg = ProviderConfig(base_url="http://x", auth_header="x-api-key")
+        headers = cfg.build_outbound_headers({}, "sk-test")
+        self.assertEqual(headers["x-api-key"], "sk-test")
+
+    def test_authorization_sets_bearer(self):
+        cfg = ProviderConfig(base_url="http://x", auth_header="Authorization")
+        headers = cfg.build_outbound_headers({}, "sk-test")
+        self.assertEqual(headers["Authorization"], "Bearer sk-test")
+
+    def test_none_auth_header_no_change(self):
+        cfg = ProviderConfig(base_url="http://x")
+        headers = cfg.build_outbound_headers({"X": "y"}, None)
+        self.assertEqual(headers, {"X": "y"})
+
+
+# ── make_502 ───────────────────────────────────────────────────────
+
+class TestMake502(unittest.TestCase):
+    def test_returns_502_with_provider_header(self):
+        import time
+        from suanpan.proxy import make_502
+        logger = MagicMock()
+        resp = make_502("deepseek", "claude-sonnet-4", "deepseek-v4-flash",
+                        "rule", "timeout", time.monotonic() - 1.0, logger)
+        self.assertEqual(resp.status_code, 502)
+        self.assertEqual(resp.headers["x-suanpan-provider"], "deepseek")
+
+    def test_response_body_contains_error(self):
+        import time
+        from suanpan.proxy import make_502
+        logger = MagicMock()
+        resp = make_502("p1", "m1", "m2", "default", "conn refused",
+                        time.monotonic(), logger)
+        import json
+        body = json.loads(resp.body)
+        self.assertEqual(body["error"], "backend request failed")
+        self.assertEqual(body["provider"], "p1")
+        self.assertEqual(body["last_error"], "conn refused")
+
+    def test_logs_usage_entry(self):
+        import time
+        from suanpan.proxy import make_502
+        logger = MagicMock()
+        started = time.monotonic()
+        make_502("p1", "m1", "m2", "default", "err", started, logger)
+        logger.write.assert_called_once()
+        entry = logger.write.call_args[0][0]
+        self.assertEqual(entry.provider, "p1")
+        self.assertEqual(entry.status, 502)
+        self.assertEqual(entry.error, "err")
+        self.assertEqual(entry.input_tokens, 0)
+        self.assertEqual(entry.output_tokens, 0)
+
+
+# ── transport retry ─────────────────────────────────────────────────
+
+def _make_send_error(exc):
+    """Build an async send that raises exc on first call, returns OK after."""
+    calls = []
+
+    async def send(req, stream=False):
+        calls.append(req)
+        if len(calls) == 1:
+            raise exc
+        return httpx.Response(200, json={"ok": True}, request=req)
+    return send, calls
+
+
+class TestSendWithRetry(unittest.TestCase):
+    """Idle HTTP/2 pool connections get silently closed by upstream gateways
+    (~60s). The first send hits the dead socket and fails with a transport
+    error before any byte reaches the upstream — retrying on a fresh
+    connection is idempotent and recovers the request."""
+
+    def test_remote_protocol_error_retried_once(self):
+        req = httpx.Request("POST", "https://api.example.com/v1/messages")
+        client = MagicMock(spec=httpx.AsyncClient)
+        send, calls = _make_send_error(httpx.RemoteProtocolError("terminated"))
+        client.send = send
+        resp = asyncio.run(_send_with_retry(client, req))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(calls), 2)
+
+    def test_read_error_retried_once(self):
+        req = httpx.Request("POST", "https://api.example.com/v1/messages")
+        client = MagicMock(spec=httpx.AsyncClient)
+        send, calls = _make_send_error(httpx.ReadError("connection reset"))
+        client.send = send
+        resp = asyncio.run(_send_with_retry(client, req))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(calls), 2)
+
+    def test_connect_error_retried_once(self):
+        req = httpx.Request("POST", "https://api.example.com/v1/messages")
+        client = MagicMock(spec=httpx.AsyncClient)
+        send, calls = _make_send_error(httpx.ConnectError("refused"))
+        client.send = send
+        resp = asyncio.run(_send_with_retry(client, req))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(calls), 2)
+
+    def test_timeout_never_retried(self):
+        """A slow upstream is not fixed by doubling the load — timeouts
+        propagate immediately without a second attempt."""
+        req = httpx.Request("POST", "https://api.example.com/v1/messages")
+        client = MagicMock(spec=httpx.AsyncClient)
+        calls = []
+
+        async def send(r, stream=False):
+            calls.append(r)
+            raise httpx.ReadTimeout("upstream too slow")
+        client.send = send
+        with self.assertRaises(httpx.ReadTimeout):
+            asyncio.run(_send_with_retry(client, req))
+        self.assertEqual(len(calls), 1)
+
+    def test_second_transport_error_propagates(self):
+        """Retry happens at most once — if the fresh connection also fails,
+        the error surfaces instead of looping."""
+        req = httpx.Request("POST", "https://api.example.com/v1/messages")
+        client = MagicMock(spec=httpx.AsyncClient)
+        calls = []
+
+        async def send(r, stream=False):
+            calls.append(r)
+            raise httpx.RemoteProtocolError("still dead")
+        client.send = send
+        with self.assertRaises(httpx.RemoteProtocolError):
+            asyncio.run(_send_with_retry(client, req))
+        self.assertEqual(len(calls), 2)
+
+    def test_success_first_try_not_retried(self):
+        req = httpx.Request("POST", "https://api.example.com/v1/messages")
+        client = MagicMock(spec=httpx.AsyncClient)
+        calls = []
+
+        async def send(r, stream=False):
+            calls.append(r)
+            return httpx.Response(200, json={"ok": True}, request=r)
+        client.send = send
+        resp = asyncio.run(_send_with_retry(client, req))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(calls), 1)
+
+
+# ── drain_and_log: SSE → extractor → usage chain ───────────────────
+# The integration seam that was previously hidden inside a closure.
+# Real SSE byte arrays exercise the full parse→extract→log path.
+
+def _mock_sse_response(chunks: list[bytes], status_code: int = 200):
+    """Build a mock httpx.Response whose aiter_raw yields real SSE bytes."""
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = status_code
+    resp.headers = {"content-type": "text/event-stream"}
+    resp.aclose = MagicMock()
+
+    class _RawIter:
+        def __init__(self):
+            self._i = iter(chunks)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._i)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    resp.aiter_raw = lambda: _RawIter()
+    resp.aclose = AsyncMock()
+    return resp
+
+
+class TestDrainAndLog(unittest.IsolatedAsyncioTestCase):
+    """The SSE→extractor→usage chain, tested with real provider byte arrays."""
+
+    async def _consume(self, gen):
+        """Drain an async generator, returning collected bytes."""
+        collected = []
+        async for chunk in gen:
+            collected.append(chunk)
+        return b"".join(collected)
+
+    async def test_anthropic_sse_parsed_correctly(self):
+        """Standard Anthropic format: 'data: ' (with space)."""
+        sse = [
+            b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":50}}}\n\n',
+            b'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":200}}\n\n',
+        ]
+        resp = _mock_sse_response(sse)
+        extractor = UsageExtractor()
+        logger = MagicMock()
+
+        gen = drain_and_log(resp, extractor, logger, provider="anthropic",
+                            source_model="claude-sonnet-5", target_model="claude-sonnet-5",
+                            scenario="default", started=0.0)
+        await self._consume(gen)
+
+        self.assertEqual(extractor.input_tokens, 100)
+        self.assertEqual(extractor.output_tokens, 200)
+        self.assertEqual(extractor.cache_creation_tokens, 50)
+        logger.write.assert_called_once()
+        entry = logger.write.call_args[0][0]
+        self.assertEqual(entry.input_tokens, 100)
+        self.assertEqual(entry.output_tokens, 200)
+        self.assertEqual(entry.status, 200)
+
+    async def test_kimi_sse_no_space_after_data(self):
+        """KIMI format: 'data:' (no space) — the bug that was fixed reactively."""
+        sse = [
+            b'event: message_start\ndata:{"type":"message_start","message":{"usage":{"input_tokens":80}}}\n\n',
+            b'event: message_delta\ndata:{"type":"message_delta","usage":{"output_tokens":150}}\n\n',
+        ]
+        resp = _mock_sse_response(sse)
+        extractor = UsageExtractor()
+        logger = MagicMock()
+
+        gen = drain_and_log(resp, extractor, logger, provider="kimi",
+                            source_model="claude-sonnet-5", target_model="kimi-k3",
+                            scenario="rule", started=0.0)
+        await self._consume(gen)
+
+        self.assertEqual(extractor.input_tokens, 80)
+        self.assertEqual(extractor.output_tokens, 150)
+
+    async def test_chunks_split_across_sse_boundary(self):
+        """A single SSE event split across two raw chunks — buffer must reassemble."""
+        sse = [
+            b'event: message_start\ndata: {"type":"message_start","mes',
+            b'sage":{"usage":{"input_tokens":42}}}\n\n',
+        ]
+        resp = _mock_sse_response(sse)
+        extractor = UsageExtractor()
+        logger = MagicMock()
+
+        gen = drain_and_log(resp, extractor, logger, provider="deepseek",
+                            source_model="claude-sonnet-5", target_model="deepseek-v4",
+                            scenario="default", started=0.0)
+        await self._consume(gen)
+
+        self.assertEqual(extractor.input_tokens, 42)
+
+    async def test_usage_logged_even_on_consumer_disconnect(self):
+        """If the caller stops iterating early, the finally block still logs."""
+        sse = [
+            b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":99}}}\n\n',
+            b'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":1}}\n\n',
+        ]
+        resp = _mock_sse_response(sse)
+        extractor = UsageExtractor()
+        logger = MagicMock()
+
+        gen = drain_and_log(resp, extractor, logger, provider="glm",
+                            source_model="claude-sonnet-5", target_model="glm-5.2",
+                            scenario="default", started=0.0)
+        # Consume only the first chunk, then close the generator
+        async for chunk in gen:
+            break  # consumer disconnects after first chunk
+        await gen.aclose()  # triggers GeneratorExit → finally block
+
+        logger.write.assert_called_once()
+        resp.aclose.assert_called_once()
+
+    async def test_4xx_response_still_logged(self):
+        """4xx responses are streamed through — usage logged with error status."""
+        sse = [
+            b'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"rate limited"}}\n\n',
+        ]
+        resp = _mock_sse_response(sse, status_code=429)
+        extractor = UsageExtractor()
+        logger = MagicMock()
+
+        gen = drain_and_log(resp, extractor, logger, provider="kimi",
+                            source_model="claude-sonnet-5", target_model="kimi-k3",
+                            scenario="default", started=0.0)
+        await self._consume(gen)
+
+        logger.write.assert_called_once()
+        entry = logger.write.call_args[0][0]
+        self.assertEqual(entry.status, 429)
+
+    async def test_midstream_upstream_failure_recorded_as_error(self):
+        """An exception from aiter_raw must not be logged as a clean 200."""
+        resp = _mock_sse_response([b"partial"])
+
+        class _Boom:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise httpx.RemoteProtocolError("connection reset")
+
+        resp.aiter_raw = lambda: _Boom()
+        extractor = UsageExtractor()
+        logger = MagicMock()
+
+        gen = drain_and_log(resp, extractor, logger, provider="kimi",
+                            source_model="claude-sonnet-5", target_model="kimi-k3",
+                            scenario="default", started=0.0)
+        with self.assertRaises(httpx.RemoteProtocolError):
+            await self._consume(gen)
+        logger.write.assert_called_once()
+        entry = logger.write.call_args[0][0]
+        self.assertIsNotNone(entry.error)
+        self.assertIn("RemoteProtocolError", entry.error)
+
+    async def test_logger_write_failure_does_not_truncate_stream(self):
+        """A failing usage logger must never interrupt the client stream."""
+        sse = [
+            b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":7}}}\n\n',
+        ]
+        resp = _mock_sse_response(sse)
+        extractor = UsageExtractor()
+        logger = MagicMock()
+        logger.write.side_effect = OSError("disk full")
+
+        gen = drain_and_log(resp, extractor, logger, provider="kimi",
+                            source_model="claude-sonnet-5", target_model="kimi-k3",
+                            scenario="default", started=0.0)
+        collected = await self._consume(gen)  # must not raise
+        self.assertTrue(collected)
+
+
+if __name__ == "__main__":
+    unittest.main()

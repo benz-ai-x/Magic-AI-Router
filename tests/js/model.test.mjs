@@ -1,0 +1,667 @@
+// Tests for config_ui.html LAYER 1 (pure data/logic, no DOM).
+// Source of truth is the HTML file itself — extracted via extract.mjs so the
+// tests can never drift from what actually ships in the settings window.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { loadLayer } from "./extract.mjs";
+
+const L = loadLayer(1);
+
+// ── esc ───────────────────────────────────────────────
+test("esc escapes HTML metacharacters", () => {
+  assert.equal(L.esc(`<a href="x">&'`).slice(0, -1), "&lt;a href=&quot;x&quot;&gt;&amp;");
+  assert.equal(L.esc(null), "");
+  assert.equal(L.esc(42), "42");
+});
+
+// ── normalizeState ────────────────────────────────────
+test("normalizeState fills missing containers", () => {
+  const S = L.normalizeState({});
+  assert.deepEqual(S.mp.tunnels, []);
+  assert.deepEqual(S.sp.providers, {});
+  assert.deepEqual(S.sp.router, {});
+  assert.deepEqual(S.sp.rules, []);
+});
+
+test("normalizeState preserves existing values", () => {
+  const S = L.normalizeState({ mp: { tunnels: [{ ssh_host: "h" }] }, sp: { rules: [{}] } });
+  assert.equal(S.mp.tunnels[0].ssh_host, "h");
+  assert.equal(S.sp.rules.length, 1);
+});
+
+test("normalizeState tolerates null/undefined input", () => {
+  assert.deepEqual(L.normalizeState(null).mp.tunnels, []);
+  assert.deepEqual(L.normalizeState(undefined).sp.providers, {});
+});
+
+// ── validateConfig ────────────────────────────────────
+test("validateConfig accepts a minimal valid config", () => {
+  const S = L.normalizeState({ mp: { tunnels: [{ ssh_host: "h", ssh_port: 22 }] } });
+  assert.deepEqual(L.validateConfig(S), []);
+});
+
+test("validateConfig flags missing tunnel host with index", () => {
+  const S = L.normalizeState({ mp: { tunnels: [{ ssh_host: "" }] } });
+  assert.deepEqual(L.validateConfig(S), ["隧道 1: 未填写地址"]);
+});
+
+test("validateConfig flags out-of-range ports", () => {
+  const S = L.normalizeState({
+    mp: { tunnels: [{ ssh_host: "h", ssh_port: 70000 }], socks5_port: 65536, capture_port: 99999, config_port: -1 },
+  });
+  const errs = L.validateConfig(S);
+  assert.ok(errs.some((e) => e.includes("SSH 端口无效")));
+  assert.ok(errs.includes("SOCKS5 端口无效"));
+  assert.ok(errs.includes("抓包端口无效"));
+  assert.ok(errs.includes("配置服务端口无效"));
+});
+
+test("validateConfig flags blank provider name", () => {
+  const S = L.normalizeState({ sp: { providers: { "  ": {} } } });
+  assert.deepEqual(L.validateConfig(S), ["供应商名称不能为空"]);
+});
+
+test("validateConfig flags duplicate ports across services", () => {
+  const S = L.normalizeState({
+    mp: { socks5_port: 8080, capture_port: 8080, config_port: 9528 },
+    sp: { listen_port: 9528 },
+  });
+  const errs = L.validateConfig(S);
+  assert.ok(errs.includes("端口冲突：SOCKS5 与 抓包 同为 8080"));
+  assert.ok(errs.includes("端口冲突：配置服务 与 路由网关 同为 9528"));
+});
+
+test("validateConfig skips port conflict check when ports absent", () => {
+  const S = L.normalizeState({});
+  assert.deepEqual(L.validateConfig(S), []);
+});
+
+// ── parseAddr ─────────────────────────────────────────
+test("parseAddr handles user@host", () => {
+  assert.deepEqual(L.parseAddr("ubuntu@example.com"), { user: "ubuntu", host: "example.com" });
+});
+
+test("parseAddr handles host only", () => {
+  assert.deepEqual(L.parseAddr("example.com"), { user: "", host: "example.com" });
+});
+
+test("parseAddr strips trailing port", () => {
+  assert.deepEqual(L.parseAddr("u@h.com:2222"), { user: "u", host: "h.com" });
+});
+
+test("parseAddr handles bracketed IPv6 with and without port", () => {
+  assert.deepEqual(L.parseAddr("u@[::1]:22"), { user: "u", host: "::1" });
+  assert.deepEqual(L.parseAddr("[2001:db8::1]"), { user: "", host: "2001:db8::1" });
+});
+
+// ── addrStr ───────────────────────────────────────────
+test("addrStr renders user@host, host, or empty", () => {
+  assert.equal(L.addrStr({ ssh_user: "u", ssh_host: "h" }), "u@h");
+  assert.equal(L.addrStr({ ssh_host: "h" }), "h");
+  assert.equal(L.addrStr({}), "");
+});
+
+// ── fmtNum ────────────────────────────────────────────
+test("fmtNum formats K/M thresholds", () => {
+  assert.equal(L.fmtNum(500), "500");
+  assert.equal(L.fmtNum(1500), "1.5K");
+  assert.equal(L.fmtNum(2_500_000), "2.5M");
+});
+
+test("fmtRate formats cache hit rates and preserves missing data", () => {
+  assert.equal(L.fmtRate(null), "—");
+  assert.equal(L.fmtRate(0.42), "42%");
+});
+
+test("usageRangeOptions marks the selected statistics range", () => {
+  assert.deepEqual(L.usageRangeOptions("7d"), [
+    { value: "today", label: "今日", active: false },
+    { value: "7d", label: "近 7 天", active: true },
+    { value: "all", label: "全部", active: false },
+  ]);
+  assert.equal(L.usageRangeOptions("invalid")[2].active, true);
+});
+
+test("routeSourceLabel maps persisted scenarios to domain vocabulary", () => {
+  assert.equal(L.routeSourceLabel("inline"), "内联覆盖");
+  assert.equal(L.routeSourceLabel("subagent"), "SUBAGENT-MODEL 标签");
+  assert.equal(L.routeSourceLabel("rule"), "模型规则");
+  assert.equal(L.routeSourceLabel("default"), "默认路由");
+  assert.equal(L.routeSourceLabel("future"), "future");
+});
+
+test("dailyRowsDesc sorts newest day first without mutating input", () => {
+  const daily = [{ date: "2026-08-10" }, { date: "2026-08-19" }, { date: "2026-08-12" }];
+  assert.deepEqual(L.dailyRowsDesc(daily).map((d) => d.date),
+    ["2026-08-19", "2026-08-12", "2026-08-10"]);
+  assert.deepEqual(daily.map((d) => d.date),
+    ["2026-08-10", "2026-08-19", "2026-08-12"]);
+  assert.deepEqual(L.dailyRowsDesc([]), []);
+});
+
+test("pctClass maps usage percent to severity thresholds", () => {
+  assert.equal(L.pctClass(null), "");
+  assert.equal(L.pctClass(0), "pct-ok");
+  assert.equal(L.pctClass(69.9), "pct-ok");
+  assert.equal(L.pctClass(70), "pct-warn");
+  assert.equal(L.pctClass(89.9), "pct-warn");
+  assert.equal(L.pctClass(90), "pct-danger");
+});
+
+test("balanceRowModel classifies provider-level states", () => {
+  assert.deepEqual(L.balanceRowModel({ provider: "a", enabled: false }),
+    { name: "a", state: "disabled", note: "已停用" });
+  assert.deepEqual(L.balanceRowModel({ provider: "a", supported: false }),
+    { name: "a", state: "unsupported", note: "不支持" });
+  assert.deepEqual(L.balanceRowModel({ provider: "a", supported: false, note: "无余额 API" }),
+    { name: "a", state: "unsupported", note: "无余额 API" });
+  assert.deepEqual(L.balanceRowModel({ provider: "a", supported: true, error: "超时" }),
+    { name: "a", state: "error", note: "超时" });
+});
+
+test("balanceRowModel splits apis into quota and money zones", () => {
+  const m = L.balanceRowModel({ provider: "a", supported: true, apis: [
+    { label: "Coding Plan", quotas: [] },
+    { label: "账户余额", primary: "¥1.00" },
+    { label: "套餐", error: "拉取失败" },
+  ] });
+  assert.equal(m.state, "ok");
+  assert.deepEqual(m.quotaApis.map((a) => a.label), ["Coding Plan", "套餐"]);
+  assert.deepEqual(m.moneyApis.map((a) => a.label), ["账户余额"]);
+  assert.deepEqual(L.balanceRowModel({ provider: "a", supported: true }).quotaApis, []);
+});
+
+test("providerCacheHint only flags uncached traffic without native mode", () => {
+  const uncached = {
+    calls: 2, input_tokens: 100, cache_read_tokens: 0,
+    cache_creation_tokens: 0, cache_hit_rate: 0,
+  };
+  assert.equal(
+    L.providerCacheHint({
+      base_url: "https://open.bigmodel.cn/api/anthropic",
+      anthropic_native: false,
+    }, uncached),
+    "检查该供应商是否开启 Anthropic 原生模式",
+  );
+  assert.equal(L.providerCacheHint({
+    base_url: "https://open.bigmodel.cn/api/anthropic",
+    anthropic_native: true,
+  }, uncached), "");
+  assert.equal(L.providerCacheHint({
+    base_url: "https://open.bigmodel.cn/api/anthropic",
+    anthropic_native: false,
+  }, {
+    ...uncached, cache_hit_rate: null,
+  }), "");
+  assert.equal(L.providerCacheHint({
+    base_url: "https://api.deepseek.com/anthropic", anthropic_native: false,
+  }, uncached), "");
+  assert.equal(L.providerCacheHint({
+    base_url: "https://relay.example.com", anthropic_native: false,
+    models: ["deepseek-v4-pro"],
+  }, uncached), "");
+});
+
+test("supportsAnthropicPromptCaching uses endpoint capabilities, not labels", () => {
+  assert.equal(L.supportsAnthropicPromptCaching({
+    base_url: "https://open.bigmodel.cn/api/anthropic/v1",
+  }), true);
+  assert.equal(L.supportsAnthropicPromptCaching({
+    base_url: "https://api.kimi.com/coding",
+  }), true);
+  assert.equal(L.supportsAnthropicPromptCaching({
+    base_url: "https://api.deepseek.com/anthropic",
+  }), false);
+  assert.equal(L.supportsAnthropicPromptCaching({
+    base_url: "https://relay.example.com", models: ["glm-5.2"],
+  }), false);
+});
+
+// ── ctxSuffix ─────────────────────────────────────────
+test("ctxSuffix annotates known models only", () => {
+  assert.equal(L.ctxSuffix("k3"), "（1M）");
+  assert.equal(L.ctxSuffix("unknown-model"), "");
+});
+
+// ── routeTargetOptionsFor ─────────────────────────────
+test("routeTargetOptionsFor groups by provider and marks current selected", () => {
+  const providers = {
+    GLM: { enabled: true, models: ["glm-5.2", "glm-5.1"] },
+    KIMI: { enabled: true, models: ["k3"] },
+  };
+  const html = L.routeTargetOptionsFor(providers, "KIMI/k3", "（未设置）");
+  assert.match(html, /<optgroup label="GLM">/);
+  assert.match(html, /<option value="KIMI\/k3" selected>/);
+  assert.match(html, /k3（1M）/);
+  assert.match(html, /^<option value="">（未设置）<\/option>/);
+});
+
+test("routeTargetOptionsFor keeps unlisted current value so saving cannot drop it", () => {
+  const html = L.routeTargetOptionsFor({ A: { enabled: true, models: ["m1"] } }, "OLD/gone", "x");
+  assert.match(html, /<option value="OLD\/gone" selected>OLD\/gone（未在清单）<\/option>/);
+});
+
+test("routeTargetOptionsFor hides disabled providers unless referenced", () => {
+  const providers = {
+    OFF: { enabled: false, models: ["m"] },
+    ON: { enabled: true, models: ["x"] },
+  };
+  const hidden = L.routeTargetOptionsFor(providers, "", "x");
+  assert.ok(!hidden.includes('label="OFF"'));
+  const referenced = L.routeTargetOptionsFor(providers, "OFF/m", "x");
+  assert.match(referenced, /<optgroup label="OFF（已停用）">/);
+});
+
+test("routeTargetOptionsFor skips providers with no models", () => {
+  const html = L.routeTargetOptionsFor({ A: { enabled: true, models: [] } }, "", "x");
+  assert.ok(!html.includes("optgroup"));
+});
+
+// ── apiHeaders ─────────────────────────────────────────
+test("apiHeaders puts token in Authorization header only", () => {
+  assert.deepEqual(L.apiHeaders("abc"), { Authorization: "Bearer abc" });
+});
+
+test("apiHeaders merges extra headers", () => {
+  assert.deepEqual(L.apiHeaders("abc", { "Content-Type": "application/json" }),
+    { Authorization: "Bearer abc", "Content-Type": "application/json" });
+});
+
+// ── ccRoleHint ─────────────────────────────────────────
+test("ccRoleHint returns subagent guidance", () => {
+  assert.equal(L.ccRoleHint("subagent"), "建议选更便宜模型，区分主任务与子代理");
+});
+
+test("ccRoleHint is empty for other roles", () => {
+  assert.equal(L.ccRoleHint("sonnet"), "");
+  assert.equal(L.ccRoleHint("default"), "");
+});
+
+// ── ccRoleRows ────────────────────────────────────────
+test("ccRoleRows builds table rows from payload metadata", () => {
+  const meta = {
+    order: ["sonnet", "subagent"],
+    labels: { sonnet: "Sonnet", subagent: "Subagent" },
+    readonly: ["subagent"],
+  };
+  assert.deepEqual(L.ccRoleRows(meta), [
+    { key: "sonnet", label: "Sonnet", readonly: false },
+    { key: "subagent", label: "Subagent", readonly: true },
+  ]);
+});
+
+test("ccRoleRows tolerates missing metadata", () => {
+  assert.deepEqual(L.ccRoleRows(undefined), []);
+  assert.deepEqual(L.ccRoleRows({}), []);
+});
+
+test("ccRoleRows falls back to key when label missing", () => {
+  assert.deepEqual(L.ccRoleRows({ order: ["opus"], labels: {} }),
+    [{ key: "opus", label: "opus", readonly: false }]);
+});
+
+// ── ccRoleEntry ───────────────────────────────────────
+test("ccRoleEntry creates the sentinel when missing", () => {
+  const roles = {};
+  const e = L.ccRoleEntry(roles, "opus");
+  assert.deepEqual(e, { model: "", ctx_1m: true });
+  assert.equal(roles.opus, e); // registered on the state object
+});
+
+test("ccRoleEntry returns the existing entry unchanged", () => {
+  const existing = { model: "KIMI/k3", ctx_1m: false };
+  const roles = { opus: existing };
+  assert.equal(L.ccRoleEntry(roles, "opus"), existing);
+});
+
+// ── settings dirty-state snapshots ────────────────────
+test("countChanges reports real leaf differences and clears on revert", () => {
+  const baseline = { enabled: false, nested: { port: 9527 }, models: ["a"] };
+  const changed = structuredClone(baseline);
+  changed.enabled = true;
+  changed.nested.port = 9528;
+  changed.models.push("b");
+  assert.equal(L.countChanges(baseline, changed), 3);
+  assert.equal(L.countChanges(baseline, structuredClone(baseline)), 0);
+});
+
+test("viewSnapshot normalizes rendered defaults to avoid false dirty state", () => {
+  const loaded = L.normalizeState({});
+  const collected = L.normalizeState({
+    mp: {
+      socks5_port: 1080,
+      http_listen_port: 8888,
+      capture_port: 8080,
+      capture_dir: "~/.magic-proxy-captures",
+      retention_days: 7,
+      config_port: 9528,
+      system_proxy_default: false,
+      prevent_sleep: false,
+      launch_at_login: false,
+    },
+    sp: { listen_port: 9527 },
+  });
+  assert.equal(
+    L.countChanges(L.viewSnapshot("proxy", loaded), L.viewSnapshot("proxy", collected)),
+    0,
+  );
+  assert.equal(
+    L.countChanges(L.viewSnapshot("system", loaded), L.viewSnapshot("system", collected)),
+    0,
+  );
+});
+
+test("viewSnapshot detects tunnel edits but treats implicit tunnel defaults equally", () => {
+  const loaded = L.normalizeState({ mp: { tunnels: [{ ssh_host: "host" }] } });
+  const rendered = L.normalizeState({
+    mp: {
+      current_tunnel: 0,
+      tunnels: [{
+        name: "",
+        ssh_user: "",
+        ssh_host: "host",
+        ssh_port: 22,
+        auth_type: "key",
+        ssh_key: "",
+        ssh_compression: true,
+      }],
+    },
+  });
+  assert.equal(
+    L.countChanges(L.viewSnapshot("tunnel", loaded), L.viewSnapshot("tunnel", rendered)),
+    0,
+  );
+  rendered.mp.tunnels[0].ssh_host = "other";
+  assert.equal(
+    L.countChanges(L.viewSnapshot("tunnel", loaded), L.viewSnapshot("tunnel", rendered)),
+    1,
+  );
+});
+
+test("viewSnapshot isolates provider and Claude Code changes by view", () => {
+  const state = L.normalizeState({
+    sp: {
+      providers: { P: { base_url: "https://example.com", enabled: true } },
+      router: { default: "P/m" },
+      rules: [],
+    },
+  });
+  const providerBaseline = L.viewSnapshot("providers", state);
+  const rulesBaseline = L.viewSnapshot("rules", state, {
+    sonnet: { model: "P/m", name: "m", ctx_1m: true },
+  });
+
+  state.sp.providers.P.enabled = false;
+  assert.equal(L.countChanges(providerBaseline, L.viewSnapshot("providers", state)), 1);
+  assert.equal(
+    L.countChanges(rulesBaseline, L.viewSnapshot("rules", state, {
+      sonnet: { model: "P/m", name: "m", ctx_1m: true },
+    })),
+    0,
+  );
+
+  const changedRoles = {
+    sonnet: { model: "P/other", name: "other", ctx_1m: true },
+  };
+  assert.equal(L.countChanges(rulesBaseline, L.viewSnapshot("rules", state, changedRoles)), 2);
+});
+
+test("validateConfig range-checks every service port, not just three", () => {
+  // 回归：HTTP 监听曾漏检，99999 一路绿灯写入真实配置（实测踩坑）
+  const base = { mp: { tunnels: [] }, sp: {} };
+  const cases = [
+    [{ socks5_port: 99999 }, "SOCKS5 端口无效"],
+    [{ http_listen_port: 99999 }, "HTTP 监听端口无效"],
+    [{ capture_port: 99999 }, "抓包端口无效"],
+    [{ config_port: 99999 }, "配置服务端口无效"],
+  ];
+  for (const [patch, msg] of cases) {
+    const errs = L.validateConfig({ mp: { tunnels: [], ...patch }, sp: {} });
+    assert.ok(errs.includes(msg), `${JSON.stringify(patch)} → ${msg}`);
+  }
+  const gw = L.validateConfig({ mp: { tunnels: [] }, sp: { listen_port: 70000 } });
+  assert.ok(gw.includes("路由网关端口无效"));
+  // 合法值不误报
+  assert.deepEqual(L.validateConfig({
+    mp: { tunnels: [], socks5_port: 1080, http_listen_port: 8888 },
+    sp: { listen_port: 9527 },
+  }), []);
+  void base;
+});
+
+// ── PROVIDER_TEMPLATES / applyProviderTemplate（#3 供应商模板）──
+test("供应商模板应用 GLM：原生端点并开启 Anthropic 原生协议", () => {
+  const p = L.applyProviderTemplate({}, "glm");
+  assert.equal(p.base_url, "https://open.bigmodel.cn/api/anthropic");
+  assert.equal(p.anthropic_native, true);
+});
+
+test("供应商模板应用 KIMI：coding 端点并开启原生协议", () => {
+  const p = L.applyProviderTemplate({}, "kimi");
+  assert.equal(p.base_url, "https://api.kimi.com/coding");
+  assert.equal(p.anthropic_native, true);
+});
+
+test("供应商模板应用 DeepSeek：兼容端点并保持兼容模式", () => {
+  const p = L.applyProviderTemplate({}, "deepseek");
+  assert.equal(p.base_url, "https://api.deepseek.com");
+  assert.equal(p.anthropic_native, false);
+});
+
+test("自定义与未知模板不改动任何现有字段", () => {
+  const p = { base_url: "", anthropic_native: true, api_key: "k", models: ["m"] };
+  L.applyProviderTemplate(p, "custom");
+  assert.equal(p.base_url, "");
+  assert.equal(p.anthropic_native, true);
+  L.applyProviderTemplate(p, "no-such-template");
+  assert.deepEqual(p, { base_url: "", anthropic_native: true, api_key: "k", models: ["m"] });
+});
+
+test("模板只填端点与协议模式，凭证与模型保持原样", () => {
+  const p = { base_url: "", api_key: "secret", api_key_env: "K", models: ["m"], enabled: false };
+  L.applyProviderTemplate(p, "glm");
+  assert.equal(p.api_key, "secret");
+  assert.equal(p.api_key_env, "K");
+  assert.deepEqual(p.models, ["m"]);
+  assert.equal(p.enabled, false);
+});
+
+// ── credentialMode（#3 凭证互斥）─────────────────────
+test("凭证模式：直接 key 与环境变量都有值时 key 优先（对齐 resolve_api_key）", () => {
+  assert.equal(L.credentialMode({ api_key: "sk-x", api_key_env: "ENV" }), "key");
+  assert.equal(L.credentialMode({ api_key: "sk-x" }), "key");
+});
+
+test("凭证模式：仅环境变量有值时进入 env 模式（掩码 key 不参与推导）", () => {
+  assert.equal(L.credentialMode({ api_key: null, api_key_env: "ENV" }), "env");
+  assert.equal(L.credentialMode({ api_key: null, api_key_set: true, api_key_env: "ENV" }), "env");
+});
+
+test("凭证模式：两者皆空与空 provider 默认直接填写", () => {
+  assert.equal(L.credentialMode({}), "key");
+  assert.equal(L.credentialMode({ api_key: null, api_key_env: null }), "key");
+  assert.equal(L.credentialMode(null), "key");
+});
+
+// ── providerReferences / providerRefsHint（#3 删除保护）──
+test("引用统计：规则条数、默认路由与角色名逐类返回", () => {
+  const sp = {
+    rules: [
+      { match_prefix: "a", route_to: "GLM/m1" },
+      { match_prefix: "b", route_to: "GLM/m2" },
+      { match_prefix: "c", route_to: "KIMI/m3" },
+    ],
+    router: { default: "GLM/m1" },
+  };
+  const roles = { sonnet: { model: "GLM/x" }, subagent: { model: "KIMI/y" } };
+  assert.deepEqual(L.providerReferences("GLM", sp, roles), { rules: 2, default: true, roles: ["sonnet"] });
+  assert.deepEqual(L.providerReferences("KIMI", sp, roles), { rules: 1, default: false, roles: ["subagent"] });
+});
+
+test("引用统计：前缀匹配不误伤同前缀供应商（GLMX 不算 GLM）", () => {
+  const sp = { rules: [{ route_to: "GLMX/m" }], router: { default: "GLMX/m" } };
+  assert.deepEqual(L.providerReferences("GLM", sp, {}), { rules: 0, default: false, roles: [] });
+});
+
+test("引用统计：空 route_to 与空角色不产生引用", () => {
+  const sp = { rules: [{ match_prefix: "x", route_to: "" }], router: {} };
+  assert.deepEqual(L.providerReferences("GLM", sp, { sonnet: { model: "" } }), { rules: 0, default: false, roles: [] });
+});
+
+test("引用统计：容忍缺失的 sp 与 roles 容器", () => {
+  assert.deepEqual(L.providerReferences("GLM", null, null), { rules: 0, default: false, roles: [] });
+});
+
+test("引用提示：拼出可操作的中文提示，无引用时为空", () => {
+  assert.equal(
+    L.providerRefsHint("GLM_MAX", { rules: 2, default: true, roles: [] }),
+    "GLM_MAX 被 2 条模型规则和默认路由引用，先修改映射",
+  );
+  assert.equal(
+    L.providerRefsHint("GLM_MAX", { rules: 0, default: false, roles: ["sonnet", "subagent"] }),
+    "GLM_MAX 被 Claude Code 角色 sonnet、subagent引用，先修改映射",
+  );
+  assert.equal(
+    L.providerRefsHint("GLM_MAX", { rules: 1, default: true, roles: ["subagent"] }),
+    "GLM_MAX 被 1 条模型规则、默认路由和Claude Code 角色 subagent引用，先修改映射",
+  );
+  assert.equal(L.providerRefsHint("GLM_MAX", { rules: 0, default: false, roles: [] }), "");
+});
+
+// ── validateConfig：环境变量凭证与悬空引用（#3）──────
+test("校验：环境变量凭证未选认证头时报错（对齐服务端 ProviderConfig 校验）", () => {
+  const S = L.normalizeState({ sp: { providers: {
+    DS: { base_url: "https://api.deepseek.com", api_key: null, api_key_env: "DS_KEY", auth_header: null },
+  } } });
+  const errs = L.validateConfig(S);
+  assert.ok(errs.some((e) => e.includes("DS") && e.includes("认证头")));
+});
+
+test("校验：规则与默认路由指向不存在的供应商时报告悬空引用", () => {
+  const S = L.normalizeState({
+    sp: {
+      providers: { GLM: { base_url: "https://x" } },
+      rules: [
+        { match_prefix: "claude-", route_to: "GONE/m" },
+        { match_prefix: "ok-", route_to: "GLM/m" },
+      ],
+      router: { default: "MISSING/m" },
+    },
+  });
+  const errs = L.validateConfig(S);
+  assert.ok(errs.some((e) => e.includes("规则 1 引用了不存在的供应商 GONE")));
+  assert.ok(errs.some((e) => e.includes("默认路由引用了不存在的供应商 MISSING")));
+  assert.ok(!errs.some((e) => e.includes("GLM")));
+});
+
+test("校验：规则与默认路由都指向现存供应商时无悬空报错", () => {
+  const S = L.normalizeState({
+    sp: {
+      providers: { GLM: { base_url: "https://x" } },
+      rules: [{ match_prefix: "a", route_to: "GLM/m" }],
+      router: { default: "GLM/m" },
+    },
+  });
+  assert.deepEqual(L.validateConfig(S), []);
+});
+
+// ── dailyBarData（每日趋势柱状图）─────────────────────
+test("dailyBarData sorts days chronologically without mutating input", () => {
+  const daily = [
+    { date: "2026-08-19", input_tokens: 100, cache_read_tokens: 300, cache_creation_tokens: 100 },
+    { date: "2026-08-17", input_tokens: 50 },
+    { date: "2026-08-18" },
+  ];
+  const bars = L.dailyBarData(daily, "input");
+  assert.deepEqual(bars.map((b) => b.date), ["2026-08-17", "2026-08-18", "2026-08-19"]);
+  assert.deepEqual(daily.map((d) => d.date), ["2026-08-19", "2026-08-17", "2026-08-18"]);
+});
+
+test("dailyBarData input metric totals input + cache read + cache write", () => {
+  const bars = L.dailyBarData([
+    { date: "2026-08-01", input_tokens: 1000, cache_read_tokens: 2000, cache_creation_tokens: 700, output_tokens: 999 },
+  ], "input");
+  assert.equal(bars[0].ratio, 1);  // 3700 is the window max
+  assert.equal(bars[0].title, "2026-08-01 · 3.7K");
+});
+
+test("dailyBarData normalizes against the window maximum", () => {
+  const daily = [
+    { date: "2026-08-17", input_tokens: 50 },
+    { date: "2026-08-18" },
+    { date: "2026-08-19", input_tokens: 100, cache_read_tokens: 300, cache_creation_tokens: 100 },
+  ];
+  assert.deepEqual(L.dailyBarData(daily, "input").map((b) => b.ratio), [0.1, 0, 1]);
+});
+
+test("dailyBarData supports output and calls metrics", () => {
+  const daily = [
+    { date: "2026-08-01", output_tokens: 30, calls: 3 },
+    { date: "2026-08-02", output_tokens: 90, calls: 9 },
+  ];
+  assert.deepEqual(L.dailyBarData(daily, "output").map((b) => b.ratio), [1 / 3, 1]);
+  assert.deepEqual(L.dailyBarData(daily, "calls").map((b) => b.ratio), [1 / 3, 1]);
+});
+
+test("dailyBarData falls back to the input metric for unknown metric", () => {
+  const daily = [
+    { date: "2026-08-01", input_tokens: 10, output_tokens: 99 },
+    { date: "2026-08-02", input_tokens: 20, output_tokens: 99 },
+  ];
+  assert.deepEqual(L.dailyBarData(daily, "bogus").map((b) => b.ratio), [0.5, 1]);
+});
+
+test("dailyBarData all-zero days normalize to 0 without NaN", () => {
+  const bars = L.dailyBarData([{ date: "2026-08-01" }, { date: "2026-08-02" }], "input");
+  assert.deepEqual(bars.map((b) => b.ratio), [0, 0]);
+  assert.deepEqual(bars.map((b) => b.title), ["2026-08-01 · 0", "2026-08-02 · 0"]);
+});
+
+test("dailyBarData tolerates empty and null input", () => {
+  assert.deepEqual(L.dailyBarData([], "input"), []);
+  assert.deepEqual(L.dailyBarData(null, "input"), []);
+  assert.deepEqual(L.dailyBarData(undefined, "calls"), []);
+});
+
+// ── CC 同步预览（#3 验收 9）─────────────────────────────
+
+test("ccChangeBadge maps server actions to Chinese badges", () => {
+  assert.equal(L.ccChangeBadge("add"), "新增");
+  assert.equal(L.ccChangeBadge("remove"), "移除");
+  assert.equal(L.ccChangeBadge("replace"), "修改");
+});
+
+test("ccPreviewRows turns the preview payload into dialog rows", () => {
+  const pv = {
+    ok: true, already: false,
+    changes: [
+      { key: "ANTHROPIC_BASE_URL", action: "add", old: null, new: "http://127.0.0.1:9527" },
+      { key: "ANTHROPIC_AUTH_TOKEN", action: "replace", old: "（已设置，不回显）", new: "mage-router" },
+      { key: "CLAUDE_CODE_SUBAGENT_MODEL", action: "remove", old: "stale[1M]", new: null },
+    ],
+  };
+  assert.deepEqual(L.ccPreviewRows(pv), [
+    { key: "ANTHROPIC_BASE_URL", badge: "新增", old: "—", new: "http://127.0.0.1:9527" },
+    { key: "ANTHROPIC_AUTH_TOKEN", badge: "修改", old: "（已设置，不回显）", new: "mage-router" },
+    { key: "CLAUDE_CODE_SUBAGENT_MODEL", badge: "移除", old: "stale[1M]", new: "—" },
+  ]);
+});
+
+test("ccPreviewRows degrades safely on bad payloads", () => {
+  assert.deepEqual(L.ccPreviewRows(null), []);
+  assert.deepEqual(L.ccPreviewRows({}), []);
+  assert.deepEqual(L.ccPreviewRows({ ok: false, msg: "boom" }), []);
+  assert.deepEqual(L.ccPreviewRows({ ok: true, changes: null }), []);
+});
+
+test("ccBackupNote renders both backup branches", () => {
+  const will = { ok: true, backup: { will: true, path: "/x/settings.json.bak", note: "首次接入网关：写入前当前文件先备份为 .bak（之后的重复同步不再覆盖该备份）" } };
+  assert.equal(
+    L.ccBackupNote(will),
+    "写入前备份 → /x/settings.json.bak（首次接入网关：写入前当前文件先备份为 .bak（之后的重复同步不再覆盖该备份））",
+  );
+  const wont = { ok: true, backup: { will: false, path: null, note: "目标文件不存在，将新建（无需备份）" } };
+  assert.equal(L.ccBackupNote(wont), "目标文件不存在，将新建（无需备份）");
+  assert.equal(L.ccBackupNote(null), "");
+  assert.equal(L.ccBackupNote({ ok: false }), "");
+});
