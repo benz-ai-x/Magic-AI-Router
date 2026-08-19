@@ -4,11 +4,11 @@
 
 ### Issue tracker
 
-Issues live as GitHub issues in `benz-ai-x/Magic-AI-Router` (via `gh` CLI, inferred from `origin`; 2026-08-19 删除后重建，历史 issue 未迁移，本地副本在 `docs/specs/`). See `docs/agents/issue-tracker.md`.
+Issues live as GitHub issues in `benz-ai-x/Magic-AI-Router` (via `gh` CLI). See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Uses the five canonical triage labels (`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`). See `docs/agents/triage-labels.md`.
+Triage uses the five-label canonical vocabulary. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
@@ -24,7 +24,7 @@ Magic AI Router — macOS 菜单栏应用（壳），承载两个独立产品：
 
 ## Tech Stack
 
-Python ≥3.9（自有代码下界；**打包工具链因 mitmproxy ≥12 需构建解释器 ≥3.12**，见 ADR-001）+ rumps（菜单栏 UI）+ asyncio（HTTP→SOCKS5 代理）+ PyObjC objc/AppKit/Foundation（WKWebView 设置窗 / CA 信任引导窗 `ca_trust.py` / 日志窗 `log_window.py`）+ Pillow（图标生成）+ mitmproxy 12.2.3（抓包模式 TLS MITM）+ FastAPI + uvicorn + httpx + pydantic（Suanpan AI 路由网关）；PyInstaller 打包 `.app`（`--windowed` + `LSUIElement=true`）；SSH 隧道经系统 `ssh` / `sshpass`（密码认证）；SSH 密码走 macOS Keychain。详见 ADR-000 + ADR-001。版本号见 `build.sh`。
+Python ≥3.9（自有代码下界；**打包工具链因 mitmproxy ≥12 需构建解释器 ≥3.12**，见 ADR-001）+ rumps（菜单栏 UI）+ asyncio（HTTP→SOCKS5 代理）+ PyObjC objc/AppKit/Foundation（WKWebView 设置窗 / CA 信任引导窗 `ca_trust.py` / 日志窗 `log_window.py`）+ Pillow（图标生成）+ mitmproxy 12.2.3（抓包模式 TLS MITM）+ FastAPI + uvicorn + httpx + pydantic（Suanpan AI 路由网关）；PyInstaller 打包 `.app`（`--windowed` + `LSUIElement=true`）；SSH 隧道经系统 `ssh` / `sshpass`（密码认证）；SSH 密码走 macOS Keychain。详见 ADR-000 + ADR-001。
 
 ## 命令
 
@@ -35,8 +35,8 @@ python3 app.py
 # 安装依赖
 pip3 install -r requirements-dev.txt
 
-# 测试
-pytest tests/
+# 测试（本机须 python3 -m：bare pytest=3.9 在 suanpan 类型注解崩溃）
+python3 -m pytest tests/
 
 # 打包 .app
 bash build.sh
@@ -133,5 +133,4 @@ suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM �
 - 打包后的 .app 设置 LSUIElement=true，不显示 Dock 图标
 - Suanpan 网关依赖为延迟导入——未安装时 app 正常启动，网关功能不可用并提示安装命令
 - Config server（:9528）和 AI 路由网关（:9527）是两个独立端口，不可合并
-- 配置通过 webview 设置界面管理（`config_ui.html`）
-- 测试覆盖率 100%（pytest + node；`pytest --cov` 口径见 `.coveragerc` omit 清单）
+- 测试口径：`python3 -m pytest --cov`（omit 清单见 `.coveragerc`）+ `node --test tests/js/`；覆盖率数字以运行为准，不在此缓存

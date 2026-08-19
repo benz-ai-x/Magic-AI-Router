@@ -2,6 +2,10 @@
 
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+> 仓库史：`benz-ai-x/Magic-AI-Router` 于 2026-08-19 删除后重建，历史 issue
+> 未迁移；被删 issue 的 spec 本地副本在 `docs/specs/`，与新 issue 的互指
+> 已失效。远端走 SSH（HTTPS 推送认证失败）。
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
