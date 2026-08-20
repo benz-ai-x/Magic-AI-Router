@@ -58,7 +58,8 @@ mpconf/ ── 配置栈
   provider_auth.py ── 供应商认证纯逻辑（resolve_api_key + build_outbound_headers）
 
 tunnel/ ── SSH 隧道核心
-  proxy.py ── asyncio HTTP→SOCKS5 代理 + SSHMonitor + ProxyRuntime
+  proxy.py ── asyncio HTTP→SOCKS5 代理（明文 HTTP 逐请求归属：跨 origin 安全重连，绝不静默误投）+ SSHMonitor + ProxyRuntime
+  http_framer.py ── 明文 HTTP 增量 framer：起始行/头部/CL/chunked 定界，未定界即安全关闭
   async_runtime.py ── daemon 线程 + asyncio 循环 + 代际计数停止（ProxyRuntime/Suanpan 共用）
   connection_coordinator.py ── SSH 连接/重试/host-key 流程编排
   subprocess_monitor.py ── 子进程生命周期基类（SSHMonitor/CaptureMonitor 继承）

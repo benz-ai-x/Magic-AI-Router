@@ -10,7 +10,7 @@ import time
 from urllib.parse import urlsplit
 
 from services.stats import Stats
-from tunnel import host_key
+from tunnel import host_key, http_framer
 from mpconf import netloc
 from tunnel.subprocess_monitor import SubprocessMonitor
 from tunnel.async_runtime import AsyncRuntime
@@ -192,58 +192,153 @@ async def handle_connect(client_reader, client_writer, host, port, socks_addr, s
 
 
 async def handle_http(client_reader, client_writer, request_line, socks_addr, stats):
-    """Handle plain HTTP request via SOCKS5."""
+    """明文 HTTP 逐请求归属状态机（issue #5）。
+
+    同一客户端 keep-alive 连接上的每条请求独立解析并验证 authority；
+    upstream 连接只允许同一 origin 复用，跨 origin 安全重连（旧连先关，
+    绝不静默误投）。无法定界 body 的消息按「本消息后关闭」安全拒绝。
+    """
     stats.inc_connections()
-    remote_writer = None
+    remote = None  # (reader, writer, (host, port))
     try:
-        method, url, _ = request_line.decode().split(maxsplit=2)
-        parsed = urlsplit(url)
-        if parsed.scheme.lower() != "http" or not parsed.hostname:
-            raise ValueError("plain HTTP proxy requests must use an absolute http URL")
-        host, port = parsed.hostname, parsed.port or 80
+        line = request_line
+        while True:
+            try:
+                head = await http_framer.read_head(client_reader, first_line=line)
+            except ValueError:
+                break
+            if head is None:
+                break
+            start, header_lines = head
+            try:
+                method, url, version = start.decode("latin-1").split(maxsplit=2)
+                method = method.upper()
+                version = version.strip()  # readline 尾部 CRLF 不得拼进起始行
+            except ValueError:
+                break
+            parsed = urlsplit(url)
+            if parsed.scheme.lower() != "http" or not parsed.hostname:
+                client_writer.write(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n"
+                    b"Connection: close\r\n\r\n")
+                await client_writer.drain()
+                break
+            host, port = parsed.hostname, parsed.port or 80
 
-        path = parsed.path or "/"
-        if parsed.query:
-            path += "?" + parsed.query
+            path = parsed.path or "/"
+            if parsed.query:
+                path += "?" + parsed.query
 
-        headers = await _read_headers(client_reader)
-        # Proxy credentials and hop-by-hop headers belong only to this local
-        # proxy. Forwarding them exposes credentials to the destination.
-        connection_tokens = set()
-        for line in headers:
-            name, sep, value = line.decode("iso-8859-1", "replace").partition(":")
-            if sep and name.strip().lower() == "connection":
-                connection_tokens.update(v.strip().lower() for v in value.split(","))
-        # Keep Transfer-Encoding unless it was explicitly nominated by
-        # Connection: the body is relayed byte-for-byte, so stripping the
-        # normal chunked framing header would corrupt uploads.
-        blocked = {"proxy-authorization", "proxy-connection", "connection", "keep-alive",
-                   "te", "trailer", "upgrade"} | connection_tokens
-        forwarded_headers = []
-        for line in headers:
-            name, sep, _ = line.decode("iso-8859-1", "replace").partition(":")
-            if sep and name.strip().lower() not in blocked:
-                forwarded_headers.append(line)
+            # 代理凭证与 hop-by-hop 头只属于本地代理，绝不发往 origin。
+            connection_tokens = set()
+            for raw in header_lines:
+                name, sep, value = raw.decode("iso-8859-1", "replace").partition(":")
+                if sep and name.strip().lower() == "connection":
+                    connection_tokens.update(
+                        v.strip().lower() for v in value.split(","))
+            blocked = ({"proxy-authorization", "proxy-connection",
+                        "connection", "keep-alive", "te", "trailer", "upgrade"}
+                       | connection_tokens)
+            forwarded = [raw for raw in header_lines
+                         if raw.decode("iso-8859-1", "replace")
+                         .partition(":")[0].strip().lower() not in blocked]
 
-        try:
-            remote_reader, remote_writer = await socks5_connect(host, port, socks_addr)
-        except Exception as e:
-            logger.error("SOCKS5 connect to %s:%s failed: %s", host, port, e)
-            client_writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            await client_writer.drain()
-            client_writer.close()
-            return
+            try:
+                req_cl, req_chunked, req_close = http_framer.parse_framing(header_lines)
+            except ValueError:
+                req_cl = None
+                req_chunked = False
+                req_close = True  # 非法 Content-Length：本消息后关闭
+            # 可能有 body 却未定界（无 CL/chunked 的 POST 等）：无法安全
+            # 定界后续 pipelining——本消息后关闭连接。
+            body_indeterminate = (method in ("POST", "PUT", "PATCH")
+                                  and req_cl is None and not req_chunked)
 
-        remote_writer.write(f"{method} {path} HTTP/1.1\r\n".encode())
-        for line in forwarded_headers:
-            remote_writer.write(line)
+            # 跨 origin：关闭旧 upstream，安全重连（绝不静默误投）。
+            if remote is not None and remote[2] != (host, port):
+                await _close_writer(remote[1])
+                remote = None
+            if remote is None:
+                try:
+                    rr, rw = await socks5_connect(host, port, socks_addr)
+                except Exception as e:
+                    logger.error("SOCKS5 connect to %s:%s failed: %s",
+                                 host, port, e)
+                    client_writer.write(
+                        b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
+                        b"Connection: close\r\n\r\n")
+                    await client_writer.drain()
+                    break
+                remote = (rr, rw, (host, port))
+            rr, rw = remote[0], remote[1]
 
-        remote_writer.write(b"\r\n")
-        await remote_writer.drain()
-        await bidirectional_relay(client_reader, client_writer, remote_reader, remote_writer, stats)
+            rw.write(f"{method} {path} {version}".encode("latin-1") + b"\r\n")
+            for raw in forwarded:
+                rw.write(raw)
+            rw.write(b"\r\n")
+            try:
+                if req_cl:
+                    await http_framer.relay_fixed(client_reader, rw, req_cl)
+                elif req_chunked:
+                    if not await http_framer.relay_chunked(client_reader, rw):
+                        break
+                await rw.drain()
+            except (ConnectionError, ValueError):
+                break
+
+            keep = await _relay_one_response(rr, client_writer, method)
+            if not keep or req_close or body_indeterminate:
+                break
+            line = None  # 后续请求从 reader 自然续读（pipelined 字节天然缓冲）
     finally:
-        await _close_writer(remote_writer)
+        if remote is not None:
+            await _close_writer(remote[1])
+        client_writer.close()
         stats.dec_connections()
+
+
+async def _relay_one_response(remote_reader, client_writer, request_method):
+    """转发恰好一条 framed 响应。返回是否可继续 keep-alive。"""
+    try:
+        head = await http_framer.read_head(remote_reader)
+    except ValueError:
+        return False
+    if head is None:
+        return False
+    start, header_lines = head
+    try:
+        _ver, code_text, _rest = start.decode("latin-1").split(maxsplit=2)
+        code = int(code_text)
+    except ValueError:
+        return False
+    client_writer.write(start)
+    for raw in header_lines:
+        client_writer.write(raw)
+    client_writer.write(b"\r\n")
+
+    no_body = request_method == "HEAD" or code in (204, 304) or 100 <= code < 200
+    keep = True
+    if not no_body:
+        try:
+            cl, chunked, conn_close = http_framer.parse_framing(header_lines)
+        except ValueError:
+            cl, chunked, conn_close = None, False, True
+        try:
+            if cl is not None:
+                await http_framer.relay_fixed(remote_reader, client_writer, cl)
+            elif chunked:
+                if not await http_framer.relay_chunked(remote_reader, client_writer):
+                    return False
+            else:
+                # 响应无定界 = 服务端将关闭连接；如实转发至 EOF。
+                await http_framer.relay_until_eof(remote_reader, client_writer)
+                keep = False
+        except (ConnectionError, ValueError):
+            return False
+        if conn_close:
+            keep = False
+    await client_writer.drain()
+    return keep
 
 
 async def handle_client(client_reader, client_writer, socks_addr, stats):
