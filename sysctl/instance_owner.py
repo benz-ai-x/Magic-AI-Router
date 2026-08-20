@@ -16,14 +16,10 @@ import subprocess
 
 logger = logging.getLogger("magic-proxy.instance")
 
-# 锁记录默认位置：macOS 应用支持目录（测试经构造参数重定向）。
-import sys
-if sys.platform == "darwin":
-    _DEFAULT_DIR = os.path.expanduser(
-        "~/Library/Application Support/Magic AI Router")
-else:  # pragma: no cover — dev/CI on non-darwin
-    _DEFAULT_DIR = os.path.expanduser("~/.magic-ai-router")
-DEFAULT_LOCK_PATH = os.path.join(_DEFAULT_DIR, "instance.json")
+# 锁记录默认位置：macOS 应用支持目录（产品 macOS-only；测试经构造参数重定向）。
+DEFAULT_LOCK_PATH = os.path.join(
+    os.path.expanduser("~/Library/Application Support/Magic AI Router"),
+    "instance.json")
 
 
 def _ps_pid_info(pid: int):
@@ -90,28 +86,46 @@ class InstanceOwner:
         return start is not None and start == data.get("start")
 
     def _takeover(self, rec):
-        """陈旧锁接管：临时文件 + 原子替换。"""
+        """陈旧锁接管：临时文件 + 原子替换，替换后重读自证。
+
+        两进程同时接管陈旧锁时，os.replace 后锁内 nonce 只属于其一：
+        重读 nonce 非己方即输掉竞争，返回 None（最多一个成功）。
+        """
         tmp = self.lock_path + ".takeover.%d" % self._pid
         with open(tmp, "w") as f:
             json.dump(rec, f)
         os.replace(tmp, self.lock_path)
+        data = self._load()
+        if not data or data.get("nonce") != rec.get("nonce"):
+            return None
         return rec
 
     def owns_pid(self, pid):
-        """调用方只持 pid（端口占用者）时的便捷判定：pid_info 自取后比对。"""
-        start, _exe = self._pid_info(pid)
-        return self.owns(pid, start)
+        """调用方只持 pid 时的便捷判定：pid_info 自取（启动时间 + exe）后比对。"""
+        start, exe = self._pid_info(pid)
+        return self.owns(pid, start, exe)
 
-    def owns(self, pid, start):
-        """端口占用者是否为本应用实例：pid + 启动时间双匹配（抗 PID 复用）。"""
+    def owns(self, pid, start, exe=None):
+        """是否为本应用实例：pid + 启动时间匹配（抗 PID 复用）。
+
+        exe 给出时一并比对（可执行路径三重证明）。"""
         data = self._load()
         if not data:
             return False
-        return (data.get("pid") == pid and data.get("start") == start
-                and start is not None)
+        if data.get("pid") != pid or start is None or data.get("start") != start:
+            return False
+        if exe is not None and data.get("exe") != exe:
+            return False
+        return True
 
     def release(self):
-        """移除自己的锁；无锁/他人锁为 no-op。"""
+        """移除自己的锁（pid + nonce 双校验）；无锁/他人锁为 no-op。
+
+        并发启动的失败方进程退出时绝不能删掉成功方的锁。
+        """
+        data = self._load()
+        if not data or data.get("pid") != self._pid:
+            return
         try:
             os.unlink(self.lock_path)
         except OSError:

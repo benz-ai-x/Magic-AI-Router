@@ -46,11 +46,11 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 ### 服务生命周期（LifecycleRuntime）
 
-后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（清障自有端口 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。
+后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。
 
 ### 实例所有权（InstanceOwnership）
 
-进程所有权的可验证记录（`sysctl/instance_owner.py`）：锁记录含 pid / 进程启动时间 / exe / nonce，经 O_EXCL 原子创建；启动时间入锁抵抗 PID 复用。端口占用只是发现线索——只有 `owns_pid` 双匹配证实的自家旧实例才允许回收（未证实者永收不到信号，仅告警）；并发启动单实例守卫由 `LifecycleRuntime.start_all` 的锁获取承担，失败方不触碰成功方的锁。basename 命令行启发式已删除。
+进程所有权的可验证记录（`sysctl/instance_owner.py`）：锁记录含 pid / 进程启动时间 / exe / nonce，经 O_EXCL 原子创建；启动时间入锁抵抗 PID 复用。端口占用只是发现线索、启动期一律仅告警永不发信号——活旧实例由单胜守卫拦截（app 弹窗退出），死旧实例只剩陈旧锁（acquire 接管清理）；并发启动单实例守卫由 `LifecycleRuntime.start_all` 的锁获取承担，失败方不触碰成功方的锁。basename 命令行启发式已删除。
 
 ### 资源契约（CaptureResources）
 

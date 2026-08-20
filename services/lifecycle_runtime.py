@@ -44,35 +44,23 @@ def _should_prevent_sleep(status, paused, flag):
 
 
 
-def _clear_stale_ports(config_port=9528, suanpan_port=9527, owner=None):
-    """Recover ports held by VERIFIED stale instances of this app (issue #3).
+def report_port_occupancy(config_port=9528, suanpan_port=9527):
+    """启动期端口占用报告（issue #3）：占用只是线索，启动期永不发信号。
 
-    端口占用只是发现线索；只有实例锁（pid + 启动时间双匹配）证实的自家
-    旧实例才回收（port_check.kill 自带 SIGTERM→SIGKILL 升级）。未证实
-    的占用者永远不发信号，仅清晰告警——basename 启发式已删除。
+    进程死亡即释放监听 socket——真正需要回收的旧实例只剩**陈旧锁**
+    （由 InstanceOwner.acquire 的接管路径清理）。仍被占用的端口只可能是
+    活进程（本应用旧实例由单胜守卫拦截并给出用户可见错误；其余为外来
+    进程），一律清晰告警、人工处置。port_check.kill 的 SIGTERM→SIGKILL
+    升级保留给显式人工/工具路径。
     """
     self_pid = os.getpid()
-    recovered = set()  # 同一验证过的旧实例可能占着两个端口——只杀一次
     for port in (config_port, suanpan_port):
         po = port_check.who_owns(port)
         if not po or po.pid == self_pid:
             continue
-        if po.pid in recovered:
-            continue
-        if owner is None or not owner.owns_pid(po.pid):
-            logger.warning(
-                "Port %d occupied by PID %d (%s) — 所有权未证实，不自动处理；"
-                "如确认可手动退出该进程后重试", port, po.pid, po.name)
-            continue
-        logger.info("Port %d held by verified stale instance PID %d — recovering",
-                    port, po.pid)
-        recovered.add(po.pid)
-        ok, err = port_check.kill(po.pid)
-        if ok:
-            logger.info("Killed PID %d on port %d", po.pid, port)
-        else:
-            logger.warning("Failed to kill PID %d on port %d: %s",
-                           po.pid, port, err)
+        logger.warning(
+            "Port %d occupied by PID %d (%s) — 不自动处理；如为本应用旧实例"
+            "请从其菜单栏退出，外来进程请手动确认后处置", port, po.pid, po.name)
 
 
 def _read_suanpan_port():
@@ -153,17 +141,17 @@ class LifecycleRuntime:
 
     # ── 生命周期 ────────────────────────────────────────────────
     def start_all(self):
-        """启动顺序即契约：实例锁 → 清障自有端口 → 配置服务 → 网关自启。
+        """启动顺序即契约：实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启。
 
-        并发启动单实例守卫（issue #3）：锁被活实例持有时本次启动不接管
-        任何服务，返回 False。
+        单实例守卫（issue #3）：锁被活实例持有时本次启动不接管任何
+        服务，返回 False——由编排器（app.py）转为用户可见错误后退出。
         """
         if not self._owner.acquire():
             logger.error("已有 Magic AI Router 实例在运行（实例锁被持有）——"
                          "本次启动不接管服务")
             return False
         config_port = (self._config_fn() or {}).get("config_port", 9528)
-        _clear_stale_ports(config_port, _read_suanpan_port(), self._owner)
+        report_port_occupancy(config_port, _read_suanpan_port())
         if not self._config_server.start():
             logger.warning("Config server failed to start on :%d", config_port)
         # AI router gateway auto-starts with the app (loopback-only);

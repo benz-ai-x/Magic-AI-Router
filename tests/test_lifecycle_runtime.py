@@ -145,7 +145,7 @@ class TestQuitOrder(unittest.TestCase):
     def test_start_all_clears_ports_then_starts_services(self):
         svc = _make_coordinator()
         order = []
-        with patch("services.lifecycle_runtime._clear_stale_ports",
+        with patch("services.lifecycle_runtime.report_port_occupancy",
                    side_effect=lambda *a: order.append("clear_ports")), \
              patch("services.lifecycle_runtime._read_suanpan_port",
                    return_value=9527), \
@@ -195,7 +195,7 @@ class TestStartAllFailureBranches(unittest.TestCase):
         svc = _make_coordinator()
         with patch.object(svc._config_server, "start", return_value=False), \
              patch.object(svc._suanpan, "start", return_value=True) as sp_start, \
-             patch("services.lifecycle_runtime._clear_stale_ports"), \
+             patch("services.lifecycle_runtime.report_port_occupancy"), \
              patch("services.lifecycle_runtime._read_suanpan_port",
                    return_value=9527), \
              self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
@@ -207,7 +207,7 @@ class TestStartAllFailureBranches(unittest.TestCase):
         svc = _make_coordinator()
         with patch.object(svc._config_server, "start", return_value=True), \
              patch.object(svc._suanpan, "start", return_value=False), \
-             patch("services.lifecycle_runtime._clear_stale_ports"), \
+             patch("services.lifecycle_runtime.report_port_occupancy"), \
              patch("services.lifecycle_runtime._read_suanpan_port",
                    return_value=9527), \
              self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
@@ -219,55 +219,6 @@ class TestStartAllFailureBranches(unittest.TestCase):
         svc = _make_coordinator()
         svc._owner = owner
         return svc
-
-    def test_unverified_port_owner_never_signaled(self):
-        from sysctl import instance_owner as io
-        import tempfile
-        from pathlib import Path
-        with tempfile.TemporaryDirectory() as d:
-            owner = io.InstanceOwner(lock_path=str(Path(d) / "i.json"),
-                                     pid_info=lambda p: ("S_X", "/exe"), pid=1)
-            owner.acquire()  # 锁属于 pid=1
-            svc = self._lifecycle(owner)
-            foreign = MagicMock(pid=4242, name="python3", cmd="/other/app.py")
-            with patch("services.lifecycle_runtime.port_check.who_owns",
-                       return_value=foreign), \
-                 patch("services.lifecycle_runtime.port_check.kill") as kill, \
-                 patch("services.lifecycle_runtime._read_suanpan_port",
-                       return_value=9527), \
-                 self.assertLogs("magic-proxy.lifecycle", level="WARNING"):
-                svc.start_all()
-            kill.assert_not_called()  # 未验证所有权 → 永不发信号
-
-    def test_verified_stale_instance_recovered(self):
-        from sysctl import instance_owner as io
-        import tempfile
-        from pathlib import Path
-        with tempfile.TemporaryDirectory() as d:
-            owner = io.InstanceOwner(lock_path=str(Path(d) / "i.json"),
-                                     pid_info=lambda p: ("S_A", "/exe/app"), pid=1)
-            owner.acquire()
-            svc = self._lifecycle(owner)
-            stale = MagicMock(pid=4242, name="Magic", cmd="/exe/app")
-            # 端口占用者 pid=4242：锁声明 pid=1——为了让 owns_pid(4242) 为真，
-            # 构造锁 pid 即占用者 pid 的 owner。
-            owner2 = io.InstanceOwner(lock_path=str(Path(d) / "i2.json"),
-                                      pid_info=lambda p: ("S_A", "/exe/app"), pid=4242)
-            owner2.acquire()
-            svc._owner = owner2
-            # acquire 已由预置锁覆盖（S1 另测）；本测聚焦回收 seam
-            with patch.object(owner2, "acquire",
-                              return_value={"pid": 4242}), \
-                 patch("services.lifecycle_runtime.port_check.who_owns",
-                       return_value=stale), \
-                 patch("services.lifecycle_runtime.port_check.kill",
-                       return_value=(True, "")) as kill, \
-                 patch("services.lifecycle_runtime._read_suanpan_port",
-                       return_value=9527), \
-                 patch.object(svc._config_server, "start", return_value=True), \
-                 patch.object(svc._suanpan, "start", return_value=True):
-                svc.start_all()
-            kill.assert_called_once_with(4242)
 
     def test_start_all_aborts_when_sibling_holds_lock(self):
         from sysctl import instance_owner as io

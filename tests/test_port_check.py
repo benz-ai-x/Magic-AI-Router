@@ -209,3 +209,7 @@ class TestAliveHelper(unittest.TestCase):
     def test_process_lookup_error_treated_as_dead(self):
         with patch("os.kill", side_effect=ProcessLookupError()):
             self.assertFalse(port_check._alive(123))
+
+
+if __name__ == "__main__":
+    unittest.main()
