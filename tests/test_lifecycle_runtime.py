@@ -10,6 +10,9 @@ CaptureController 子模块接口不变，但不再通过 ServiceCoordinator 暴
 不再穿透 ``svc._suanpan._rt._thread`` 或 ``svc._capture_ctrl._enabled``
 这种内部属性。
 """
+import tempfile
+import os
+from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -244,8 +247,6 @@ class TestStartAllFailureBranches(unittest.TestCase):
 
     def test_start_all_aborts_when_sibling_holds_lock(self):
         from sysctl import instance_owner as io
-        import tempfile
-        from pathlib import Path
         with tempfile.TemporaryDirectory() as d:
             holder = io.InstanceOwner(lock_path=str(Path(d) / "i.json"),
                                       pid_info=lambda p: ("S_A", "/exe"), pid=1)
@@ -264,8 +265,6 @@ class TestStartAllFailureBranches(unittest.TestCase):
 
     def test_quit_releases_instance_lock(self):
         from sysctl import instance_owner as io
-        import tempfile, os as _os
-        from pathlib import Path
         with tempfile.TemporaryDirectory() as d:
             owner = io.InstanceOwner(lock_path=str(Path(d) / "i.json"),
                                      pid_info=lambda p: ("S_A", "/exe"), pid=1)
@@ -277,4 +276,4 @@ class TestStartAllFailureBranches(unittest.TestCase):
                  patch.object(svc._capture, "stop"), \
                  patch.object(svc._config_server, "stop"):
                 svc.quit(lambda: None)
-            self.assertFalse(_os.path.exists(owner.lock_path))
+            self.assertFalse(os.path.exists(owner.lock_path))

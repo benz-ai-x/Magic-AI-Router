@@ -7,9 +7,7 @@ Seam S1 —— sysctl/instance_owner 是唯一的所有权真相：锁记录（p
 import json
 import os
 import tempfile
-import tempfile
 import unittest
-from pathlib import Path
 from pathlib import Path
 from unittest.mock import patch
 
@@ -95,12 +93,11 @@ class TestOwnershipProof(unittest.TestCase):
 
 class TestRelease(unittest.TestCase):
     def test_release_removes_own_lock(self):
-        import tempfile, os as _os
         with tempfile.TemporaryDirectory() as d:
             o = _owner(Path(d))
             o.acquire()
             o.release()
-            self.assertFalse(_os.path.exists(o.lock_path))
+            self.assertFalse(os.path.exists(o.lock_path))
 
     def test_release_without_lock_is_noop(self):
         with tempfile.TemporaryDirectory() as d:
