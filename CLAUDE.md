@@ -98,7 +98,8 @@ services/ ── 服务
   suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
   claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json，经 config_store.atomic_write；env 契约见 ADR-003）
   lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约、tick/sync_sleep/stop_all、capture_state 单投影
-  balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围 / 缓存 / 路由来源）+ 供应商连通性探测
+  authenticated_http.py ── 认证出站 adapter：跨 origin 重定向一律拒绝、HTTPS→HTTP 降级必拒、同 origin 放行、1MB 响应上限
+  balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围 / 缓存 / 路由来源）+ 供应商连通性探测（经 authenticated_http 出站）
   stats.py ── 运行统计
 
 suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM 后端）

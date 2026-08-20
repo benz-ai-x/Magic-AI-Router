@@ -13,6 +13,7 @@ import urllib.error
 from unittest.mock import patch
 
 from services import balance_usage
+from services.authenticated_http import AuthenticatedHttpClient
 from sysctl import login_item
 import util
 
@@ -128,7 +129,7 @@ class TestTestProviderHTTPErrorNonJSON(unittest.TestCase):
             "https://api.test.com/v1/messages", 502,
             "Bad Gateway", {},
             io.BytesIO(b"<html>Bad Gateway</html>"))
-        with patch("urllib.request.urlopen", side_effect=err):
+        with patch.object(AuthenticatedHttpClient, "open", side_effect=err):
             r = balance_usage.test_provider(
                 {"providers": {"p": self._provider}}, "p")
         self.assertEqual(r, {"error": "HTTP 502"})
@@ -140,7 +141,7 @@ class TestTestProviderHTTPErrorNonJSON(unittest.TestCase):
             "Internal Server Error", {}, io.BytesIO(b""))
         # Replace read() to blow up during json.loads → except Exception path
         err.read = lambda: (_ for _ in ()).throw(ValueError("socket closed"))
-        with patch("urllib.request.urlopen", side_effect=err):
+        with patch.object(AuthenticatedHttpClient, "open", side_effect=err):
             r = balance_usage.test_provider(
                 {"providers": {"p": self._provider}}, "p")
         self.assertEqual(r, {"error": "HTTP 500"})
@@ -163,7 +164,7 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
             {"balance_infos": [{"total_balance": "9.9",
                                 "topped_up_balance": "10", "currency": "CNY"}]}
         ).encode()
-        with patch("urllib.request.urlopen", return_value=_FakeResp(body)):
+        with patch.object(AuthenticatedHttpClient, "open", return_value=body):
             r = balance_usage.fetch_balance({"providers": self.PROVIDERS})
         self.assertEqual(len(r), 1)
         entry = r[0]
@@ -175,10 +176,10 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
         body = json.dumps(
             {"balance_infos": [{"total_balance": "1", "currency": "CNY"}]}
         ).encode()
-        with patch("urllib.request.urlopen", return_value=_FakeResp(body)) as m:
+        with patch.object(AuthenticatedHttpClient, "open", return_value=body) as m:
             balance_usage.fetch_balance({"providers": self.PROVIDERS})
         req = m.call_args[0][0]
-        self.assertEqual(req.headers.get("Authorization"), "Bearer sk-test")
+        self.assertEqual(m.call_args.kwargs["headers"].get("Authorization"), "Bearer sk-test")
 
     def test_raw_auth_used_for_raw_style(self):
         # GLM (bigmodel.cn) uses "raw" auth style → bare key in Authorization
@@ -191,7 +192,7 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
             json.dumps({"data": {"limits": [{"unit": 5, "percentage": 50}]}}).encode(),
             json.dumps({"data": {"balance": 1.5, "totalSpendAmount": 0.25}}).encode(),
         ]
-        with patch("urllib.request.urlopen",
+        with patch.object(AuthenticatedHttpClient, "open",
                    side_effect=[_FakeResp(b) for b in bodies]) as m:
             r = balance_usage.fetch_balance(sp)
         entry = r[0]
@@ -199,10 +200,10 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
         self.assertEqual(len(entry["apis"]), 2)
         # Both calls used the bare key (raw style)
         for call in m.call_args_list:
-            self.assertEqual(call[0][0].headers.get("Authorization"), "sk-glm")
+            self.assertEqual(call.kwargs["headers"].get("Authorization"), "sk-glm")
 
     def test_exception_path_records_error_label(self):
-        with patch("urllib.request.urlopen",
+        with patch.object(AuthenticatedHttpClient, "open",
                    side_effect=urllib.error.URLError("timeout")):
             r = balance_usage.fetch_balance({"providers": self.PROVIDERS})
         entry = r[0]
@@ -211,7 +212,7 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
         self.assertEqual(entry["apis"][0]["error"], "URLError")
 
     def test_http_error_records_error_type(self):
-        with patch("urllib.request.urlopen",
+        with patch.object(AuthenticatedHttpClient, "open",
                    side_effect=_http_error(403, b"forbidden")):
             r = balance_usage.fetch_balance({"providers": self.PROVIDERS})
         entry = r[0]
