@@ -318,12 +318,9 @@ class TestFetchModelsEndpoint(unittest.TestCase):
 
     def test_fetch_models_success_through_handler(self):
         body = json.dumps({"data": [{"id": "deepseek-v4-flash"}]}).encode()
-        resp = MagicMock()
-        resp.__enter__ = lambda s: s
-        resp.__exit__ = lambda s, *a: False
-        resp.read.return_value = body
         with patch("mpconf.config_store.sp_load_raw", return_value=self.SP), \
-             patch("urllib.request.urlopen", return_value=resp):
+             patch("services.authenticated_http.AuthenticatedHttpClient.open",
+                   return_value=body):
             status, data = self._post('{"provider": "deepseek"}')
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data), {"models": ["deepseek-v4-flash"]})

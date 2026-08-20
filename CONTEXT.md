@@ -48,6 +48,10 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。
 
+### 认证出站（AuthenticatedHttpClient）
+
+带凭证请求的统一出站 adapter（`services/authenticated_http.py`）：模型列表、连通测试、余额查询三类调用只传请求意图；redirect/scheme/超时/响应上限策略集中一处——跨 origin（scheme/host/effective port 任一变化）重定向一律拒绝、HTTPS→HTTP 降级必拒、同 origin 重定向放行且凭证保留（最大跳数 3，允许 301/302/303/307/308）、响应体 1MB 上限。Authorization、x-api-key 及未来自定义敏感头共用同一策略：凭证绝不出原始 origin。
+
 ### 逐请求归属（Per-request Origin Binding）
 
 明文 HTTP 代理的消息定界契约（`tunnel/http_framer.py` + `tunnel/proxy.py::handle_http`）：同一客户端 keep-alive 连接上的每条请求独立解析并验证 authority；upstream 连接只允许同 origin 复用，跨 origin 先关旧连再安全重连。body 定界支持 Content-Length 与 chunked，pipelined 字节由 StreamReader 自然缓冲留给下一轮；无法定界的消息按「本消息后关闭」安全拒绝，绝不带着未定界状态复用连接。CONNECT 隧道走独立直通路径，不经此状态机。

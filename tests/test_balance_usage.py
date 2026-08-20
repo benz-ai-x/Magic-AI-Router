@@ -15,6 +15,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 from services import balance_usage
+from services.authenticated_http import AuthenticatedHttpClient
 def _sp(providers):
     return {"providers": providers}
 
@@ -82,76 +83,77 @@ class TestFetchModels(unittest.TestCase):
         self.assertIn("error", r)
 
     def test_parses_data_ids_deduped_in_order(self):
-        with patch("urllib.request.urlopen", return_value=_FakeResp(_models_payload("a", "b", "a"))) as m:
+        with patch.object(AuthenticatedHttpClient, "open", return_value=_models_payload("a", "b", "a")) as m:
             r = self._fetch()
         self.assertEqual(r, {"models": ["a", "b"]})
-        self.assertEqual(m.call_args[0][0].full_url, "https://api.deepseek.com/anthropic/v1/models")
+        self.assertEqual(m.call_args[0][0], "https://api.deepseek.com/anthropic/v1/models")
 
     def test_404_falls_back_to_models_without_v1(self):
-        def side_effect(req, timeout=0):
-            if req.full_url.endswith("/v1/models"):
+        def side_effect(url, headers=None, data=None, method=None, timeout=None):
+            if url.endswith("/v1/models"):
                 raise _http_error(404)
-            return _FakeResp(_models_payload("m1"))
+            return _models_payload("m1")
 
-        with patch("urllib.request.urlopen", side_effect=side_effect) as m:
+        with patch.object(AuthenticatedHttpClient, "open", side_effect=side_effect) as m:
             r = self._fetch()
         self.assertEqual(r, {"models": ["m1"]})
-        self.assertEqual(m.call_args_list[-1][0][0].full_url, "https://api.deepseek.com/anthropic/models")
+        self.assertEqual(m.call_args_list[-1][0][0], "https://api.deepseek.com/anthropic/models")
 
     def test_404_falls_back_to_models_without_v1(self):
-        def side_effect(req, timeout=0):
-            if req.full_url.endswith("/v1/models"):
+        def side_effect(url, headers=None, data=None, method=None, timeout=None):
+            if url.endswith("/v1/models"):
                 raise _http_error(404)
-            return _FakeResp(_models_payload("m1"))
+            return _models_payload("m1")
 
-        with patch("urllib.request.urlopen", side_effect=side_effect) as m:
+        with patch.object(AuthenticatedHttpClient, "open", side_effect=side_effect) as m:
             r = self._fetch()
         self.assertEqual(r, {"models": ["m1"]})
-        self.assertEqual(m.call_args_list[-1][0][0].full_url, "https://api.deepseek.com/anthropic/models")
+        self.assertEqual(m.call_args_list[-1][0][0], "https://api.deepseek.com/anthropic/models")
 
     def test_404_falls_back_to_origin_root(self):
         """Providers whose base_url has a path prefix (e.g. /anthropic) may only
         serve /models at the origin root."""
-        def side_effect(req, timeout=0):
-            if "/anthropic/" in req.full_url:
+        def side_effect(url, headers=None, data=None, method=None, timeout=None):
+            if "/anthropic/" in url:
                 raise _http_error(404)
-            return _FakeResp(_models_payload("deepseek-chat"))
+            return _models_payload("deepseek-chat")
 
-        with patch("urllib.request.urlopen", side_effect=side_effect) as m:
+        with patch.object(AuthenticatedHttpClient, "open", side_effect=side_effect) as m:
             r = self._fetch()
         self.assertEqual(r, {"models": ["deepseek-chat"]})
-        self.assertEqual(m.call_args_list[-1][0][0].full_url, "https://api.deepseek.com/v1/models")
+        self.assertEqual(m.call_args_list[-1][0][0], "https://api.deepseek.com/v1/models")
 
     def test_all_candidates_404_returns_error(self):
-        with patch("urllib.request.urlopen", side_effect=_http_error(404)):
+        with patch.object(AuthenticatedHttpClient, "open", side_effect=_http_error(404)):
             r = self._fetch()
         self.assertIn("error", r)
 
     def test_x_api_key_auth_header(self):
         sp = _sp({"deepseek": {**self.PROVIDERS["deepseek"], "auth_header": "x-api-key"}})
-        with patch("urllib.request.urlopen", return_value=_FakeResp(_models_payload("a"))) as m:
+        with patch.object(AuthenticatedHttpClient, "open", return_value=_models_payload("a")) as m:
             self._fetch(sp)
-        headers = m.call_args[0][0].headers
-        self.assertEqual(headers.get("X-api-key"), "sk-test")
-        self.assertIn("Anthropic-version", headers)
+        headers = m.call_args.kwargs["headers"]
+        # 直传 dict 键为字面小写（urllib 规范化大小写已成历史）
+        self.assertEqual(headers.get("x-api-key"), "sk-test")
+        self.assertIn("anthropic-version", headers)
 
     def test_bearer_auth_header_by_default(self):
-        with patch("urllib.request.urlopen", return_value=_FakeResp(_models_payload("a"))) as m:
+        with patch.object(AuthenticatedHttpClient, "open", return_value=_models_payload("a")) as m:
             self._fetch()
-        self.assertEqual(m.call_args[0][0].headers.get("Authorization"), "Bearer sk-test")
+        self.assertEqual(m.call_args.kwargs["headers"].get("Authorization"), "Bearer sk-test")
 
     def test_non_404_http_error(self):
-        with patch("urllib.request.urlopen", side_effect=_http_error(401)):
+        with patch.object(AuthenticatedHttpClient, "open", side_effect=_http_error(401)):
             r = self._fetch()
         self.assertIn("error", r)
 
     def test_network_error(self):
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("boom")):
+        with patch.object(AuthenticatedHttpClient, "open", side_effect=urllib.error.URLError("boom")):
             r = self._fetch()
         self.assertIn("error", r)
 
     def test_malformed_response_error(self):
-        with patch("urllib.request.urlopen", return_value=_FakeResp(b'{"nope": 1}')):
+        with patch.object(AuthenticatedHttpClient, "open", return_value=b'{"nope": 1}'):
             r = self._fetch()
         self.assertIn("error", r)
 
@@ -594,14 +596,10 @@ class TestTestProviderRequest(unittest.TestCase):
                  "auth_header": "x-api-key", "models": ["test-model"]}
 
     def _mock_resp(self, body_dict, status=200):
-        import io
-        resp = unittest.mock.MagicMock()
-        resp.read.return_value = json.dumps(body_dict).encode()
-        resp.__enter__ = unittest.mock.MagicMock(return_value=resp)
-        resp.__exit__ = unittest.mock.MagicMock(return_value=False)
-        return resp
+        """客户端 seam 下直接返回 body 字节。"""
+        return json.dumps(body_dict).encode()
 
-    @patch("urllib.request.urlopen")
+    @patch.object(AuthenticatedHttpClient, "open")
     def test_successful_request_returns_ok(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_resp({
             "model": "test-model",
@@ -612,7 +610,7 @@ class TestTestProviderRequest(unittest.TestCase):
         self.assertEqual(result["model"], "test-model")
         self.assertEqual(result["reply"], "Hello!")
 
-    @patch("urllib.request.urlopen")
+    @patch.object(AuthenticatedHttpClient, "open")
     def test_successful_request_empty_reply(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_resp({
             "model": "test-model", "content": [],
@@ -621,7 +619,7 @@ class TestTestProviderRequest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["reply"], "")
 
-    @patch("urllib.request.urlopen")
+    @patch.object(AuthenticatedHttpClient, "open")
     def test_http_error_returns_message(self, mock_urlopen):
         err = urllib.error.HTTPError(
             "https://api.test.com/v1/messages", 400,
@@ -631,13 +629,13 @@ class TestTestProviderRequest(unittest.TestCase):
         result = balance_usage.test_provider(_sp({"p": self._provider}), "p")
         self.assertIn("Model not exist", result["error"])
 
-    @patch("urllib.request.urlopen")
+    @patch.object(AuthenticatedHttpClient, "open")
     def test_network_error_returns_exception(self, mock_urlopen):
         mock_urlopen.side_effect = ConnectionError("timeout")
         result = balance_usage.test_provider(_sp({"p": self._provider}), "p")
         self.assertIn("ConnectionError", result["error"])
 
-    @patch("urllib.request.urlopen")
+    @patch.object(AuthenticatedHttpClient, "open")
     def test_model_override(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_resp({
             "model": "custom-model",
@@ -647,8 +645,7 @@ class TestTestProviderRequest(unittest.TestCase):
             _sp({"p": self._provider}), "p", model="custom-model")
         self.assertTrue(result["ok"])
         # Verify the request body used the override model
-        req = mock_urlopen.call_args[0][0]
-        body = json.loads(req.data.decode())
+        body = json.loads(mock_urlopen.call_args.kwargs["data"].decode())
         self.assertEqual(body["model"], "custom-model")
 
     def test_missing_api_key_returns_error(self):

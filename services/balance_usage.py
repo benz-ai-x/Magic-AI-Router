@@ -12,6 +12,13 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from services.authenticated_http import (
+    AuthRedirectError,
+    AuthenticatedHttpClient,
+)
+
+_BALANCE_CLIENT = AuthenticatedHttpClient(timeout=10)
 from datetime import datetime, timedelta, timezone
 
 from mpconf.provider_auth import build_outbound_headers, resolve_api_key
@@ -207,9 +214,7 @@ def fetch_models(sp_raw, name):
     headers["anthropic-version"] = "2023-06-01"
 
     def _get(url):
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
+        return _BALANCE_CLIENT.open_json(url, headers=headers)
 
     # Candidates: base_url paths first, then origin root — some providers mount
     # the Messages API under a path prefix (e.g. /anthropic) but only serve
@@ -268,10 +273,9 @@ def test_provider(sp_raw, name, model=None):
     }).encode()
 
     try:
-        req = urllib.request.Request(
-            f"{base}/v1/messages", data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
+        data = AuthenticatedHttpClient(timeout=30).open_json(
+            f"{base}/v1/messages", headers=headers, data=body, method="POST",
+            timeout=30)
         reply = ""
         if isinstance(data.get("content"), list) and data["content"]:
             reply = data["content"][0].get("text", "")[:80]
@@ -308,10 +312,11 @@ def fetch_balance(sp_raw):
         for url, style, label in apis:
             try:
                 auth = f"Bearer {key}" if style == "bearer" else key
-                req = urllib.request.Request(url, headers={"Authorization": auth})
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read())
+                data = _BALANCE_CLIENT.open_json(
+                    url, headers={"Authorization": auth})
                 api_res.append(normalize_balance(data, label))
+            except AuthRedirectError as e:
+                api_res.append({"label": label, "error": e.msg[:120]})
             except Exception as e:
                 api_res.append({"label": label, "error": f"{type(e).__name__}"})
         results.append({"provider": name, "supported": True, "apis": api_res})
