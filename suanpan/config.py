@@ -20,6 +20,9 @@ from mpconf.provider_auth import resolve_api_key as _resolve_key
 class ProviderConfig(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
+    # 稳定身份（issue #8）：不可变、无业务含义；显示名可随意改，
+    # api_key 的 keep/replace/clear 恢复按 id 匹配旧值。
+    id: str | None = None
     base_url: str
     api_key: str | None = None
     api_key_env: str | None = None
@@ -155,6 +158,29 @@ def _restore_key(new_val, old_val, keep):
     return new_val or None
 
 
+def assign_provider_ids(cfg: dict) -> int:
+    """为无 id 的 provider 赋确定性 id（p-<sha1(name)[:10]>）。
+
+    重复 id 抛可行动错误——不猜测 secret 归属（issue #8）。
+    """
+    import hashlib
+    seen, migrated = set(), 0
+    for name, p in (cfg.get("providers") or {}).items():
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("id")
+        if pid:
+            if pid in seen:
+                raise ValueError(
+                    f"供应商存在重复 id：{pid}（请修正配置文件后重试）")
+            seen.add(pid)
+            continue
+        p["id"] = "p-" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+        seen.add(p["id"])
+        migrated += 1
+    return migrated
+
+
 def load_config_raw(path: Path | str) -> dict:
     """Read raw (unmasked) config dict from YAML. Returns {} on any error."""
     p = Path(path)
@@ -164,6 +190,11 @@ def load_config_raw(path: Path | str) -> dict:
         data = yaml.safe_load(p.read_text())
     except Exception:
         return {}
+    if isinstance(data, dict):
+        try:
+            assign_provider_ids(data)  # issue #8：装载即赋幂等 id
+        except ValueError:
+            raise  # 重复 id 等可行动错误上抛，绝不猜测 secret 归属
     return data if isinstance(data, dict) else {}
 
 
@@ -190,11 +221,21 @@ def save_config_dict(data: dict, path: Path | str) -> tuple[bool, str | None]:
     Returns (ok, error_msg).
     """
     old = load_config_raw(path)
-    old_providers = old.get("providers", {})
+    old_by_id = {p.get("id"): p
+                 for p in old.get("providers", {}).values()
+                 if isinstance(p, dict) and p.get("id")}
+    old_by_name = old.get("providers", {})
     for name, p in data.get("providers", {}).items():
+        # id 命中 → 同一实体（重命名后 key 仍恢复）。id 未命中时仅当旧档
+        # 无 id（legacy）才按名回退——有 id 而不同 ≠ 同一实体，绝不串接。
+        old_p = old_by_id.get(p.get("id"))
+        if old_p is None:
+            legacy = old_by_name.get(name, {})
+            if isinstance(legacy, dict) and not legacy.get("id"):
+                old_p = legacy
         p["api_key"] = _restore_key(
             p.get("api_key"),
-            old_providers.get(name, {}).get("api_key"),
+            (old_p or {}).get("api_key"),
             bool(p.pop("api_key_set", False)))
     data["api_key"] = _restore_key(
         data.get("api_key"), old.get("api_key"),

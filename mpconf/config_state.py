@@ -151,9 +151,17 @@ class ConfigStateStore:
                 t.pop("has_password", None)      # 服务端注入的只读字段
                 t.pop("capture_active", None)
                 pw = t.pop("password", None)
-                # 显式切换离 password 才删（部分载荷不得静默清密）
                 if pw:
                     kc_sets.append((dict(t), pw))
+                elif t.get("auth_type") == "password" and t.get("id"):
+                    # issue #8 re-pin：id 稳定后把 legacy 账户里的旧密码
+                    # 迁到 id 账户（get 的 legacy 回退读到）；旧条目由
+                    # delete_password 的双账户清理随本次提交移除
+                    legacy = {k: v for k, v in t.items() if k != "id"}
+                    old_pw = (self._keychain.get_password(legacy)
+                              if self._keychain else "")
+                    if old_pw:
+                        kc_sets.append((dict(t), old_pw))
                 elif "auth_type" in t and t.get("auth_type") != "password":
                     kc_dels.append(dict(t))
         return CommitPlan(True, [], mp_c, sp_c, kc_sets, kc_dels)

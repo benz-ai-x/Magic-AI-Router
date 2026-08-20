@@ -14,17 +14,28 @@ SERVICE = "com.magic-proxy"
 
 
 def _account(tunnel: dict) -> str:
+    """凭证账户名：优先稳定 id（issue #8）；无 id 时为 legacy 推导。"""
+    stable_id = tunnel.get("id")
+    if stable_id:
+        return f"tunnel:{stable_id}"
     user = tunnel.get("ssh_user", "")
     host = tunnel.get("ssh_host", "")
     port = tunnel.get("ssh_port", 22)
     return f"{user}@{host}:{port}"
 
 
-def _base_query(tunnel: dict) -> dict:
+def _legacy_account(tunnel: dict) -> str:
+    user = tunnel.get("ssh_user", "")
+    host = tunnel.get("ssh_host", "")
+    port = tunnel.get("ssh_port", 22)
+    return f"{user}@{host}:{port}"
+
+
+def _base_query(tunnel: dict, account: str | None = None) -> dict:
     return {
         Security.kSecClass: Security.kSecClassGenericPassword,
         Security.kSecAttrService: SERVICE,
-        Security.kSecAttrAccount: _account(tunnel),
+        Security.kSecAttrAccount: account or _account(tunnel),
     }
 
 
@@ -33,8 +44,9 @@ def set_password(tunnel: dict, password: str) -> bool:
         return False
     try:
         # Replace any existing entry so -U semantics (update-in-place) hold.
-        Security.SecItemDelete(_base_query(tunnel))
-        attrs = dict(_base_query(tunnel))
+        final_account = _account(tunnel)
+        Security.SecItemDelete(_base_query(tunnel, final_account))
+        attrs = _base_query(tunnel, final_account)
         attrs[Security.kSecValueData] = password.encode("utf-8")
         status = Security.SecItemAdd(attrs, None)
         ok = status[0] == Security.errSecSuccess if isinstance(status, tuple) \
@@ -51,13 +63,18 @@ def set_password(tunnel: dict, password: str) -> bool:
 def get_password(tunnel: dict) -> str:
     if not tunnel.get("ssh_host"):
         return ""
+    accounts = [_account(tunnel)]
+    legacy = _legacy_account(tunnel)
+    if legacy not in accounts:
+        accounts.append(legacy)  # 迁移期回退读（issue #8）
     try:
-        query = dict(_base_query(tunnel))
-        query[Security.kSecReturnData] = True
-        query[Security.kSecMatchLimit] = Security.kSecMatchLimitOne
-        status, data = Security.SecItemCopyMatching(query, None)
-        if status == Security.errSecSuccess and data is not None:
-            return bytes(data).decode("utf-8")
+        for account in accounts:
+            query = _base_query(tunnel, account)
+            query[Security.kSecReturnData] = True
+            query[Security.kSecMatchLimit] = Security.kSecMatchLimitOne
+            status, data = Security.SecItemCopyMatching(query, None)
+            if status == Security.errSecSuccess and data is not None:
+                return bytes(data).decode("utf-8")
     except Exception as e:  # noqa: BLE001
         logger.warning("Keychain get failed: %s", type(e).__name__)
     return ""
@@ -68,7 +85,8 @@ def delete_password(tunnel: dict) -> bool:
     if not tunnel.get("ssh_host"):
         return True
     try:
-        Security.SecItemDelete(_base_query(tunnel))
+        for account in {_account(tunnel), _legacy_account(tunnel)}:
+            Security.SecItemDelete(_base_query(tunnel, account))
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("Keychain delete failed: %s", type(e).__name__)

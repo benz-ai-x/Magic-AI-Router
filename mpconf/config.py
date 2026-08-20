@@ -46,6 +46,41 @@ DEFAULT_CONFIG = {
 }
 
 
+def stable_tunnel_id(user: str, host: str, port) -> str:
+    """确定性 id：t-<sha1(user@host:port)[:10]>——同身份恒同 id（issue #8）。"""
+    import hashlib
+    basis = f"{user or ''}@{host or ''}:{port or 22}"
+    return "t-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:10]
+
+
+def assign_stable_ids(tunnels) -> int:
+    """为无 id 的隧道赋确定性 id；重复身份/重复 id 抛可行动错误。
+
+    返回迁移数量。已有 id 一律不动（重命名/改地址不影响）。
+    """
+    seen_ids, seen_identity = {}, {}
+    migrated = 0
+    for t in tunnels or []:
+        ident = f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}:{t.get('ssh_port', 22)}"
+        if t.get("id"):
+            if t["id"] in seen_ids:
+                raise ValueError(
+                    f"隧道配置存在重复 id：{t['id']}（请修正配置文件后重试）")
+            seen_ids[t["id"]] = ident
+            continue
+        if ident in seen_identity:
+            raise ValueError(
+                f"隧道重复身份 {ident}：无法确定旧密码归属，"
+                "请先在配置文件中区分这两条隧道（改 user/host/port）")
+        seen_identity[ident] = True
+        t["id"] = stable_tunnel_id(t.get("ssh_user", ""),
+                                   t.get("ssh_host", ""),
+                                   t.get("ssh_port", 22))
+        seen_ids[t["id"]] = ident
+        migrated += 1
+    return migrated
+
+
 def load_config(path=None):
     """Load and migrate config; returns merged dict or None."""
     p = path or get_path("mp")
@@ -56,6 +91,7 @@ def load_config(path=None):
             cfg = json.load(f)
         before = json.dumps(cfg, sort_keys=True)
         migrated = _migrate(cfg)
+        assign_stable_ids(migrated.get("tunnels") or [])  # issue #8
         if json.dumps(migrated, sort_keys=True) != before and not save_config(migrated, p):
             # The migrated dict is already clean in memory, but the file on
             # disk is still the pre-migration version — it may hold plaintext

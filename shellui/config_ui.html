@@ -360,7 +360,7 @@ function viewSnapshot(view,state,roles){
   if(view==='tunnel')return{
     current_tunnel:numberDefault(mp.current_tunnel,0),
     tunnels:(mp.tunnels||[]).map(t=>({
-      name:t.name||'',ssh_user:t.ssh_user||'',ssh_host:t.ssh_host||'',
+      id:t.id||'',name:t.name||'',ssh_user:t.ssh_user||'',ssh_host:t.ssh_host||'',
       ssh_port:numberDefault(t.ssh_port,22),auth_type:t.auth_type||'key',
       ssh_key:t.ssh_key||'',ssh_compression:t.ssh_compression!==false,
       password:t.password||(t.has_password?'__saved_password__':''),
@@ -385,6 +385,7 @@ function viewSnapshot(view,state,roles){
     Object.keys(sp.providers||{}).sort().forEach(name=>{
       const p=sp.providers[name]||{};
       providers[name]={
+        id:p.id||'',
         base_url:p.base_url||'',
         api_key:p.api_key||(p.api_key_set?'__saved_api_key__':''),
         api_key_env:p.api_key_env||'',auth_header:p.auth_header||'',
