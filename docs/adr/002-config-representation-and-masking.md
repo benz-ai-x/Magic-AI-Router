@@ -64,4 +64,4 @@ Suanpan provider 的 `api_key` 发给设置窗（WKWebView）时，不再发掩�
 
 - Tunnel 持不可变 `id`（`t-<sha1(user@host:port)[:10]>`，装载期确定性迁移赋值；重复身份/重复 id 抛可行动错误，不猜 secret 归属）；Keychain 账户优先 `tunnel:<id>`，无 id 时 legacy `user@host:port` 仅作迁移期回退读。重命名/改地址不改 id 不丢密码。
 - Provider 持 `id`（`p-<sha1(name)[:10]>`）；api_key 的 keep/replace/clear（`_restore_key`）按 id 匹配旧值——重命名保住 key，id 不同绝不按名串接。legacy 无 id 旧档按名回退。
-- 旧 Keychain 条目迁移：password 隧道在下次提交时经 ConfigStateStore.prepare 的 re-pin（legacy 回退读取 → 写 id 账户 → 双账户清理）随事务完成。
+- 旧 Keychain 条目迁移：password 隧道在下次提交时经 ConfigStateStore.prepare 的 re-pin 迁到 id 账户。re-pin 只在 id==当前身份哈希时读 legacy（身份编辑过的隧道绝不读——legacy 账户可能属于别的实体，不猜归属）；收敛后 legacy-only 删除随事务完成。删除隧道时双账户清理随事务执行。迁移错误（重复身份/重复 id）为 IdentityMigrationError：不触发 .bak 隔离、UI 侧降级为 _load_error 提示，绝不静默猜测 secret 归属。

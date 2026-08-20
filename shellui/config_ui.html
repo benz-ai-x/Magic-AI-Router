@@ -1319,6 +1319,7 @@ function collectProvider(){
   const sw=d.querySelector('[data-pf="enabled"]');p.enabled=sw&&sw.getAttribute('aria-checked')==='true';
   const swAN=d.querySelector('[data-pf="anthropic_native"]');p.anthropic_native=swAN&&swAN.getAttribute('aria-checked')==='true';
   if(newName!==activeProvider){
+    if(S.sp.providers[newName]){toast('供应商名称「'+newName+'」已被占用，未重命名',true);return;}
     const oldName=activeProvider;
     const np={};for(const[k2,v2]of Object.entries(S.sp.providers))np[k2===activeProvider?newName:k2]=v2;S.sp.providers=np;activeProvider=newName;
     // Update rule references

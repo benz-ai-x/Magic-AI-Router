@@ -158,6 +158,9 @@ def _restore_key(new_val, old_val, keep):
     return new_val or None
 
 
+from mpconf.config import IdentityMigrationError  # noqa: E402
+
+
 def assign_provider_ids(cfg: dict) -> int:
     """为无 id 的 provider 赋确定性 id（p-<sha1(name)[:10]>）。
 
@@ -171,7 +174,7 @@ def assign_provider_ids(cfg: dict) -> int:
         pid = p.get("id")
         if pid:
             if pid in seen:
-                raise ValueError(
+                raise IdentityMigrationError(
                     f"供应商存在重复 id：{pid}（请修正配置文件后重试）")
             seen.add(pid)
             continue
@@ -191,10 +194,9 @@ def load_config_raw(path: Path | str) -> dict:
     except Exception:
         return {}
     if isinstance(data, dict):
-        try:
-            assign_provider_ids(data)  # issue #8：装载即赋幂等 id
-        except ValueError:
-            raise  # 重复 id 等可行动错误上抛，绝不猜测 secret 归属
+        # issue #8：装载即赋幂等 id；重复 id 等可行动错误上抛——
+        # 「任何错误返回 {}」的旧契约对迁移错误失真，读方按需捕获
+        assign_provider_ids(data)
     return data if isinstance(data, dict) else {}
 
 
@@ -203,8 +205,13 @@ def load_config_masked(path: Path | str) -> dict:
 
     Each provider (and the top-level key) is rewritten to ``api_key: None``
     plus ``api_key_set: bool`` telling the UI whether a key is saved.
+    迁移可行动错误降级为 ``{"_load_error": msg}``——UI 可展示，服务不 500。
     """
-    cfg = load_config_raw(path)
+    try:
+        cfg = load_config_raw(path)
+    except ValueError as e:
+        return {"_load_error": str(e), "providers": {}, "rules": [],
+                "router": {}}
     for p in cfg.get("providers", {}).values():
         if isinstance(p, dict):
             p["api_key_set"] = bool(p.get("api_key"))

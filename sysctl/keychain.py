@@ -18,10 +18,7 @@ def _account(tunnel: dict) -> str:
     stable_id = tunnel.get("id")
     if stable_id:
         return f"tunnel:{stable_id}"
-    user = tunnel.get("ssh_user", "")
-    host = tunnel.get("ssh_host", "")
-    port = tunnel.get("ssh_port", 22)
-    return f"{user}@{host}:{port}"
+    return _legacy_account(tunnel)
 
 
 def _legacy_account(tunnel: dict) -> str:
@@ -78,6 +75,16 @@ def get_password(tunnel: dict) -> str:
     except Exception as e:  # noqa: BLE001
         logger.warning("Keychain get failed: %s", type(e).__name__)
     return ""
+
+
+def delete_legacy_password(tunnel: dict) -> bool:
+    """仅清 legacy 账户（user@host:port）——re-pin 收敛用，不动 id 账户。"""
+    try:
+        Security.SecItemDelete(_base_query(tunnel, _legacy_account(tunnel)))
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Keychain legacy delete failed: %s", type(e).__name__)
+        return False
 
 
 def delete_password(tunnel: dict) -> bool:

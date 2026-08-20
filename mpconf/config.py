@@ -46,6 +46,11 @@ DEFAULT_CONFIG = {
 }
 
 
+class IdentityMigrationError(ValueError):
+    """稳定 id 迁移的可行动错误（重复身份/重复 id）——绝不与文件损坏
+    混同：不触发 .bak 隔离，原样上抛（issue #8）。"""
+
+
 def stable_tunnel_id(user: str, host: str, port) -> str:
     """确定性 id：t-<sha1(user@host:port)[:10]>——同身份恒同 id（issue #8）。"""
     import hashlib
@@ -64,12 +69,12 @@ def assign_stable_ids(tunnels) -> int:
         ident = f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}:{t.get('ssh_port', 22)}"
         if t.get("id"):
             if t["id"] in seen_ids:
-                raise ValueError(
+                raise IdentityMigrationError(
                     f"隧道配置存在重复 id：{t['id']}（请修正配置文件后重试）")
             seen_ids[t["id"]] = ident
             continue
         if ident in seen_identity:
-            raise ValueError(
+            raise IdentityMigrationError(
                 f"隧道重复身份 {ident}：无法确定旧密码归属，"
                 "请先在配置文件中区分这两条隧道（改 user/host/port）")
         seen_identity[ident] = True
@@ -91,7 +96,9 @@ def load_config(path=None):
             cfg = json.load(f)
         before = json.dumps(cfg, sort_keys=True)
         migrated = _migrate(cfg)
-        assign_stable_ids(migrated.get("tunnels") or [])  # issue #8
+        # issue #8：迁移错误（重复身份/id）是可行动错误——绝不与损坏
+        # 混同进 .bak 隔离；原样上抛让编排层给出可行动提示
+        assign_stable_ids(migrated.get("tunnels") or [])
         if json.dumps(migrated, sort_keys=True) != before and not save_config(migrated, p):
             # The migrated dict is already clean in memory, but the file on
             # disk is still the pre-migration version — it may hold plaintext
@@ -107,6 +114,11 @@ def load_config(path=None):
                     "Migrated config could not be written AND the old file "
                     "could not be isolated")
         return migrated
+    except IdentityMigrationError as e:
+        # 迁移可行动错误：不隔离、不改写——上抛（JSONDecodeError 等仍走
+        # 既有损坏隔离路径）
+        logger.error("配置迁移失败（需人工处理，原文件未动）：%s", e)
+        raise
     except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
         backup = p + ".bak"
         try:

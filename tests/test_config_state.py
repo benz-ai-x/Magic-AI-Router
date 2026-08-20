@@ -378,6 +378,65 @@ class TestFaultInjectionCompletions(unittest.TestCase):
                          "损坏 journal 必须清除，不得永久残留")
 
 
+    def test_repin_guard_blocks_crosswired_identity(self):
+        """Y 改址到 X 旧地址：id 与身份哈希不符 → 绝不读 legacy（防串线）。"""
+        ops = []
+        class KC:
+            def get_password(self, t):
+                ops.append("get")
+                return "x-secret"
+            def set_password(self, t, pw):
+                ops.append(("set", t.get("id")))
+                return True
+            def delete_password(self, t):
+                return True
+            def delete_legacy_password(self, t):
+                ops.append(("del-legacy",))
+                return True
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"), keychain=KC())
+        # id=哈希(旧地址)，现身份=新地址 → 守卫拒绝
+        from mpconf.config import stable_tunnel_id
+        old_addr_id = stable_tunnel_id("u", "old.example.com", 22)
+        plan = store.prepare(mp={"tunnels": [
+            {"id": old_addr_id, "name": "y", "ssh_user": "u",
+             "ssh_host": "new.example.com", "ssh_port": 22,
+             "auth_type": "password"}]})
+        store.commit(plan)
+        self.assertNotIn("get", ops, "身份编辑过 → 不读 legacy，不猜归属")
+
+    def test_deleted_tunnel_secrets_cleaned_both_accounts(self):
+        ops = []
+        class KC:
+            def get_password(self, t):
+                return ""
+            def set_password(self, t, pw):
+                return True
+            def delete_password(self, t):
+                ops.append(("del-all", t.get("id")))
+                return True
+            def delete_legacy_password(self, t):
+                ops.append(("del-legacy", t.get("id")))
+                return True
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"), keychain=KC())
+        # 先建档含 t-gone，再保存不含它
+        Path(store.mp_path).write_text(json.dumps(
+            {"tunnels": [{"id": "t-gone", "name": "g", "ssh_host": "h",
+                          "auth_type": "password",
+                          "ssh_user": "u", "ssh_port": 22}]}))
+        plan = store.prepare(mp={"tunnels": []})
+        self.assertTrue(plan.ok)
+        store.commit(plan)
+        self.assertIn(("del-all", "t-gone"), ops, "删除隧道双账户清理")
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -569,16 +628,21 @@ class TestTunnelSecretRepin(unittest.TestCase):
             def delete_password(self, t):
                 ops.append(("del", t.get("id")))
                 return True
+            def delete_legacy_password(self, t):
+                ops.append(("del-legacy",))
+                return True
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         store = ConfigStateStore(
             mp_path=str(Path(d.name) / "m.json"),
             sp_path=str(Path(d.name) / "s.yaml"), keychain=KC())
+        from mpconf.config import stable_tunnel_id
+        real_id = stable_tunnel_id("u", "h", 22)
         plan = store.prepare(mp={"tunnels": [
-            {"id": "t-stable", "name": "a", "ssh_user": "u",
+            {"id": real_id, "name": "a", "ssh_user": "u",
              "ssh_host": "h", "ssh_port": 22, "auth_type": "password"}]})
         self.assertTrue(plan.ok)
         result = store.commit(plan)
         self.assertTrue(result.ok, result.errors)
-        self.assertIn(("set", "t-stable", "legacy-pw"), ops,
+        self.assertIn(("set", real_id, "legacy-pw"), ops,
                       "旧密码经 legacy 回退读取后 re-pin 到 id 账户")
