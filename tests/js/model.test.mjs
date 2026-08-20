@@ -258,7 +258,7 @@ test("routeTargetOptionsFor skips providers with no models", () => {
 });
 
 // ── apiHeaders ─────────────────────────────────────────
-test("apiHeaders puts token in Authorization header only", () => {
+test("apiHeaders carries no credential — cookie auth only (#10)", () => {
   // issue #10：cookie 承载后 token 形参仅兼容旧签名，不产生头
   assert.deepEqual(L.apiHeaders("abc"), {});
 });
