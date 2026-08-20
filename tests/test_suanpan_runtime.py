@@ -155,6 +155,7 @@ class TestReload(unittest.TestCase):
         mock_stop = MagicMock()
         mock_stop.is_set.return_value = False
         rt._rt._stop_event = mock_stop
+        rt._rt._state = "RUNNING"
         with patch.object(rt, "start", return_value=True) as mock_start:
             result = rt.reload()
         self.assertTrue(result)
@@ -169,6 +170,7 @@ class TestReload(unittest.TestCase):
         mock_stop = MagicMock()
         mock_stop.is_set.return_value = False
         rt._rt._stop_event = mock_stop
+        rt._rt._state = "RUNNING"  # 状态机口径
         with patch.object(rt, "start", return_value=True):
             rt.reload()
         self.assertEqual(rt._cached_listen, "")
