@@ -158,9 +158,6 @@ class ConfigStateStore:
                     kc_dels.append(dict(t))
         return CommitPlan(True, [], mp_c, sp_c, kc_sets, kc_dels)
 
-
-    """commit/recover 挂到 ConfigStateStore（保持模块顶部声明整洁）。"""
-
     @property
     def journal_path(self):
         return self.sp_path + ".txn.json"
