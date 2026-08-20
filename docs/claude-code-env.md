@@ -46,7 +46,7 @@ model 字段里带 `/` 即触发网关的内联覆盖（路由优先级最高）
 
 1. 菜单栏确认「AI 路由」已启动（:9527）。
 2. Claude Code 里 `/status` 查看 Base URL 是否为 `127.0.0.1:9527`。
-3. 网关 admin 控制台 `http://127.0.0.1:9527/admin/` 看请求是否到达、命中了哪条路由（usage.jsonl 的 scenario 字段：`inline` / `subagent` / `rule` / `default` 等）。
+3. 看用量日志 `~/.suanpan/logs/usage.jsonl` 确认请求是否到达、命中了哪条路由（每条记录的 scenario 字段：`inline` / `subagent` / `rule` / `default`；也可在设置窗「运行统计」页查看）。
 
 ## 常见搭配
 

@@ -80,7 +80,11 @@ rules:
 
 ## REST API（:9528，需 token）
 
-所有端点需要 bearer token。token 在用户打开「偏好设置」时的 URL query string 里（`?token=xxx`），或从 `Authorization: Bearer xxx` header 传入。
+所有端点需要 bearer token（issue #10 后 URL 永不带凭证）：
+- **AI agent / curl**：从 `Authorization: Bearer TOKEN` header 传入（token 从 Magic AI Router 的「复制 AI 助手指令」菜单获取）。
+- **设置窗（WKWebView）**：首次打开经桥接带 Authorization 头导航，响应种下 `cfgsess` HttpOnly SameSite=Strict 会话 cookie——后续请求由 cookie 承载，JS 从不接触 token。
+
+query-string 认证已删除；无凭证的 `/` 与 `/api/*` 一律返回 401。
 
 | Method | Path | Description |
 |--------|------|-------------|

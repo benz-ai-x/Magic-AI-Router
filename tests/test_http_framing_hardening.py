@@ -5,7 +5,6 @@
 """
 import asyncio
 import unittest
-from unittest.mock import patch
 
 from tunnel import proxy
 from tunnel.http_framer import parse_framing
@@ -52,7 +51,6 @@ class TestSmugglingRejection(unittest.TestCase):
 class TestTimeoutsPinned(unittest.TestCase):
     def test_wait_for_wraps_read_and_relay(self):
         """四处 wait_for 确实包住 read_head 与 body relay（超时证明）。"""
-        import tunnel.proxy as p
         # 源码静态断言：wait_for 出现且包裹指定调用
         src = open("tunnel/proxy.py").read()
         for needle in [

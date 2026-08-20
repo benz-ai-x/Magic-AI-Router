@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import stat
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path

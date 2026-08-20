@@ -6,7 +6,7 @@ readiness 不被单个慢 Provider 阻塞；预热失败不改变 Provider 配�
 import asyncio
 import time
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from suanpan.prewarmer import ProviderPrewarmer
 
