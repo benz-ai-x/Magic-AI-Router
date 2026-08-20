@@ -42,13 +42,10 @@ def create_app(config: AppConfig, config_path: str = "./suanpan.yaml") -> FastAP
     @asynccontextmanager
     async def lifespan(app):
         app.state.http_client = http_client
-        # Pre-warm connections to enabled providers (eliminates first-request TLS latency)
-        for name, p in config.providers.items():
-            if p.enabled:
-                try:
-                    await http_client.head(f"{p.base_url.rstrip('/')}/v1/messages")
-                except Exception:
-                    pass  # pre-warm failure is non-fatal
+        # issue #15：预热走 best-effort adapter——有界并发+总预算+可取消；
+        # 单个慢 Provider 不再线性拖慢 readiness，失败不影响启动。
+        from suanpan.prewarmer import ProviderPrewarmer
+        await ProviderPrewarmer().warm(config.providers, http_client)
         yield
         await http_client.aclose()
 
