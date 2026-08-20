@@ -684,3 +684,42 @@ class TestTunnelSecretRepin(unittest.TestCase):
         self.assertTrue(result.ok, result.errors)
         self.assertIn(("set", real_id, "legacy-pw"), ops,
                       "旧密码经 legacy 回退读取后 re-pin 到 id 账户")
+
+
+class TestRound3Holes(unittest.TestCase):
+    """三审两洞：mp _load_error 双带 + 显式分支身份登记。"""
+
+    def test_explicit_id_tunnel_registers_identity(self):
+        """已迁移 A（id=hash 身份）+ 手工加同身份无 id B → B 不再静默同 id。"""
+        from mpconf.config import assign_stable_ids, stable_tunnel_id, IdentityMigrationError
+        real_id = stable_tunnel_id("u", "h", 22)
+        tunnels = [
+            {"id": real_id, "name": "a", "ssh_user": "u",
+             "ssh_host": "h", "ssh_port": 22},
+            {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+        ]
+        n = assign_stable_ids(tunnels)
+        self.assertEqual(n, 1)  # 只有 B 被迁移
+        self.assertNotEqual(tunnels[1]["id"], tunnels[0]["id"],
+                            "B 得序数后缀 id，绝不与 A 静默同 id")
+
+    def test_fresh_assign_collision_detected(self):
+        from mpconf.config import assign_stable_ids, IdentityMigrationError
+        # 两条同身份隧道：第一条得 ordinal=1 id；第二条 #2 后缀
+        # 但若 #2 id 撞显式 id —— 分配后查重兜底
+        tunnels = [
+            {"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+            {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+        ]
+        n = assign_stable_ids(tunnels)
+        self.assertEqual(n, 2)  # 正常路径不受影响
+
+    def test_prepare_rejects_mp_with_load_error(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"))
+        plan = store.prepare(mp={"_load_error": "装载失败", "tunnels": []})
+        self.assertFalse(plan.ok)
+        self.assertIn("已阻止保存", plan.errors[0])

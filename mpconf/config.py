@@ -71,7 +71,12 @@ def assign_stable_ids(tunnels) -> int:
             if t["id"] in seen_ids:
                 raise IdentityMigrationError(
                     f"隧道配置存在重复 id：{t['id']}（请修正配置文件后重试）")
+            if ident in seen_identity:
+                # 与已迁移同身份隧道撞 id（hash 冲突形态）——同样致命
+                raise IdentityMigrationError(
+                    f"隧道 {ident} 的 id 与同身份隧道冲突：{t['id']}")
             seen_ids[t["id"]] = ident
+            seen_identity[ident] = True
             continue
         ordinal = 2 if ident in seen_identity else 1
         if ordinal > 1:
@@ -85,6 +90,9 @@ def assign_stable_ids(tunnels) -> int:
         if ordinal > 1:
             basis += f"#{ordinal}"
         t["id"] = "t-" + _hl.sha1(basis.encode("utf-8")).hexdigest()[:10]
+        if t["id"] in seen_ids:
+            raise IdentityMigrationError(
+                f"隧道配置存在重复 id：{t['id']}（请修正配置文件后重试）")
         seen_ids[t["id"]] = ident
         migrated += 1
     return migrated

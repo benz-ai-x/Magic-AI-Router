@@ -141,6 +141,9 @@ class ConfigStateStore:
         # merge 默认值必须在校验之后：merge_config 会把非法端口/负保留
         # 静默重置为默认，前置会让 mp 侧数值约束在真实入口永不触发
         if mp_c is not None:
+            if mp_c.get("_load_error"):
+                return CommitPlan(False, [
+                    f"配置装载失败，已阻止保存以防覆盖：{mp_c['_load_error']}"])
             from mpconf.config import merge_config
             mp_c = merge_config(mp_c)
         if sp_c is not None:
