@@ -119,9 +119,9 @@ class InstanceOwner:
         return True
 
     def release(self):
-        """移除自己的锁（pid + nonce 双校验）；无锁/他人锁为 no-op。
+        """移除自己的锁（pid 匹配才删——活进程 pid 唯一，足以判别归属）。
 
-        并发启动的失败方进程退出时绝不能删掉成功方的锁。
+        无锁/他人锁为 no-op：并发启动的失败方退出时绝不删成功方的锁。
         """
         data = self._load()
         if not data or data.get("pid") != self._pid:

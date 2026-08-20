@@ -7,7 +7,9 @@ Seam S1 —— sysctl/instance_owner 是唯一的所有权真相：锁记录（p
 import json
 import os
 import tempfile
+import tempfile
 import unittest
+from pathlib import Path
 from pathlib import Path
 from unittest.mock import patch
 
@@ -40,7 +42,6 @@ class TestAcquireExisting(unittest.TestCase):
         return tempfile.TemporaryDirectory()
 
     def test_live_owner_conflict_returns_none_and_lock_untouched(self):
-        from pathlib import Path
         with self._lockdir() as d:
             winner = _owner(Path(d))
             winner.acquire()  # 假定 winner 自己活着（pid_info 正常返回）
@@ -51,7 +52,6 @@ class TestAcquireExisting(unittest.TestCase):
                              "失败方不得触碰成功方的锁")
 
     def test_dead_owner_lock_is_taken_over(self):
-        from pathlib import Path
         with self._lockdir() as d:
             stale = _owner(Path(d), pid_info=lambda p: ("OLD_START", "/old/exe"), pid=999)
             stale.acquire()
@@ -67,7 +67,6 @@ class TestOwnershipProof(unittest.TestCase):
     """端口占用者是否属于本应用：pid + 启动时间双匹配才算证明。"""
 
     def _acquired(self):
-        from pathlib import Path
         d = tempfile.TemporaryDirectory()
         o = _owner(Path(d.name), pid=4242)
         rec = o.acquire()
@@ -87,7 +86,6 @@ class TestOwnershipProof(unittest.TestCase):
         self.assertFalse(o.owns(9999, "WHATEVER"))
 
     def test_corrupt_or_missing_lock_proves_nothing(self):
-        from pathlib import Path
         with tempfile.TemporaryDirectory() as d:
             o = _owner(Path(d))
             self.assertFalse(o.owns(1, "x"))
@@ -98,7 +96,6 @@ class TestOwnershipProof(unittest.TestCase):
 class TestRelease(unittest.TestCase):
     def test_release_removes_own_lock(self):
         import tempfile, os as _os
-        from pathlib import Path
         with tempfile.TemporaryDirectory() as d:
             o = _owner(Path(d))
             o.acquire()
@@ -106,7 +103,6 @@ class TestRelease(unittest.TestCase):
             self.assertFalse(_os.path.exists(o.lock_path))
 
     def test_release_without_lock_is_noop(self):
-        from pathlib import Path
         with tempfile.TemporaryDirectory() as d:
             _owner(Path(d)).release()  # 不抛即过
 
@@ -115,14 +111,12 @@ class TestOwnsPid(unittest.TestCase):
     """owns_pid：调用方只有 pid（端口占用者），pid_info 由 owner 自取。"""
 
     def test_own_pid_with_matching_start(self):
-        from pathlib import Path
         with tempfile.TemporaryDirectory() as d:
             o = _owner(Path(d), pid=4242)
             o.acquire()
             self.assertTrue(o.owns_pid(4242))
 
     def test_reused_pid_does_not_own(self):
-        from pathlib import Path
         with tempfile.TemporaryDirectory() as d:
             # 锁里 pid=4242/start=S_A；此后 pid_info 对 4242 返回 S_B（复用）
             o = InstanceOwner(lock_path=str(Path(d) / "instance.json"),

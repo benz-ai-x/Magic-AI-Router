@@ -220,6 +220,28 @@ class TestStartAllFailureBranches(unittest.TestCase):
         svc._owner = owner
         return svc
 
+    def test_occupied_port_reports_and_never_signals_foreign_owner(self):
+        """非本项目端口 owner（含同名异目录脚本形态的 cmd）——只告警。"""
+        svc = _make_coordinator()
+        scenarios = [
+            MagicMock(pid=4242, name="python3", cmd="python3 /other/project/app.py"),
+            MagicMock(pid=5151, name="httpd", cmd="/usr/sbin/httpd -p 9528"),
+        ]
+        for foreign in scenarios:
+            with patch.object(svc._owner, "acquire", return_value={"pid": 1}), \
+                 patch("services.lifecycle_runtime.port_check.who_owns",
+                       return_value=foreign), \
+                 patch("services.lifecycle_runtime.port_check.kill") as kill, \
+                 patch("services.lifecycle_runtime._read_suanpan_port",
+                       return_value=9527), \
+                 patch.object(svc._config_server, "start", return_value=True), \
+                 patch.object(svc._suanpan, "start", return_value=True), \
+                 self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
+                self.assertTrue(svc.start_all())
+            kill.assert_not_called()
+            self.assertTrue(any("不自动处理" in m for m in logs.output))
+
+
     def test_start_all_aborts_when_sibling_holds_lock(self):
         from sysctl import instance_owner as io
         import tempfile
