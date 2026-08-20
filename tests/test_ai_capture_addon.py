@@ -549,28 +549,35 @@ class TestAddonHooks:
         assert a.capture_raw_sse is False
         assert a.preserve_streaming is False
 
-    def test_preserve_streaming_off_by_default_no_tee(self, tmp_path):
-        a = self._addon(tmp_path)  # preserve_streaming defaults False
-        body = {"model": "gpt-4o", "stream": True, "messages": [{"role": "user", "content": "x"}]}
-        flow = _flow("api.openai.com", "/v1/chat/completions", req_body=body, resp_text="")
-        a.request(flow)
-        a.responseheaders(flow)
-        assert getattr(flow.response, "stream", None) is None  # no tee installed
-
-    def test_preserve_streaming_tees_chunks_unchanged_and_captures(self, tmp_path):
+    def test_streaming_tee_on_by_default(self, tmp_path):
+        """issue #11：AI 流式默认 tee——不再需要 MAGIC_PROXY_PRESERVE_STREAMING。"""
         a = self._addon(tmp_path)
-        a.preserve_streaming = True
-        body = {"model": "gpt-4o", "stream": True, "messages": [{"role": "user", "content": "x"}]}
-        flow = _flow("api.openai.com", "/v1/chat/completions", req_body=body, resp_text="")
+        body = {"model": "gpt-4o", "stream": True,
+                "messages": [{"role": "user", "content": "x"}]}
+        flow = _flow("api.openai.com", "/v1/chat/completions",
+                     req_body=body, resp_text="")
         a.request(flow)
         a.responseheaders(flow)
-        assert callable(flow.response.stream)
-        chunk = b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
-        assert flow.response.stream(chunk) == chunk  # read-only: passes through unchanged
-        flow.response.stream(b"data: [DONE]\n\n")
+        assert callable(getattr(flow.response, "stream", None))
+
+
+    def test_streaming_tees_chunks_unchanged_and_captures(self, tmp_path):
+        a = self._addon(tmp_path)
+        body = {"model": "gpt-4o", "stream": True,
+                "messages": [{"role": "user", "content": "x"}]}
+        flow = _flow("api.openai.com", "/v1/chat/completions",
+                     req_body=body, resp_text="")
+        a.request(flow)
+        a.responseheaders(flow)
+        out1 = flow.response.stream(b"chunk-1")
+        out2 = flow.response.stream(b"chunk-2")
+        assert (out1, out2) == (b"chunk-1", b"chunk-2")  # 原样下发
         a.response(flow)
         rec = _only_jsonl_record(tmp_path)
-        assert rec["response"]["reassembled"] == "hi"
+        # 默认不落 raw（opt-in）；断言捕获量与未截断
+        assert rec["response"]["truncated"] is False
+        assert rec["response"]["captured_bytes"] == len(b"chunk-1chunk-2")
+
 
     def test_error_hook_writes_partial_record_with_capture_error(self, tmp_path):
         a = self._addon(tmp_path)
@@ -584,7 +591,7 @@ class TestAddonHooks:
     def test_stream_capture_is_bounded_and_marked_truncated(self, tmp_path, monkeypatch):
         monkeypatch.setattr(addon, "MAX_CAPTURE_FLOW_BYTES", 16)
         a = self._addon(tmp_path)
-        a.preserve_streaming = True
+        a.preserve_streaming = True  # legacy 属性仍可设（不再门控）
         flow = _flow(
             "api.openai.com", "/v1/chat/completions",
             req_body={"model": "gpt", "stream": True, "messages": []},

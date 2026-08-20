@@ -543,7 +543,12 @@ class AICaptureAddon:
         req = extract_request(variant, body)
         bounded_messages, request_truncated = _truncate_value(req["messages"])
         bounded_system, system_truncated = _truncate_value(req["system"])
+        acc = CaptureAccumulator(budget=MAX_CAPTURE_FLOW_BYTES)
+        acc.reserve_request_snapshot(
+            json.dumps({"system": bounded_system, "messages": bounded_messages},
+                       ensure_ascii=False).encode("utf-8"))
         flow.metadata["ai_capture"] = {
+            "_acc": acc,
             "ts": _utc_now_iso(), "flow_id": flow.id, "method": flow.request.method,
             "url": flow.request.url, "host": flow.request.pretty_host,
             "provider": provider, "variant": variant, "model": req["model"],
@@ -553,37 +558,30 @@ class AICaptureAddon:
         }
 
     def responseheaders(self, flow):
-        # Opt-in: tee streamed chunks (pass through unchanged) to preserve live
-        # browser streaming while still capturing. Default is buffered (below).
-        if not self.preserve_streaming:
-            return
+        # issue #11：AI 流式响应默认 tee/pass-through——首块延迟不再等待
+        # 完整响应（此前需 MAGIC_PROXY_PRESERVE_STREAMING 选择性开启）。
+        # 捕获异常或预算耗尽都不影响下发：tee 原样返回 chunk。
         meta = flow.metadata.get("ai_capture")
-        if not (meta and meta["stream"]):
+        if not meta:
             return
-        buffer = bytearray()
-        meta["_response_total_bytes"] = 0
-
-        def tee(chunk):
-            meta["_response_total_bytes"] += len(chunk)
-            remaining = MAX_CAPTURE_FLOW_BYTES - len(buffer)
-            if remaining > 0:
-                buffer.extend(chunk[:remaining])
-            if len(chunk) > remaining:
-                meta["response_truncated"] = True
-            return chunk  # read-only: never modify the proxied bytes
-
-        flow.response.stream = tee
-        meta["_tee"] = buffer
+        if not meta["stream"] and not self.capture_raw_sse:
+            return  # 非流式走 buffered 路径（response 钩子读 content）
+        acc = meta.get("_acc")
+        if acc is None:
+            acc = CaptureAccumulator(budget=MAX_CAPTURE_FLOW_BYTES)
+            meta["_acc"] = acc
+        flow.response.stream = acc.tee
 
     def response(self, flow):
         meta = flow.metadata.get("ai_capture")
         if not meta or meta.get("_written"):
             return
         try:
-            if "_tee" in meta:
-                raw = bytes(meta["_tee"])
-                resp_text = raw.decode("utf-8", "replace")
-                bytes_down = meta.get("_response_total_bytes", len(raw))
+            acc = meta.get("_acc")
+            if acc is not None and acc.total_seen:
+                resp_text = acc.captured().decode("utf-8", "replace")
+                bytes_down = acc.total_seen
+                meta["response_truncated"] = acc.truncated
             else:
                 content = flow.response.content or b""
                 bytes_down = len(flow.response.raw_content or b"")
@@ -606,7 +604,8 @@ class AICaptureAddon:
             return
         try:
             meta["duration_ms"] = int((time.monotonic() - meta["t0"]) * 1000)
-            raw = bytes(meta["_tee"]).decode("utf-8", "replace") if "_tee" in meta else ""
+            acc0 = meta.get("_acc")
+            raw = acc0.captured().decode("utf-8", "replace") if acc0 is not None else ""
             record = build_record(meta, None, raw, len(raw), capture_raw_sse=self.capture_raw_sse)
             record["capture_error"] = record["capture_error"] or "flow error / aborted before completion"
             record.setdefault("response", {})["raw"] = raw
@@ -617,3 +616,61 @@ class AICaptureAddon:
 
 
 addons = [AICaptureAddon()]
+
+
+class CaptureAccumulator:
+    """每 flow 单一聚合内存预算（issue #11）.
+
+    tee() 原样立即下发（对代理字节流零影响），同时把 chunk 收进预算内
+    缓冲；request 快照先预留同一预算池。截断按字节累计——大量小
+    message 也无法绕过。captured() 保证 UTF-8 安全（截点回退到字符
+    边界由消费方 replace 兜底，此处按字节预算硬停）。
+    """
+
+    def __init__(self, budget=MAX_CAPTURE_FLOW_BYTES):
+        self.budget = budget
+        self._buf = bytearray()       # 仅响应字节（resp_text 来源）
+        self._reserved = 0            # 请求快照占去的预算（不进 _buf）
+        self.total_seen = 0
+        self.truncated = False
+
+    def reserve_request_snapshot(self, data: bytes):
+        """请求快照占用预算池（与响应累计共享同一总额，但不进响应缓冲）。"""
+        take = min(len(data), self.budget)
+        self._reserved = take
+        if len(data) > take:
+            self.truncated = True
+
+    def tee(self, chunk: bytes) -> bytes:
+        """流量字节原样下发；预算内收集。绝不修改 chunk。"""
+        self.total_seen += len(chunk)
+        remaining = self.budget - self._reserved - len(self._buf)
+        if remaining <= 0:
+            self.truncated = True
+            return chunk
+        take = min(len(chunk), remaining)
+        self._buf += chunk[:take]
+        if take < len(chunk):
+            self.truncated = True
+        return chunk
+
+    def total_budgeted(self) -> int:
+        """聚合占用 = 请求快照预留 + 响应缓冲。"""
+        return self._reserved + len(self._buf)
+
+    def captured(self) -> bytes:
+        """预算内响应缓冲；截点回退到 UTF-8 字符边界（不产生半个字符）。"""
+        buf = bytes(self._buf)
+        if not self.truncated:
+            return buf
+        # 回退到字符边界：先跳过尾部的后续字节（10xxxxxx），再检查
+        # 其起始字节（>=0xC0）——被截断的序列按其前缀位数判断是否完整
+        end = len(buf)
+        while end > 0 and (buf[end - 1] & 0xC0) == 0x80:
+            end -= 1
+        if end > 0 and buf[end - 1] >= 0xC0:
+            start = buf[end - 1]
+            need = (2 if start < 0xE0 else 3 if start < 0xF0 else 4)
+            if end - 1 + need > len(buf):
+                end -= 1  # 序列不完整——丢弃整个残字符
+        return buf[:end]
