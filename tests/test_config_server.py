@@ -261,25 +261,34 @@ class TestPutState(unittest.TestCase):
         status, _ = _request(self.port, "PUT", f"/api/state?token={self.token}")
         self.assertEqual(status, 400)
 
-    def test_put_calls_write_mp_and_sp(self):
-        with patch("services.config_server._write_mp", return_value=[]) as wmp, \
-             patch("mpconf.config_store.sp_save", return_value=(True, None)) as wsp:
+    def test_put_goes_through_config_state_store(self):
+        """issue #6：PUT 经 ConfigStateStore 事务边界（prepare→commit）。"""
+        from mpconf.config_state import CommitPlan, SaveResult
+        plan = CommitPlan(True, [], {"tunnels": []}, {"providers": {}})
+        with patch("services.config_server.ConfigStateStore") as store_cls:
+            store_cls.return_value.prepare.return_value = plan
+            store_cls.return_value.commit.return_value = SaveResult(True, None, [])
             body = json.dumps({"mp": {"tunnels": []}, "sp": {"providers": {}}})
-            status, data = _request(self.port, "PUT", f"/api/state?token={self.token}",
+            status, data = _request(self.port, "PUT",
+                                    f"/api/state?token={self.token}",
                                     body=body)
         self.assertEqual(status, 200)
-        wmp.assert_called_once()
-        wsp.assert_called_once()
+        store_cls.return_value.prepare.assert_called_once()
+        store_cls.return_value.commit.assert_called_once()
 
-    def test_put_with_errors_returns_422(self):
-        with patch("services.config_server._write_mp", return_value=["write failed"]):
+    def test_put_with_validation_errors_returns_422(self):
+        from mpconf.config_state import CommitPlan
+        with patch("services.config_server.ConfigStateStore") as store_cls:
+            store_cls.return_value.prepare.return_value = CommitPlan(
+                False, ["端口无效"])
             body = json.dumps({"mp": {}})
-            status, data = _request(self.port, "PUT", f"/api/state?token={self.token}",
+            status, data = _request(self.port, "PUT",
+                                    f"/api/state?token={self.token}",
                                     body=body)
         self.assertEqual(status, 422)
         parsed = json.loads(data)
         self.assertFalse(parsed["ok"])
-        self.assertIn("write failed", parsed["errors"])
+        self.assertIn("端口无效", parsed["errors"])
 
 
 class TestFetchModelsEndpoint(unittest.TestCase):

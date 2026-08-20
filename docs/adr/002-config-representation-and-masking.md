@@ -52,3 +52,10 @@ Suanpan provider 的 `api_key` 发给设置窗（WKWebView）时，不再发掩�
 - `d4337ac` 候选 3：原子写收敛 config_store + claude_code_setup 独立
 - `9f5e153` 候选 2：http_listen/listen 端口字段
 - `0a1a9c3` 候选 4：API key 掩码布尔契约
+
+## 增补（2026-08-20，issue #6）：保存事务与错误语义
+
+- 持久化唯一事务边界为 `mpconf/config_state.py::ConfigStateStore`：load（missing/valid/invalid/io_error 四态，损坏不再折叠成空）→ prepare（数值/URL/跨引用全量校验 + Keychain 变更计划派生，密码剥离出候选）→ commit（journal 载荷内嵌 → MP → SP → Keychain → 清 journal → 回调）。
+- `on_sp_saved` 回调只在完整提交后触发；失败返回结构化阶段（validate/journal/mp/sp/keychain）且错误不含 secret。
+- 跨文件提交崩溃由启动时 `recover()` 幂等重放 journal 补齐。
+- invalid 主文件不覆盖最后已知良好的 `.bak`；首创建与保存共用 0600/0700 权限路径。

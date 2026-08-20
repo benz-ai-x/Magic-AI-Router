@@ -305,11 +305,12 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
     def tearDown(self):
         self.server.stop()
 
-    def test_sp_save_failure_appends_error(self):
-        """Line 192: sp_save returning (False, err) appends to errors → 422."""
-        with patch.object(config_server, "_write_mp", return_value=[]), \
-             patch.object(config_server.config_store, "sp_save",
-                          return_value=(False, "invalid config")):
+    def test_prepare_failure_appends_error(self):
+        """issue #6：prepare 校验失败 → 422（不再走 sp_save 旧缝）。"""
+        from mpconf.config_state import CommitPlan
+        with patch.object(config_server, "ConfigStateStore") as store_cls:
+            store_cls.return_value.prepare.return_value = CommitPlan(
+                False, ["invalid config"])
             status, data = _request(
                 self.port, "PUT", f"/api/state?token={self.token}",
                 body=json.dumps({"sp": {"providers": {}}}))

@@ -56,14 +56,21 @@ class SuanpanRuntime:
         return self._config_path
 
     def _ensure_config(self):
-        """Create a minimal default config if none exists yet."""
+        """Create a minimal default config if none exists yet.
+
+        首创建经 ConfigStateStore——与保存同一原子写/0600 权限路径。
+        """
         path = self._config_path
         if not os.path.exists(path):
-            d = os.path.dirname(path) or "."
-            os.makedirs(d, exist_ok=True)
-            with open(path, "w") as f:
-                f.write(_DEFAULT_CONFIG_YAML)
-            logger.info("Created default Suanpan config at %s", path)
+            import yaml as _yaml
+            from mpconf.config_state import CommitPlan, ConfigStateStore
+            store = ConfigStateStore(sp_path=path)
+            # 内置默认是可信静态内容：直构 plan 落 commit（原子写+0600），
+            # 不走业务校验（默认里的占位 base_url 会被 prepare 拒绝）
+            plan = CommitPlan(True, [], None,
+                              _yaml.safe_load(_DEFAULT_CONFIG_YAML))
+            if store.commit(plan).ok:
+                logger.info("Created default Suanpan config at %s", path)
 
     def start(self, config_path=None):
         if config_path:

@@ -56,6 +56,7 @@ mpconf/ ── 配置栈
   config_store.py ── 路径注册表 PATHS + 原子写管线（mkstemp+chmod 0600+os.replace）；所有托管配置文件的唯一安全写入口
   netloc.py ── host:port 解析/格式化/loopback 校验的唯一所有者
   provider_auth.py ── 供应商认证纯逻辑（resolve_api_key + build_outbound_headers）
+  config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare 全量校验 / commit（journal+MP+SP+Keychain+回调次序）/ recover 幂等重放
 
 tunnel/ ── SSH 隧道核心
   proxy.py ── asyncio HTTP→SOCKS5 代理（明文 HTTP 逐请求归属：跨 origin 安全重连，绝不静默误投）+ SSHMonitor + ProxyRuntime

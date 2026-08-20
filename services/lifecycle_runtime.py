@@ -150,6 +150,10 @@ class LifecycleRuntime:
             logger.error("已有 Magic AI Router 实例在运行（实例锁被持有）——"
                          "本次启动不接管服务")
             return False
+        # 跨文件提交崩溃恢复（issue #6）：journal 残留则幂等重放补齐
+        from mpconf.config_state import ConfigStateStore
+        if not ConfigStateStore().recover():
+            logger.warning("配置事务 journal 恢复失败——保留现场待人工检查")
         config_port = (self._config_fn() or {}).get("config_port", 9528)
         report_port_occupancy(config_port, _read_suanpan_port())
         if not self._config_server.start():

@@ -26,6 +26,8 @@ class CommitPlan(NamedTuple):
     errors: list
     mp_candidate: dict | None = None
     sp_candidate: dict | None = None
+    keychain_sets: list = ()      # [(tunnel_snapshot, password)] 密码只在计划里
+    keychain_dels: list = ()
 
 
 class SaveResult(NamedTuple):
@@ -72,10 +74,11 @@ def _valid_http_origin(url) -> bool:
 
 
 class ConfigStateStore:
-    def __init__(self, mp_path=None, sp_path=None):
+    def __init__(self, mp_path=None, sp_path=None, keychain=None):
         from mpconf import config_store as _cs
         self.mp_path = mp_path or _cs.get_path("mp")
         self.sp_path = sp_path or _cs.get_path("sp")
+        self._keychain = keychain
 
     def load(self) -> LoadResult:
         mp_state, mp_data, mp_err = _read_one(self.mp_path, json.loads)
@@ -133,7 +136,20 @@ class ConfigStateStore:
 
         if errors:
             return CommitPlan(False, errors)
-        return CommitPlan(True, [], mp_c, sp_c)
+        kc_sets, kc_dels = [], []
+        if mp_c is not None:
+            import copy
+            mp_c = copy.deepcopy(mp_c)
+            for t in mp_c.get("tunnels") or []:
+                t.pop("has_password", None)      # 服务端注入的只读字段
+                t.pop("capture_active", None)
+                pw = t.pop("password", None)
+                # 显式切换离 password 才删（部分载荷不得静默清密）
+                if pw:
+                    kc_sets.append((dict(t), pw))
+                elif "auth_type" in t and t.get("auth_type") != "password":
+                    kc_dels.append(dict(t))
+        return CommitPlan(True, [], mp_c, sp_c, kc_sets, kc_dels)
 
 
 def _extend_commit():
@@ -144,14 +160,22 @@ def _extend_commit():
         return self.sp_path + ".txn.json"
 
     def _journal_write(self, payload):
+        parent = os.path.dirname(self.journal_path) or "."
+        if not os.path.isdir(parent):
+            os.makedirs(parent, mode=0o700)
         tmp = self.journal_path + ".tmp"
-        with open(tmp, "w") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(payload, f, ensure_ascii=False)
         os.replace(tmp, self.journal_path)
 
     def _atomic_install(self, path, text):
+        parent = os.path.dirname(path) or "."
+        if not os.path.isdir(parent):
+            os.makedirs(parent, mode=0o700)  # 首创建目录权限
         tmp = path + ".tmp"
-        with open(tmp, "w") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             f.write(text)
         os.replace(tmp, path)
 
@@ -178,6 +202,17 @@ def _extend_commit():
                 self._atomic_install(self.sp_path, payload["sp"])
         except OSError as exc:
             return SaveResult(False, stage, [f"提交失败：{exc}"])
+        keychain_errors = []
+        if self._keychain is not None:
+            for tunnel, pw in plan.keychain_sets:
+                if not self._keychain.set_password(tunnel, pw):
+                    keychain_errors.append(
+                        f"隧道 {tunnel.get('name', '?')} 的密码保存到钥匙串失败"
+                        "（配置已保存，请重试保存密码）")
+            for tunnel in plan.keychain_dels:
+                self._keychain.delete_password(tunnel)
+        if keychain_errors:
+            return SaveResult(False, "keychain", keychain_errors)
         try:
             if os.path.exists(self.journal_path):
                 os.unlink(self.journal_path)

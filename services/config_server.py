@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from sysctl import keychain
 from mpconf import config_store
+from mpconf.config_state import ConfigStateStore
 from tunnel import host_key
 from services import claude_code_setup
 from capture import capture_store
@@ -382,22 +383,30 @@ class _Handler(BaseHTTPRequestHandler):
         data = self._read_json_body()
         if data is None:
             return
-        errors = []
         mp_in = data.get("mp")
         sp_in = data.get("sp")
-        if isinstance(mp_in, dict):
-            errors.extend(_write_mp(mp_in))
-        if isinstance(sp_in, dict):
-            ok, err = config_store.sp_save(sp_in)
-            if not ok:
-                errors.append(err)
-            elif self.server.on_sp_saved:
-                try:
-                    self.server.on_sp_saved()
-                except Exception:
-                    logger.exception("on_sp_saved callback failed")
-        if errors:
-            self._json(422, {"ok": False, "errors": errors})
+        if not isinstance(mp_in, dict):
+            mp_in = None
+        if not isinstance(sp_in, dict):
+            sp_in = None
+        if mp_in is None and sp_in is None:
+            self._json(200, {"ok": True})
+            return
+        if mp_in is not None:
+            mp_in = merge_config(mp_in)  # 默认值语义沿旧 _write_mp
+        store = ConfigStateStore(keychain=keychain)
+        plan = store.prepare(mp=mp_in, sp=sp_in)
+        if not plan.ok:
+            self._json(422, {"ok": False, "errors": plan.errors})
+            return
+        # on_sp_saved 只在完整提交后（含 MP 段成功）触发
+        result = store.commit(
+            plan,
+            on_committed=(self.server.on_sp_saved
+                          if (sp_in is not None
+                              and self.server.on_sp_saved) else None))
+        if not result.ok:
+            self._json(422, {"ok": False, "errors": result.errors})
         else:
             self._json(200, {"ok": True})
 

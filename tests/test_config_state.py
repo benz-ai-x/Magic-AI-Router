@@ -190,3 +190,120 @@ class TestCommitTransaction(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestKeychainTransaction(unittest.TestCase):
+    """验收：MP/SP/Keychain 任何可预期失败不暴露部分新状态。"""
+
+    def _store(self, keychain):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return ConfigStateStore(
+            mp_path=str(Path(d.name) / "magic-proxy.json"),
+            sp_path=str(Path(d.name) / "suanpan.yaml"),
+            keychain=keychain)
+
+    def test_password_scheduled_and_written_after_files(self):
+        ops = []
+        class FakeKC:
+            def set_password(self, tunnel, pw):
+                ops.append(("set", tunnel["name"], pw))
+                return True
+            def delete_password(self, tunnel):
+                ops.append(("del", tunnel["name"]))
+                return True
+        store = self._store(FakeKC())
+        plan = store.prepare(mp={"tunnels": [
+            {"name": "t1", "ssh_host": "h", "auth_type": "password",
+             "password": "sekrit"}]})
+        self.assertTrue(plan.ok)
+        self.assertEqual(plan.mp_candidate["tunnels"][0].get("password"),
+                         None, "密码在候选里必须剥离，只进 keychain 计划")
+        result = store.commit(plan)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(ops, [("set", "t1", "sekrit")])
+        loaded = store.load()
+        self.assertNotIn("password", loaded.mp_data["tunnels"][0])
+
+    def test_auth_switch_away_from_password_schedules_delete(self):
+        ops = []
+        class FakeKC:
+            def set_password(self, t, p):
+                ops.append(("set", t["name"]))
+                return True
+            def delete_password(self, t):
+                ops.append(("del", t["name"]))
+                return True
+        store = self._store(FakeKC())
+        plan = store.prepare(mp={"tunnels": [
+            {"name": "t1", "ssh_host": "h", "auth_type": "key"}]})
+        self.assertTrue(plan.ok)
+        result = store.commit(plan)
+        self.assertTrue(result.ok)
+        self.assertEqual(ops, [("del", "t1")])
+
+    def test_keychain_failure_reports_stage_without_secret(self):
+        class FailKC:
+            def set_password(self, tunnel, pw):
+                return False
+            def delete_password(self, tunnel):
+                return True
+        store = self._store(FailKC())
+        plan = store.prepare(mp={"tunnels": [
+            {"name": "t1", "ssh_host": "h", "auth_type": "password",
+             "password": "sekrit"}]})
+        result = store.commit(plan)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "keychain")
+        self.assertTrue(all("sekrit" not in e for e in result.errors),
+                        "错误不得泄露 secret")
+        # 文件已提交（keychain 是尾段，语义=提示人工处理而非回滚文件）
+        loaded = store.load()
+        self.assertIsNotNone(loaded.mp_data)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestBackupProtectionAndCreation(unittest.TestCase):
+    """验收：invalid 主文件不覆盖最后已知良好的 .bak；首创建权限。"""
+
+    def _store(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return ConfigStateStore(
+            mp_path=str(Path(d.name) / "magic-proxy.json"),
+            sp_path=str(Path(d.name) / "suanpan.yaml"))
+
+    def test_invalid_main_file_does_not_clobber_good_backup(self):
+        import stat
+        store = self._store()
+        # 先正常提交一轮（建立良好状态），此时 .bak 尚不存在
+        plan = store.prepare(sp={"listen_port": 9527})
+        self.assertTrue(store.commit(plan).ok)
+        bak = store.sp_path + ".bak"
+        # 手工放一个「最后已知良好」备份（模拟历史备份存在）
+        Path(bak).write_text("listen_port: 9000\n")
+        # 主文件损坏后再提交新配置：.bak 不得被损坏内容覆盖
+        Path(store.sp_path).write_text("{corrupt: [")
+        plan2 = store.prepare(sp={"listen_port": 9528})
+        self.assertTrue(store.commit(plan2).ok)
+        self.assertEqual(Path(bak).read_text(), "listen_port: 9000\n",
+                         "损坏主文件的存在不得让 .bak 被覆盖")
+
+    def test_first_creation_permissions(self):
+        import stat
+        store = self._store()
+        plan = store.prepare(mp={"http_listen_port": 8888},
+                             sp={"listen_port": 9527})
+        self.assertTrue(store.commit(plan).ok)
+        self.assertEqual(stat.S_IMODE(os.stat(store.mp_path).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(store.sp_path).st_mode), 0o600)
+        d = os.path.dirname(store.sp_path)
+        # 目录若由本 store 首建须 0700；已有目录（如 tmpdir 0700）不降权
+        self.assertGreaterEqual(stat.S_IMODE(os.stat(d).st_mode), 0o700)
+
+
+if __name__ == "__main__":
+    unittest.main()
