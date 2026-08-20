@@ -95,12 +95,12 @@ class TestHttpForwarding(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_headers_do_not_open_upstream_connection(self):
         client_reader = _reader(b"X-Test: " + b"x" * (proxy.MAX_HEADER_BYTES + 1) + b"\r\n")
         with patch.object(proxy, "socks5_connect", new=AsyncMock()) as connect:
-            with self.assertRaises(ValueError):
-                await proxy.handle_http(
-                    client_reader, _Writer(),
-                    b"GET http://example.com/ HTTP/1.1\r\n",
-                    "127.0.0.1:1080", proxy.Stats(),
-                )
+            # issue #5 契约：头部超限安全关闭（不抛、不连 upstream）
+            await proxy.handle_http(
+                client_reader, _Writer(),
+                b"GET http://example.com/ HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats(),
+            )
         connect.assert_not_awaited()
 
 
@@ -405,14 +405,16 @@ class TestSocks5AddressTypes(unittest.IsolatedAsyncioTestCase):
 
 
 class TestHandleHttpEdgeCases(unittest.IsolatedAsyncioTestCase):
-    async def test_non_absolute_url_raises(self):
+    async def test_non_absolute_url_gets_400(self):
         client_reader = _reader(b"\r\n")
         client_writer = _Writer()
-        with self.assertRaisesRegex(ValueError, "absolute http URL"):
+        with patch.object(proxy, "socks5_connect", new=AsyncMock()) as connect:
             await proxy.handle_http(
                 client_reader, client_writer,
                 b"GET /relative/path HTTP/1.1\r\n",
                 "127.0.0.1:1080", proxy.Stats())
+        self.assertIn(b"400 Bad Request", bytes(client_writer.data))
+        connect.assert_not_awaited()
 
     async def test_connection_nominated_headers_stripped(self):
         client_reader = _reader(
@@ -715,3 +717,185 @@ class TestSSHMonitorPasswordCloseError(unittest.TestCase):
              "auth_type": "password"},
             1080, "hunter2")
         self.assertEqual(monitor.status, "connecting")
+
+
+class TestKeepAliveOriginBinding(unittest.IsolatedAsyncioTestCase):
+    """issue #5：明文 HTTP 的逐请求归属状态机。
+
+    同一客户端 keep-alive 连接上，跨 origin 的后续请求绝不能静默误投到
+    首 origin 的 upstream——可安全重连（新 upstream）或明确关闭。
+    """
+
+    def _client_stream(self, *chunks):
+        return _reader(b"".join(chunks))
+
+    async def test_second_request_different_host_gets_own_upstream(self):
+        # request_line 参数已从流外读取——feed 只含其头部余下与后续请求
+        req1_rest = b"Host: a.test\r\n\r\n"
+        req2 = (b"GET http://b.test/two HTTP/1.1\r\nHost: b.test\r\n\r\n")
+        client_reader = self._client_stream(req1_rest, req2)
+        client_writer = _Writer()
+        r1, w1 = _reader(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"), _Writer()
+        r2, w2 = _reader(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"), _Writer()
+        connects = []
+
+        async def fake_connect(host, port, socks_addr):
+            connects.append(host)
+            return (r1, w1) if host == "a.test" else (r2, w2)
+
+        with patch.object(proxy, "socks5_connect", new=fake_connect):
+            await proxy.handle_http(
+                client_reader, client_writer,
+                b"GET http://a.test/one HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats(),
+            )
+        self.assertEqual(connects, ["a.test", "b.test"])
+        self.assertNotIn(b"b.test", bytes(w1.data),
+                         "跨 origin 第二请求不得进入首 origin")
+        self.assertIn(b"GET /two HTTP/1.1", bytes(w2.data))
+
+    async def test_same_origin_reuses_one_upstream(self):
+        req1_rest = b"Host: a.test\r\n\r\n"
+        req2 = b"GET http://a.test/two HTTP/1.1\r\nHost: a.test\r\n\r\n"
+        client_reader = self._client_stream(req1_rest, req2)
+        client_writer = _Writer()
+        remote_reader = _reader(
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+        remote_writer = _Writer()
+        connects = []
+
+        async def fake_connect(host, port, socks_addr):
+            connects.append(host)
+            return (remote_reader, remote_writer)
+
+        with patch.object(proxy, "socks5_connect", new=fake_connect):
+            await proxy.handle_http(
+                client_reader, client_writer,
+                b"GET http://a.test/one HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats(),
+            )
+        self.assertEqual(connects, ["a.test"], "同 origin keep-alive 复用同一条 upstream")
+        data = bytes(remote_writer.data)
+        self.assertIn(b"GET /one HTTP/1.1", data)
+        self.assertIn(b"GET /two HTTP/1.1", data)
+
+
+class TestPerRequestHeaderHygiene(unittest.IsolatedAsyncioTestCase):
+    """issue #5：hop-by-hop/凭证剥离逐请求独立生效（非仅首请求）。"""
+
+    async def test_second_request_connection_tokens_stripped(self):
+        client_reader = _reader(
+            b"Host: a.test\r\n\r\n"
+            b"GET http://a.test/two HTTP/1.1\r\nHost: a.test\r\n"
+            b"Connection: X-Custom\r\nX-Custom: secret\r\n"
+            b"Proxy-Authorization: Basic sekrit\r\n\r\n")
+        remote_reader = _reader(
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+        remote_writer = _Writer()
+        with patch.object(proxy, "socks5_connect", new=AsyncMock(
+                return_value=(remote_reader, remote_writer))):
+            await proxy.handle_http(
+                client_reader, _Writer(),
+                b"GET http://a.test/one HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats())
+        second = bytes(remote_writer.data).split(b"GET /two", 1)[-1]
+        self.assertNotIn(b"X-Custom: secret", second)
+        self.assertNotIn(b"Proxy-Authorization", second)
+        self.assertIn(b"Host: a.test", second)
+
+
+class TestFramedBodies(unittest.IsolatedAsyncioTestCase):
+    """issue #5 验收：Content-Length / chunked 定界下 keep-alive 不破。"""
+
+    async def test_post_with_content_length_then_next_request(self):
+        body = b"payload-123"
+        req1_rest = (b"Host: a.test\r\nContent-Length: %d\r\n\r\n"
+                     % len(body)) + body
+        req2 = b"GET http://a.test/after HTTP/1.1\r\nHost: a.test\r\n\r\n"
+        client_reader = _reader(req1_rest + req2)
+        remote_reader = _reader(
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+        remote_writer = _Writer()
+        with patch.object(proxy, "socks5_connect", new=AsyncMock(
+                return_value=(remote_reader, remote_writer))):
+            await proxy.handle_http(
+                client_reader, _Writer(), b"POST http://a.test/submit HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats())
+        data = bytes(remote_writer.data)
+        self.assertIn(body, data, "请求 body 按定界精确转发")
+        self.assertIn(b"GET /after HTTP/1.1", data, "body 后续请求仍被正确解析")
+
+    async def test_chunked_response_relays_and_keeps_alive(self):
+        resp = (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                b"5\r\nhello\r\n0\r\n\r\n"
+                b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+        client_reader = _reader(
+            b"GET http://a.test/one HTTP/1.1\r\nHost: a.test\r\n\r\n"
+            b"GET http://a.test/two HTTP/1.1\r\nHost: a.test\r\n\r\n")
+        client_writer = _Writer()
+        remote_writer = _Writer()
+        with patch.object(proxy, "socks5_connect", new=AsyncMock(
+                return_value=(_reader(resp), remote_writer))):
+            await proxy.handle_http(
+                client_reader, client_writer,
+                b"GET http://a.test/one HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats())
+        out = bytes(client_writer.data)
+        self.assertIn(b"5\r\nhello\r\n0\r\n\r\n", out, "chunked 原样转发")
+        self.assertEqual(out.count(b"HTTP/1.1"), 2, "chunked 终止后 keep-alive 续读")
+
+
+class TestDualOriginEndToEnd(unittest.IsolatedAsyncioTestCase):
+    """issue #5 验收：两个真实本地 HTTP server 的端到端（顺序 + pipelined）。"""
+
+    async def test_sequential_and_pipelined_across_two_real_origins(self):
+        seen = {"a": [], "b": []}
+
+        async def make_origin(tag):
+            async def handle(reader, writer):
+                while True:
+                    line = await reader.readline()
+                    if not line:
+                        break
+                    while True:  # 头部至空行（真实请求无 body）
+                        h = await reader.readline()
+                        if h in (b"\r\n", b""):
+                            break
+                    seen[tag].append(line.decode().split()[1])
+                    writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                    await writer.drain()
+            server = await proxy.asyncio.start_server(handle, "127.0.0.1", 0)
+            return server, server.sockets[0].getsockname()[1]
+
+        server_a, port_a = await make_origin("a")
+        server_b, port_b = await make_origin("b")
+        self.addCleanup(server_a.close)
+        self.addCleanup(server_b.close)
+
+        async def fake_socks(host, port, socks_addr):
+            return await proxy.asyncio.open_connection(
+                "127.0.0.1", port_a if host == "a.test" else port_b)
+
+        # 单次喂入三条请求：a/1 → a/2（pipelined）→ b/x（跨 origin）
+        client_reader = proxy.asyncio.StreamReader()
+        client_reader.feed_data(
+            b"Host: a.test\r\n\r\n"
+            b"GET http://a.test/2 HTTP/1.1\r\nHost: a.test\r\n\r\n"
+            b"GET http://b.test/x HTTP/1.1\r\nHost: b.test\r\n\r\n")
+        client_reader.feed_eof()
+        client_writer = _Writer()
+
+        with patch.object(proxy, "socks5_connect", new=fake_socks):
+            await proxy.handle_http(
+                client_reader, client_writer,
+                b"GET http://a.test/1 HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats())
+
+        self.assertEqual(seen["a"], ["/1", "/2"], "同 origin 顺序+pipelined 双达")
+        self.assertEqual(seen["b"], ["/x"], "跨 origin 到达真实第二 origin")
+        self.assertEqual(bytes(client_writer.data).count(b"ok"), 3)
+
+
