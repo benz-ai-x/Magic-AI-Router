@@ -53,16 +53,20 @@ class AsyncRuntime:
             return self._error
 
     def start(self, coro_factory) -> bool:
-        """Start a new generation. 拒绝条件：上一代未完整终止（RuntimeError，
-        不创建新线程——调用方决定重试或放弃）。"""
+        """Start a new generation. 拒绝条件：上一代未完整终止——返回 False
+        且不创建新线程（error 记录根因，调用方可重试或放弃）。"""
         if not self._shutdown_previous():
-            raise RuntimeError(
-                f"{self._name}: 上一代线程未在超时内终止，拒绝 start")
+            with self._lock:
+                self._error = f"上一代线程未在超时内终止，拒绝 start"
+            return False
         generation = 0
         stop_event = threading.Event()
         with self._lock:
             if self._state not in (_STOPPED, _FAILED):
-                raise RuntimeError(f"{self._name}: 状态 {self._state} 不可启动")
+                with self._lock:
+                    pass
+                self._error = f"状态 {self._state} 不可启动"
+                return False
             self._generation += 1
             generation = self._generation
             self._stop_event = stop_event

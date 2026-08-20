@@ -43,8 +43,11 @@ class TestStopTimeoutBlocksStart(unittest.TestCase):
         started.wait(2)
         ok = rt.stop(timeout=0.05)
         self.assertFalse(ok, "hang 场景 stop 必须超时")
-        with self.assertRaises(RuntimeError):
-            rt.start(factory)  # 拒绝：上一代未完整终止
+        # 拒绝：上一代未完整终止——False 且不建新线程（保 bool 契约）
+        alive_before = rt._thread
+        self.assertFalse(rt.start(factory))
+        self.assertIs(rt._thread, alive_before, "拒绝时不替换线程引用")
+        self.assertIn("未在超时内终止", rt.error)
         released.set()  # 收尾
         rt.stop(timeout=5)
 
