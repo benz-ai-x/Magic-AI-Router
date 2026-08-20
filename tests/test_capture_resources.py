@@ -28,8 +28,6 @@ class TestDevAddonResolution(unittest.TestCase):
         self.assertEqual(res.mitmdump_bin, "/usr/bin/true")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestMitmdumpResolutionChain(unittest.TestCase):
@@ -50,6 +48,7 @@ class TestMitmdumpResolutionChain(unittest.TestCase):
             os.makedirs(bundled_dir)
             bin_path = os.path.join(bundled_dir, "mitmdump")
             open(bin_path, "w").close()
+            os.chmod(bin_path, 0o755)
             addon = os.path.join(meip, ADDON_FLAT)
             open(addon, "w").close()
             fake = types.SimpleNamespace(_MEIPASS=meip)
@@ -85,6 +84,7 @@ class TestMissingAddon(unittest.TestCase):
         with tempfile.TemporaryDirectory() as meip:
             os.makedirs(os.path.join(meip, "mitmdump"))
             open(os.path.join(meip, "mitmdump", "mitmdump"), "w").close()
+            os.chmod(os.path.join(meip, "mitmdump", "mitmdump"), 0o755)
             fake = types.SimpleNamespace(_MEIPASS=meip)
             with patch.dict(os.environ, {}, clear=False), \
                  patch("capture.resources.sys", fake), \
@@ -94,3 +94,28 @@ class TestMissingAddon(unittest.TestCase):
                     resolve_capture_resources({})
         self.assertIn("抓包组件", ctx.exception.msg)
         self.assertIn("ai_capture_addon.py", ctx.exception.msg)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestCaptureDirPreflight(unittest.TestCase):
+    def test_unwritable_capture_dir_raises_actionable_error(self):
+        with patch.dict(os.environ, {"MAGIC_PROXY_MITMDUMP_BIN": "/usr/bin/true"}), \
+             patch("capture.resources.prepare_capture_dir",
+                   side_effect=OSError("read-only file system")):
+            with self.assertRaises(CaptureResourcesError) as ctx:
+                resolve_capture_resources({})
+        self.assertIn("抓包目录不可用", ctx.exception.msg)
+        self.assertIn("read-only", ctx.exception.msg)
+
+    def test_non_executable_mitmdump_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            nox = os.path.join(d, "mitmdump-not-x")
+            open(nox, "w").close()
+            with patch.dict(os.environ, {"MAGIC_PROXY_MITMDUMP_BIN": nox}):
+                with self.assertRaises(CaptureResourcesError) as ctx:
+                    resolve_capture_resources({})
+        self.assertIn("mitmdump", ctx.exception.msg)

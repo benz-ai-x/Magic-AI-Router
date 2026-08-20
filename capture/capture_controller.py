@@ -98,6 +98,7 @@ class CaptureController:
 
     def disable(self):
         """Stop the capture subprocess if running."""
+        self._preflight_error = None  # 用户已行动：过期预检错误不再残留
         if self._monitor.status != "stopped":
             self._monitor.stop()
             logger.info("capture mode: stopped")

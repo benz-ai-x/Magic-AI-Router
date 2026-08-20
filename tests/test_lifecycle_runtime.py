@@ -157,11 +157,9 @@ class TestQuitOrder(unittest.TestCase):
         self.assertEqual(order, ["clear_ports", "config_server", "suanpan"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
-class TestStaleInstanceEdge(unittest.TestCase):
+class TestStaleInstanceAndPortHelpers(unittest.TestCase):
     def test_empty_argv_basename_never_matches(self):
         from services import lifecycle_runtime as lr
         with patch.object(lr.sys, "argv", [""]):
@@ -211,7 +209,7 @@ class TestInternalizedReload(unittest.TestCase):
         mock_reload.assert_called_once_with()
 
 
-class TestStartAllFailureBranches(unittest.TestCase):
+class TestStartAllFailuresAndPortClearing(unittest.TestCase):
     def test_config_server_start_failure_warns_but_gateway_still_starts(self):
         svc = _make_coordinator()
         with patch.object(svc._config_server, "start", return_value=False), \
@@ -273,3 +271,7 @@ class TestStartAllFailureBranches(unittest.TestCase):
              self.assertLogs("magic-proxy.lifecycle", level="INFO") as logs:
             lr._clear_stale_ports(9528, 9527)
         self.assertTrue(any("Killed PID 4242" in m for m in logs.output))
+
+
+if __name__ == "__main__":
+    unittest.main()

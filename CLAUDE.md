@@ -77,6 +77,7 @@ capture/ ── 抓包
   capture.py ── mitmdump 子进程管理（抓包模式）
   capture_controller.py ── 抓包启停 + 信任缓存控制
   capture_store.py ── 抓包目录/文件管理（跨进程共享）
+  resources.py ── 资源契约：resolve_capture_resources（mitmdump 三级链 + addon 校验 + 目录 preflight）
   ai_capture_addon.py ── mitmproxy addon：6 家 AI 请求抽取落 JSONL
   ca_trust.py ── 根 CA 信任检测 + 引导窗
   mitmdump_entry.py ── 抓包构建入口（mitmproxy mitmdump 包装）

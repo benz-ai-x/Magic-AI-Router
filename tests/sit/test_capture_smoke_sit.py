@@ -1,5 +1,8 @@
 """抓包冒烟（issue #2 Seam S3）：真实子进程加载真实 addon.
 
+判据（错误正则 + 宽限秒数）与 build.sh 打包冒烟步骤跨语言双写，
+改动需两处同步；统一收敛归 issue #14。
+
 不 mock、不查存在性——spawn 由资源契约解析出的 mitmdump，加载解析出的
 addon 脚本，断言进程带着脚本活过启动期。本地未装 mitmproxy 时整文件
 跳过；CI（requirements-dev 含 mitmproxy）必跑。

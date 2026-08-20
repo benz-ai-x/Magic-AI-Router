@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 
 from util import resource_path as _resource_path
 from capture.capture_store import DEFAULT_CAPTURE_DIR, prepare as prepare_capture_dir
@@ -40,22 +41,20 @@ class CaptureResourcesError(Exception):
         super().__init__(msg)
 
 
+@dataclass(frozen=True)
 class CaptureResources:
-    """已通过 preflight 的抓包资源三元组（frozen dataclass 语义）。"""
+    """已通过 preflight 的抓包资源三元组。"""
 
-    __slots__ = ("mitmdump_bin", "addon_path", "capture_dir")
-
-    def __init__(self, mitmdump_bin: str, addon_path: str, capture_dir: str):
-        self.mitmdump_bin = mitmdump_bin
-        self.addon_path = addon_path
-        self.capture_dir = capture_dir
+    mitmdump_bin: str
+    addon_path: str
+    capture_dir: str
 
 
 def resolve_capture_resources(cfg: dict) -> CaptureResources:
     """解析并验证 mitmdump / addon / 抓包目录。失败抛 CaptureResourcesError。"""
-    override = os.environ.get("MAGIC_PROXY_MITMDUMP_BIN")
     mitmdump_bin = resolve_mitmdump_bin()
-    if not mitmdump_bin or not os.path.exists(mitmdump_bin):
+    if not mitmdump_bin or not os.path.exists(mitmdump_bin) \
+            or not os.access(mitmdump_bin, os.X_OK):
         raise CaptureResourcesError(
             "未找到 mitmdump 可执行文件（可设置 MAGIC_PROXY_MITMDUMP_BIN 指定路径）")
     addon = _resource_path(ADDON_RESOURCE_NAME)

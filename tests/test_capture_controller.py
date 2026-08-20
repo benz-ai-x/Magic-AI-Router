@@ -16,8 +16,6 @@ from capture.capture_controller import CaptureController
 from capture import resources as capture_resources
 
 
-_RES = None  # 模块级 fixture：已验证资源三元组（S2 新缝的桩）
-
 def _res():
     from capture.resources import CaptureResources
     return CaptureResources("/bin/mitmdump", "/repo/ai_capture_addon.py",
@@ -228,8 +226,6 @@ class TestErrorHint(unittest.TestCase):
         self.assertLessEqual(len(ctrl.error_hint()), 90)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestEnableConsumesResourceContract(unittest.TestCase):
@@ -260,3 +256,20 @@ class TestEnableConsumesResourceContract(unittest.TestCase):
         self.assertEqual(kw["addon_path"], "/x/ai_capture_addon.py")
         self.assertEqual(kw["capture_dir"], "/tmp/cap")
         self.assertEqual(c.error_msg, "")  # 预检错误已清除，回落 monitor 文案
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestPreflightErrorLifecycle(unittest.TestCase):
+    def test_disable_clears_stale_preflight_error(self):
+        from capture.resources import CaptureResourcesError
+        c = _ctrl(status="stopped")
+        with patch.object(capture_controller, "resolve_capture_resources",
+                          side_effect=CaptureResourcesError("未找到 mitmdump")):
+            c.enable()
+        self.assertIn("mitmdump", c.error_msg)
+        c._monitor.status = "running"
+        c.disable()
+        self.assertEqual(c.error_msg, "")  # 回落 monitor 文案，过期错误清除

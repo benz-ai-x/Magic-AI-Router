@@ -177,10 +177,18 @@ PLIST="dist/Magic AI Router.app/Contents/Info.plist"
 codesign --force --deep --sign - "dist/Magic AI Router.app"
 
 # ---------------------------------------------------------------------------
-# 打包冒烟（issue #2）：实际执行 bundled mitmdump 加载 bundled addon——
-# 不只检查文件存在。启动期崩溃或 addon 加载报错都让构建失败。
+# 打包冒烟（issue #2）：两层——① frozen 态真实执行资源契约（app 二进制
+# 在 _MEIPASS 内跑 resolve_capture_resources）；② 实际执行 bundled
+# mitmdump 加载 bundled addon。启动期崩溃或 addon 加载报错都让构建失败。
+# 判据与 tests/sit/test_capture_smoke_sit.py 保持同步（跨语言双写，改动
+# 需两处同步；统一收敛见 issue #14）。
 # ---------------------------------------------------------------------------
 APP_BUNDLE="dist/Magic AI Router.app"
+MAGIC_PROXY_SMOKE_TEST=1 "$APP_BUNDLE/Contents/MacOS/Magic AI Router" || {
+    echo "ERROR: frozen resource contract smoke failed" >&2
+    exit 1
+}
+echo "Smoke OK: frozen resource contract resolved inside bundle"
 SMOKE_ERR="$(mktemp)"
 SMOKE_CONF="$(mktemp -d)"
 "$APP_BUNDLE/Contents/Resources/mitmdump/mitmdump" -q --no-server \

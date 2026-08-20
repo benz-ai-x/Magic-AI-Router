@@ -23,6 +23,10 @@ from capture import capture
 from capture import capture_controller
 from capture.capture_controller import CaptureController
 from capture.resources import CaptureResources
+
+
+def _stub_resources():
+    return CaptureResources("/bin/mitmdump", "/x/addon.py", "/tmp/cap")
 from sysctl import sleep_blocker
 from sysctl import system_proxy
 def _new_app(**attrs):
@@ -182,7 +186,7 @@ class TestToggleCapture(unittest.TestCase):
         with patch.object(app.MagicProxyApp, "_check_port", return_value=True) as check_port, \
              patch("capture.ca_trust.is_trusted", return_value=True), \
              patch.object(capture_controller, "resolve_capture_resources",
-                         return_value=CaptureResources("/bin/mitmdump", "/x/addon.py", "/tmp/cap")):
+                         return_value=_stub_resources()):
             inst.toggle_capture(None)
         check_port.assert_called_once_with(8080, "抓包")
         self.assertTrue(inst._capture_ctrl.enabled)
@@ -204,7 +208,7 @@ class TestToggleCapture(unittest.TestCase):
              patch("capture.ca_trust.is_trusted", return_value=True), \
              patch("capture.ca_trust.show_ca_trust_guide") as guide, \
              patch.object(capture_controller, "resolve_capture_resources",
-                         return_value=CaptureResources("/bin/mitmdump", "/x/addon.py", "/tmp/cap")):
+                         return_value=_stub_resources()):
             inst.toggle_capture(None)
         guide.assert_not_called()
         self.assertTrue(inst._capture_ctrl.enabled)
@@ -234,7 +238,7 @@ class TestToggleCapture(unittest.TestCase):
              patch("capture.ca_trust.is_trusted", return_value=False), \
              patch("capture.ca_trust.show_ca_trust_guide", side_effect=fake_guide), \
              patch.object(capture_controller, "resolve_capture_resources",
-                         return_value=CaptureResources("/bin/mitmdump", "/x/addon.py", "/tmp/cap")):
+                         return_value=_stub_resources()):
             inst.toggle_capture(None)
             captured_cb["cb"](True)
         self.assertTrue(inst._capture_ctrl.enabled)

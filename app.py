@@ -523,5 +523,18 @@ class MagicProxyApp(rumps.App):
 if __name__ == "__main__":
     if os.environ.get("MAGIC_PROXY_SMOKE_TEST") == "1":
         logger.info("Magic AI Router smoke import OK: v%s", VERSION)
+        # frozen 冒烟穿真实资源契约（issue #2）：在 _MEIPASS 内解析
+        # mitmdump + addon，任一失败即非零退出——bash 冒烟只查文件存在
+        # 时永远测不到这条路径。
+        from capture.resources import CaptureResourcesError, resolve_capture_resources
+        try:
+            res = resolve_capture_resources({})
+            assert res.mitmdump_bin and res.addon_path
+            logger.info("frozen resource contract OK: %s + %s",
+                        res.mitmdump_bin.rsplit("/", 1)[-1],
+                        res.addon_path.rsplit("/", 1)[-1])
+        except (CaptureResourcesError, AssertionError) as exc:
+            logger.error("frozen resource contract FAILED: %s", exc)
+            raise SystemExit(1)
     else:
         MagicProxyApp().run()
