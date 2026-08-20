@@ -144,6 +144,9 @@ class ConfigStateStore:
             from mpconf.config import merge_config
             mp_c = merge_config(mp_c)
         if sp_c is not None:
+            if sp_c.get("_load_error"):
+                return CommitPlan(False, [
+                    f"配置装载失败，已阻止保存以防覆盖：{sp_c['_load_error']}"])
             # 掩码 key 恢复（原 save_config_dict 语义——live PUT 唯一保存
             # 路径在此）：按 id 匹配旧档恢复真实 key；legacy 无 id 档按名
             sp_c = self._restore_masked_sp_keys(sp_c)
@@ -210,6 +213,7 @@ class ConfigStateStore:
         保留旧 key——按 id（或 legacy 名）从当前磁盘档恢复真实值。"""
         import copy
         sp_c = copy.deepcopy(sp_c)
+        sp_c.pop("_load_error", None)  # 装载错误标记永不落盘
         try:
             with open(self.sp_path) as f:
                 old = yaml.safe_load(f) or {}

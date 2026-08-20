@@ -437,6 +437,39 @@ class TestFaultInjectionCompletions(unittest.TestCase):
         self.assertIn(("del-all", "t-gone"), ops, "删除隧道双账户清理")
 
 
+    def test_prepare_rejects_sp_with_load_error(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"))
+        plan = store.prepare(sp={"_load_error": "装载失败", "providers": {}})
+        self.assertFalse(plan.ok)
+        self.assertIn("已阻止保存", plan.errors[0])
+
+    def test_restore_strips_load_error_marker(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"))
+        Path(store.sp_path).write_text(
+            yaml.dump({"listen_port": 9527, "providers": {
+                "a": {"id": "p-1", "base_url": "https://a.test",
+                      "api_key": "sk-1", "models": ["m"]}}}))
+        plan = store.prepare(sp={
+            "_load_error": "x", "listen_port": 9527,
+            "providers": {"a": {"id": "p-1", "base_url": "https://a.test",
+                                "api_key": None, "api_key_set": True,
+                                "models": ["m"]}}})
+        # _load_error 在此之前已被拒——restore 剥离由内部直测
+        self.assertFalse(plan.ok)  # 拒收优先
+        # 直测 restore 剥离
+        cleaned = store._restore_masked_sp_keys(
+            {"_load_error": "x", "providers": {}, "api_key": None})
+        self.assertNotIn("_load_error", cleaned)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -517,14 +550,19 @@ class TestStableIdentityMigration(unittest.TestCase):
         self.assertEqual(tunnels[0]["id"], "t-keepme1234",
                          "重命名/改地址不改变 id")
 
-    def test_duplicate_legacy_identity_fails_actionable(self):
+    def test_duplicate_legacy_identity_gets_deterministic_suffix(self):
+        """legacy 同身份双隧道本合法——确定性序数后缀，不拒启。"""
         from mpconf.config import assign_stable_ids
         dup = [{"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
                {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22}]
-        with self.assertRaises(ValueError) as ctx:
-            assign_stable_ids(dup)
-        self.assertIn("重复身份", str(ctx.exception))
-        self.assertIn("u@h:22", str(ctx.exception))
+        n = assign_stable_ids(dup)
+        self.assertEqual(n, 2)
+        self.assertNotEqual(dup[0]["id"], dup[1]["id"])
+        again = [{"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+                 {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22}]
+        assign_stable_ids(again)
+        self.assertEqual([t["id"] for t in again], [t["id"] for t in dup],
+                         "确定性：重算同序")
 
     def test_duplicate_explicit_ids_fails_actionable(self):
         from mpconf.config import assign_stable_ids

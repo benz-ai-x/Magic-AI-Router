@@ -408,6 +408,7 @@ function viewSnapshot(view,state,roles){
 function validateConfig(S){
   // Pre-save validation; returns a list of human-readable error strings.
   const errors=[];
+  if(S&&S.sp&&S.sp._load_error)errors.push('Suanpan 配置装载失败，已阻止保存以防覆盖：'+S.sp._load_error);
   (S.mp.tunnels||[]).forEach((t,i)=>{
     if(!t.ssh_host)errors.push(`隧道 ${i+1}: 未填写地址`);
     if(t.ssh_port&&(t.ssh_port<1||t.ssh_port>65535))errors.push(`隧道 ${i+1}: SSH 端口无效`);

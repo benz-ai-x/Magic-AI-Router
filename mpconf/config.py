@@ -73,14 +73,18 @@ def assign_stable_ids(tunnels) -> int:
                     f"隧道配置存在重复 id：{t['id']}（请修正配置文件后重试）")
             seen_ids[t["id"]] = ident
             continue
-        if ident in seen_identity:
-            raise IdentityMigrationError(
-                f"隧道重复身份 {ident}：无法确定旧密码归属，"
-                "请先在配置文件中区分这两条隧道（改 user/host/port）")
+        ordinal = 2 if ident in seen_identity else 1
+        if ordinal > 1:
+            # legacy 同身份双隧道（如 key+password 并存）本合法——确定性
+            # 序数后缀区分 id；两隧道仍共享同一 legacy 凭证槽（与迁移前
+            # 行为一致），不猜归属。显式手写重复 id 才致命。
+            logger.warning("隧道重复身份 %s：以序数后缀区分 id", ident)
         seen_identity[ident] = True
-        t["id"] = stable_tunnel_id(t.get("ssh_user", ""),
-                                   t.get("ssh_host", ""),
-                                   t.get("ssh_port", 22))
+        import hashlib as _hl
+        basis = f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}:{t.get('ssh_port', 22)}"
+        if ordinal > 1:
+            basis += f"#{ordinal}"
+        t["id"] = "t-" + _hl.sha1(basis.encode("utf-8")).hexdigest()[:10]
         seen_ids[t["id"]] = ident
         migrated += 1
     return migrated
