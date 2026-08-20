@@ -70,9 +70,11 @@ class TestConfigServerProperties(unittest.TestCase):
         cs = config_server.ConfigServer(port=9999)
         self.assertIn("9999", cs.url)
 
-    def test_auth_url_contains_token(self):
+    def test_auth_url_removed_and_url_carries_no_secret(self):
+        """issue #10：auth_url 已删除；url 本身不含任何凭证。"""
         cs = config_server.ConfigServer(port=9999)
-        self.assertIn("token=", cs.auth_url)
+        self.assertFalse(hasattr(cs, "auth_url"))
+        self.assertNotIn("token", cs.url)
 
     def test_not_running_on_init(self):
         cs = config_server.ConfigServer()

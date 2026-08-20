@@ -48,3 +48,9 @@
 ## 测试
 
 `tests/test_docs_drift.py::TestClaudeCodeEnvContractDocumented` 交叉校验：`_ROLES` 产出的每个 env 变量名与契约术语（`ctx_1m`/`[1M]`/BASE_URL 等）都必须出现在本 ADR——文档与代码双向锁死。
+
+## 增补（2026-08-20，issue #10）：设置窗 header-only 落地
+
+- query-string 认证路径删除；无凭证的 `/` 与 `/api/*` 一律 401。
+- 桥接（webview_window `auth_headers`）构造带 Authorization 头的首导航请求；服务端随该响应种下 `cfgsess` HttpOnly SameSite=Strict 会话 cookie，刷新与后续同源 fetch 由 cookie 承载——token 不进 URL/JS/日志。
+- `ConfigServer.auth_url` 删除；`url` 恒为无凭证 loopback 地址。常量时间比较、loopback bind、Host allowlist 全部保留。

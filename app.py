@@ -499,8 +499,10 @@ class MagicProxyApp(rumps.App):
             if not self._config_server.start():
                 rumps.alert(title="Magic AI Router", message="配置服务端口被占用，无法打开设置。")
                 return
-            show_config_window(self._config_server.auth_url,
-                               on_action=self._bridge_action)
+            show_config_window(
+                self._config_server.url, on_action=self._bridge_action,
+                auth_headers={"Authorization":
+                              f"Bearer {self._config_server.token}"})
         except Exception as e:
             logger.exception("show_preferences failed")
             rumps.alert(title="Magic AI Router", message=f"打开设置失败:\n\n{e!r}")

@@ -176,14 +176,22 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
     def _valid_token(self):
-        """Validate bearer token from query string or Authorization header."""
-        qs = parse_qs(urlparse(self.path).query)
-        token = qs.get("token", [""])[0]
+        """Validate bearer token from Authorization header or session cookie.
+
+        issue #10：URL 永不带凭证——query-string 认证路径已删除。首屏
+        导航由桥接构造带 Authorization 头的请求；其响应种下 HttpOnly
+        的 cfgsess 会话 cookie，此后 JS 同源 fetch 自动携带（token
+        不进 URL/JS/日志）。常量时间比较保留。
+        """
+        auth = self.headers.get("Authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else ""
         if not token:
-            auth = self.headers.get("Authorization", "")
-            if auth.startswith("Bearer "):
-                token = auth[7:]
-        # Constant-time comparison to prevent timing side-channels.
+            cookie_header = self.headers.get("Cookie", "")
+            for part in cookie_header.split(";"):
+                name, _, value = part.strip().partition("=")
+                if name == "cfgsess":
+                    token = value
+                    break
         expected = self.server.expected_token
         if not token or not expected:
             return False
@@ -194,11 +202,14 @@ class _Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host", "").rsplit(":", 1)[0].strip("[]")
         return host in _ALLOWED_HOSTS
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+    def _send(self, code, body, ctype="application/json; charset=utf-8",
+              extra_headers=()):
         data = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        for name, value in extra_headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
 
@@ -247,12 +258,21 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "agent.md not found"})
             return
         if not self._valid_token():
-            self._json(403, {"error": "forbidden"})
+            self._json(401, {"error": "unauthorized"})
             return
         if path in ("/", "/index.html"):
             try:
                 html = open(_resource_path("config_ui.html"), encoding="utf-8").read()
-                self._send(200, html, "text/html; charset=utf-8")
+                extra = []
+                auth = self.headers.get("Authorization", "")
+                if auth.startswith("Bearer "):
+                    # 桥接构造的首导航（header 呈现）→ 种 HttpOnly 会话
+                    # cookie，刷新与后续 fetch 不再依赖 header
+                    extra.append((
+                        "Set-Cookie",
+                        f"cfgsess={self.server.expected_token}; Path=/; "
+                        "HttpOnly; SameSite=Strict"))
+                self._send(200, html, "text/html; charset=utf-8", extra_headers=extra)
             except OSError:
                 self._json(404, {"error": "config_ui.html not found"})
         elif path == "/api/state":
@@ -285,7 +305,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self._valid_host() or not self._valid_token():
-            self._json(403, {"error": "forbidden"})
+            self._json(401, {"error": "unauthorized"})
             return
         path = urlparse(self.path).path
         if path not in ("/api/fetch-models", "/api/test-provider", "/api/setup-claude-code",
@@ -345,7 +365,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         if not self._valid_host() or not self._valid_token():
-            self._json(403, {"error": "forbidden"})
+            self._json(401, {"error": "unauthorized"})
             return
         if urlparse(self.path).path != "/api/state":
             self._json(404, {"error": "not found"})
@@ -403,10 +423,6 @@ class ConfigServer:
     @property
     def url(self):
         return f"http://127.0.0.1:{self._port}/"
-
-    @property
-    def auth_url(self):
-        return f"{self.url}?token={self._token}"
 
     def start(self):
         """Start the server. Returns True on success, False if port unavailable."""
