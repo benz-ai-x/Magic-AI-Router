@@ -246,16 +246,21 @@ class ConfigStateStore:
         except OSError as exc:
             self._rollback(payload)
             return SaveResult(False, stage, [f"提交失败：{exc}"])
+        # Keychain 段原子性：sets 先行且首个失败立即中止——dels 不执行
+        # （旧密码绝不因新密码写失败而丢失）；del 失败属非破坏残留（可
+        # 重试），逐条收集继续。任何失败都回滚两文件，不暴露部分新状态。
         keychain_errors = []
         if self._keychain is not None:
             for tunnel, pw in plan.keychain_sets:
                 if not self._keychain.set_password(tunnel, pw):
                     keychain_errors.append(
                         f"隧道 {tunnel.get('name', '?')} 的密码保存到钥匙串失败")
-            for tunnel in plan.keychain_dels:
-                if not self._keychain.delete_password(tunnel):
-                    keychain_errors.append(
-                        f"隧道 {tunnel.get('name', '?')} 的旧密码清理失败")
+                    break
+            if not keychain_errors:
+                for tunnel in plan.keychain_dels:
+                    if not self._keychain.delete_password(tunnel):
+                        keychain_errors.append(
+                            f"隧道 {tunnel.get('name', '?')} 的旧密码清理失败")
         if keychain_errors:
             self._rollback(payload)  # 文件回到旧内容：不暴露部分新状态
             return SaveResult(False, "keychain", keychain_errors)

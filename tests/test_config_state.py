@@ -115,8 +115,6 @@ class TestPrepareValidation(unittest.TestCase):
         self.assertEqual(plan.errors, [])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestCommitTransaction(unittest.TestCase):
@@ -208,8 +206,6 @@ class TestCommitTransaction(unittest.TestCase):
         self.assertFalse(os.path.exists(store.journal_path))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestKeychainTransaction(unittest.TestCase):
@@ -282,8 +278,6 @@ class TestKeychainTransaction(unittest.TestCase):
         self.assertEqual(loaded.mp_state, "missing")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestBackupProtectionAndCreation(unittest.TestCase):
@@ -325,8 +319,6 @@ class TestBackupProtectionAndCreation(unittest.TestCase):
         self.assertGreaterEqual(stat.S_IMODE(os.stat(d).st_mode), 0o700)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestFaultInjectionCompletions(unittest.TestCase):
@@ -384,3 +376,54 @@ class TestFaultInjectionCompletions(unittest.TestCase):
         self.assertTrue(store.recover())
         self.assertFalse(os.path.exists(store.journal_path),
                          "损坏 journal 必须清除，不得永久残留")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestKeychainRealContractSemantics(unittest.TestCase):
+    """二审 A/C：真实 delete_password 契约 + keychain 段原子性。"""
+
+    def _store(self, keychain):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return ConfigStateStore(
+            mp_path=str(Path(d.name) / "magic-proxy.json"),
+            sp_path=str(Path(d.name) / "suanpan.yaml"),
+            keychain=keychain)
+
+    def test_set_failure_aborts_before_dels_protect_old_passwords(self):
+        ops = []
+        class KC:
+            def set_password(self, t, p):
+                ops.append(("set", t["name"]))
+                return False
+            def delete_password(self, t):
+                ops.append(("del", t["name"]))
+                return True
+        store = self._store(KC())
+        plan = store.prepare(mp={"tunnels": [
+            {"name": "t1", "ssh_host": "h", "auth_type": "password",
+             "password": "new"},
+            {"name": "t2", "ssh_host": "h2", "auth_type": "key"}]})
+        result = store.commit(plan)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "keychain")
+        self.assertEqual(ops, [("set", "t1")],
+                         "set 失败必须立即中止：dels 不执行，旧密码不丢")
+        self.assertEqual(store.load().mp_state, "missing", "文件已回滚")
+
+    def test_del_failure_is_nondestructive_and_collected(self):
+        class KC:
+            def set_password(self, t, p):
+                return True
+            def delete_password(self, t):
+                return False
+        store = self._store(KC())
+        plan = store.prepare(mp={"tunnels": [
+            {"name": "t1", "ssh_host": "h", "auth_type": "key"}]})
+        result = store.commit(plan)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "keychain")
+        self.assertTrue(any("旧密码清理失败" in e for e in result.errors))

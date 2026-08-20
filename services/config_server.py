@@ -362,8 +362,6 @@ class _Handler(BaseHTTPRequestHandler):
         if mp_in is None and sp_in is None:
             self._json(200, {"ok": True})
             return
-        if mp_in is not None:
-            mp_in = merge_config(mp_in)  # 默认值语义沿旧 _write_mp
         store = ConfigStateStore(keychain=keychain)
         plan = store.prepare(mp=mp_in, sp=sp_in)
         if not plan.ok:
