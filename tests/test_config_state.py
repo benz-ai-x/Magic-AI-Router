@@ -723,3 +723,18 @@ class TestRound3Holes(unittest.TestCase):
         plan = store.prepare(mp={"_load_error": "装载失败", "tunnels": []})
         self.assertFalse(plan.ok)
         self.assertIn("已阻止保存", plan.errors[0])
+
+
+class TestReloadAfterMigration(unittest.TestCase):
+    """四审回归：legacy 双身份迁移后带 id 重载必须幂等（不得锁死）。"""
+
+    def test_reloading_migrated_tunnels_with_ids_is_idempotent(self):
+        from mpconf.config import assign_stable_ids
+        tunnels = [{"name": "a", "ssh_user": "u", "ssh_host": "h",
+                    "ssh_port": 22},
+                   {"name": "b", "ssh_user": "u", "ssh_host": "h",
+                    "ssh_port": 22}]
+        assign_stable_ids(tunnels)  # 首次迁移：双 id
+        # 带 id 重载（真实磁盘路径）：幂等，不 raise
+        n = assign_stable_ids(tunnels)
+        self.assertEqual(n, 0)
