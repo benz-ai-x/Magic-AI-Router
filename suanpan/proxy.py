@@ -27,13 +27,15 @@ _log = structlog.get_logger()
 # RemoteProtocolError / WriteError / 读写超时都可能发生在上游已经处理
 # 之后——重放即重复推理/计费/tool side effect。
 # 可重试的充分条件：
-#   1. pre-send-proven——连接建立阶段失败（ConnectError/ConnectTimeout/
-#      ProxyError/UnsupportedProtocol），请求一个字节都没出本机；
+#   1. pre-send-proven——连接建立/等池阶段失败（ConnectError/
+#      ConnectTimeout/PoolTimeout/ProxyError/UnsupportedProtocol），
+#      请求一个字节都没出本机；
 #   2. idempotent-transport——幂等方法（GET/HEAD/PUT/DELETE/OPTIONS 或显式
 #      幂等键）遇传输层错误，有界一次。
 # 超时例外沿既有理由：慢上游不靠加倍修复（幂等也不重试）。
 _PRE_SEND_PROVEN = (httpx.ConnectError, httpx.ConnectTimeout,
-                    httpx.ProxyError, httpx.UnsupportedProtocol)
+                    httpx.PoolTimeout, httpx.ProxyError,
+                    httpx.UnsupportedProtocol)
 _TRANSPORT_ERRORS = (httpx.NetworkError, httpx.ProtocolError,
                      httpx.ProxyError, httpx.UnsupportedProtocol)
 _IDEMPOTENT_METHODS = ("GET", "HEAD", "PUT", "DELETE", "OPTIONS")
@@ -193,7 +195,12 @@ async def forward_request(
 
     try:
         upstream_req = http_client.build_request("POST", url, json=body, headers=headers)
-        upstream_resp = await _send_with_retry(http_client, upstream_req)
+        upstream_resp = await _send_with_retry(
+            http_client, upstream_req,
+            # 明确幂等语义（issue #7 验收③）：客户端携带幂等键头即视为
+            # 可安全重放
+            idempotent=any(h in request.headers
+                           for h in ("idempotency-key", "x-idempotency-key")))
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
         _log.error("upstream_error", provider=provider_name, error=error)

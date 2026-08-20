@@ -379,6 +379,19 @@ class TestRetryPolicy(unittest.IsolatedAsyncioTestCase):
             await _send_with_retry(client, req)
         self.assertEqual(len(calls), 2, "至多一次重试，不循环")
 
+    async def test_proxy_error_retried(self):
+        self.assertEqual(
+            await self._sends("POST", httpx.ProxyError("proxy refused")), 2)
+
+    async def test_unsupported_protocol_retried(self):
+        self.assertEqual(
+            await self._sends("POST", httpx.UnsupportedProtocol("h2c")), 2)
+
+    async def test_pool_timeout_retried(self):
+        # 等连接池超时 = 发送前
+        self.assertEqual(
+            await self._sends("POST", httpx.PoolTimeout("pool wait")), 2)
+
 
 
 def _mock_sse_response(chunks: list[bytes], status_code: int = 200):
@@ -557,8 +570,6 @@ class TestDrainAndLog(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(collected)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestCountingUpstreamIntegration(unittest.IsolatedAsyncioTestCase):
@@ -615,3 +626,7 @@ class TestRetryBoundEdge(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(httpx.ConnectError):
             await _send_with_retry(client, req)
         self.assertEqual(len(calls), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
