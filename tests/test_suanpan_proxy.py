@@ -273,18 +273,6 @@ class TestMake502(unittest.TestCase):
 
 # ── transport retry ─────────────────────────────────────────────────
 
-def _make_send_error(exc):
-    """Build an async send that raises exc on first call, returns OK after."""
-    calls = []
-
-    async def send(req, stream=False):
-        calls.append(req)
-        if len(calls) == 1:
-            raise exc
-        return httpx.Response(200, json={"ok": True}, request=req)
-    return send, calls
-
-
 class TestRetryPolicy(unittest.IsolatedAsyncioTestCase):
     """issue #7：RetryPolicy——无法证明请求未送达时，非幂等请求绝不重放。"""
 
