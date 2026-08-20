@@ -52,6 +52,10 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 带凭证请求的统一出站 adapter（`services/authenticated_http.py`）：模型列表、连通测试、余额查询三类调用只传请求意图；redirect/scheme/超时/响应上限策略集中一处——跨 origin（scheme/host/effective port 任一变化）重定向一律拒绝、HTTPS→HTTP 降级必拒、同 origin 重定向放行且凭证保留（最大跳数 3，允许 301/302/303/307/308）、响应体 1MB 上限。Authorization、x-api-key 及未来自定义敏感头共用同一策略：凭证绝不出原始 origin。
 
+### 重试策略（RetryPolicy）
+
+网关出站请求的自动重试判定（`suanpan/proxy.py`）：无法证明请求未送达时，非幂等请求绝不重放。可重试的充分条件——①pre-send-proven：连接建立阶段失败（ConnectError/ConnectTimeout/ProxyError/UnsupportedProtocol），一字节未出本机；②idempotent-transport：幂等方法（GET/HEAD/PUT/DELETE/OPTIONS 或显式幂等键）遇传输层错误，有界一次并记 attempt/reason。读/写超时即使幂等也不重试（慢上游不靠加倍修复）。`_send_with_retry` 的 req 必须可重发（bytes body，非已消费 stream）。
+
 ### 逐请求归属（Per-request Origin Binding）
 
 明文 HTTP 代理的消息定界契约（`tunnel/http_framer.py` + `tunnel/proxy.py::handle_http`）：同一客户端 keep-alive 连接上的每条请求独立解析并验证 authority；upstream 连接只允许同 origin 复用，跨 origin 先关旧连再安全重连。body 定界支持 Content-Length 与 chunked，pipelined 字节由 StreamReader 自然缓冲留给下一轮；无法定界的消息按「本消息后关闭」安全拒绝，绝不带着未定界状态复用连接。CONNECT 隧道走独立直通路径，不经此状态机。

@@ -107,7 +107,7 @@ suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM �
   config.py ── Pydantic 配置 schema + YAML 加载/回写 + API key 掩码契约（api_key_set 布尔，真实 key 不出进程；见 ADR-002）
   main.py ── FastAPI app factory + 路由 handler
   middleware.py ── APIKey + BodyLimit 中间件
-  proxy.py ── 流式代理转发 + 传输级重试
+  proxy.py ── 流式代理转发 + RetryPolicy 重试（pre-send 证明或幂等才有界重试；非幂等 POST 送达后不明即不重放）
   compat.py ── 供应商请求 body 归一化（system 扁平化 / document 块剥离 / beta 字段剥离）
   usage_extractor.py ── UsageExtractor SSE 用量提取（CRLF 兼容 + max-merge 跨供应商）
   router.py ── 路由决策（内联覆盖 → SUBAGENT 标签 → 规则 → 默认）

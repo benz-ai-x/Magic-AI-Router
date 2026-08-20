@@ -285,86 +285,101 @@ def _make_send_error(exc):
     return send, calls
 
 
-class TestSendWithRetry(unittest.TestCase):
-    """Idle HTTP/2 pool connections get silently closed by upstream gateways
-    (~60s). The first send hits the dead socket and fails with a transport
-    error before any byte reaches the upstream — retrying on a fresh
-    connection is idempotent and recovers the request."""
+class TestRetryPolicy(unittest.IsolatedAsyncioTestCase):
+    """issue #7：RetryPolicy——无法证明请求未送达时，非幂等请求绝不重放。"""
 
-    def test_remote_protocol_error_retried_once(self):
-        req = httpx.Request("POST", "https://api.example.com/v1/messages")
-        client = MagicMock(spec=httpx.AsyncClient)
-        send, calls = _make_send_error(httpx.RemoteProtocolError("terminated"))
-        client.send = send
-        resp = asyncio.run(_send_with_retry(client, req))
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(len(calls), 2)
-
-    def test_read_error_retried_once(self):
-        req = httpx.Request("POST", "https://api.example.com/v1/messages")
-        client = MagicMock(spec=httpx.AsyncClient)
-        send, calls = _make_send_error(httpx.ReadError("connection reset"))
-        client.send = send
-        resp = asyncio.run(_send_with_retry(client, req))
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(len(calls), 2)
-
-    def test_connect_error_retried_once(self):
-        req = httpx.Request("POST", "https://api.example.com/v1/messages")
-        client = MagicMock(spec=httpx.AsyncClient)
-        send, calls = _make_send_error(httpx.ConnectError("refused"))
-        client.send = send
-        resp = asyncio.run(_send_with_retry(client, req))
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(len(calls), 2)
-
-    def test_timeout_never_retried(self):
-        """A slow upstream is not fixed by doubling the load — timeouts
-        propagate immediately without a second attempt."""
-        req = httpx.Request("POST", "https://api.example.com/v1/messages")
-        client = MagicMock(spec=httpx.AsyncClient)
+    def _counting_send(self, error, fail_times=1):
         calls = []
+        async def send(req, stream=False):
+            calls.append(req)
+            if len(calls) <= fail_times:
+                raise error
+            return httpx.Response(200, json={"ok": True}, request=req)
+        return send, calls
 
-        async def send(r, stream=False):
-            calls.append(r)
-            raise httpx.ReadTimeout("upstream too slow")
+    async def _sends(self, method, error):
+        req = httpx.Request(method, "https://api.example.com/v1/messages")
+        client = MagicMock(spec=httpx.AsyncClient)
+        send, calls = self._counting_send(error)
         client.send = send
-        with self.assertRaises(httpx.ReadTimeout):
-            asyncio.run(_send_with_retry(client, req))
-        self.assertEqual(len(calls), 1)
+        try:
+            await _send_with_retry(client, req)
+        except Exception:
+            pass
+        return len(calls)
 
-    def test_second_transport_error_propagates(self):
-        """Retry happens at most once — if the fresh connection also fails,
-        the error surfaces instead of looping."""
+    async def test_post_connect_error_retried(self):
+        self.assertEqual(await self._sends("POST", httpx.ConnectError("refused")), 2)
+
+    async def test_post_read_error_never_retried(self):
+        self.assertEqual(
+            await self._sends("POST", httpx.ReadError("reset mid-response")), 1,
+            "ReadError 可能发生在上游已处理之后——POST 不得重放")
+
+    async def test_post_remote_protocol_error_never_retried(self):
+        self.assertEqual(
+            await self._sends("POST", httpx.RemoteProtocolError("terminated")), 1)
+
+    async def test_post_write_error_never_retried(self):
+        self.assertEqual(
+            await self._sends("POST", httpx.WriteError("partial send")), 1)
+
+    async def test_post_uncertain_timeout_never_retried(self):
+        self.assertEqual(
+            await self._sends("POST", httpx.ReadTimeout("upstream slow")), 1)
+        self.assertEqual(
+            await self._sends("POST", httpx.WriteTimeout("send stall")), 1)
+
+    async def test_post_connect_timeout_retried(self):
+        self.assertEqual(
+            await self._sends("POST", httpx.ConnectTimeout("connect slow")), 2)
+
+    async def test_get_transport_errors_bounded_retry(self):
+        self.assertEqual(
+            await self._sends("GET", httpx.ReadError("reset")), 2,
+            "GET 幂等——传输错误有界重试一次")
+        self.assertEqual(
+            await self._sends("GET", httpx.RemoteProtocolError("terminated")), 2)
+
+    async def test_get_ambiguous_timeout_still_not_retried(self):
+        self.assertEqual(await self._sends("GET", httpx.ReadTimeout("slow")), 1)
+
+    async def test_idempotent_post_with_key_retries(self):
         req = httpx.Request("POST", "https://api.example.com/v1/messages")
         client = MagicMock(spec=httpx.AsyncClient)
-        calls = []
-
-        async def send(r, stream=False):
-            calls.append(r)
-            raise httpx.RemoteProtocolError("still dead")
+        send, calls = self._counting_send(httpx.ReadError("reset"))
         client.send = send
-        with self.assertRaises(httpx.RemoteProtocolError):
-            asyncio.run(_send_with_retry(client, req))
-        self.assertEqual(len(calls), 2)
-
-    def test_success_first_try_not_retried(self):
-        req = httpx.Request("POST", "https://api.example.com/v1/messages")
-        client = MagicMock(spec=httpx.AsyncClient)
-        calls = []
-
-        async def send(r, stream=False):
-            calls.append(r)
-            return httpx.Response(200, json={"ok": True}, request=r)
-        client.send = send
-        resp = asyncio.run(_send_with_retry(client, req))
+        resp = await _send_with_retry(client, req, idempotent=True)
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2, "显式幂等键的 POST 按幂等策略重试")
+
+    async def test_attempt_and_reason_logged(self):
+        from unittest.mock import patch as _patch
+        req = httpx.Request("GET", "https://api.example.com/m")
+        client = MagicMock(spec=httpx.AsyncClient)
+        send, calls = self._counting_send(httpx.ConnectError("refused"))
+        client.send = send
+        with _patch("suanpan.proxy._log") as log:
+            await _send_with_retry(client, req)
+        # structlog 风格：事件名为首个位置参数
+        retry_events = [c for c in log.warning.call_args_list
+                        if c.args and c.args[0] == "transport_retry"]
+        self.assertTrue(retry_events)
+        self.assertIn(retry_events[0].kwargs.get("reason"),
+                      ("pre-send-proven", "idempotent-transport"))
+        self.assertEqual(retry_events[0].kwargs.get("attempt"), 1)
+
+    async def test_second_failure_propagates_no_loop(self):
+        req = httpx.Request("GET", "https://api.example.com/m")
+        client = MagicMock(spec=httpx.AsyncClient)
+        send, calls = self._counting_send(httpx.ReadError("reset"),
+                                          fail_times=99)
+        client.send = send
+        with self.assertRaises(httpx.ReadError):
+            await _send_with_retry(client, req)
+        self.assertEqual(len(calls), 2, "至多一次重试，不循环")
 
 
-# ── drain_and_log: SSE → extractor → usage chain ───────────────────
-# The integration seam that was previously hidden inside a closure.
-# Real SSE byte arrays exercise the full parse→extract→log path.
 
 def _mock_sse_response(chunks: list[bytes], status_code: int = 200):
     """Build a mock httpx.Response whose aiter_raw yields real SSE bytes."""
@@ -389,6 +404,7 @@ def _mock_sse_response(chunks: list[bytes], status_code: int = 200):
     resp.aiter_raw = lambda: _RawIter()
     resp.aclose = AsyncMock()
     return resp
+
 
 
 class TestDrainAndLog(unittest.IsolatedAsyncioTestCase):
@@ -543,3 +559,59 @@ class TestDrainAndLog(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCountingUpstreamIntegration(unittest.IsolatedAsyncioTestCase):
+    """issue #7 验收：计数 upstream 证明失败响应不触发第二次 POST。"""
+
+    async def test_failing_post_reaches_counting_upstream_once(self):
+        import json as _json
+        posts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            posts.append(request)
+            raise httpx.ReadError("reset after upstream processed")
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            req = client.build_request(
+                "POST", "https://api.example.com/v1/messages",
+                json={"m": 1}, headers={"content-type": "application/json"})
+            with self.assertRaises(httpx.ReadError):
+                await _send_with_retry(client, req)
+        self.assertEqual(len(posts), 1,
+                         "送达后不明的失败绝不重放 POST（重复推理/计费）")
+
+    async def test_pre_send_failure_reaches_upstream_twice(self):
+        posts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            posts.append(request)
+            if len(posts) == 1:
+                raise httpx.ConnectError("refused")
+            return httpx.Response(200, json={"ok": True})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            req = client.build_request(
+                "POST", "https://api.example.com/v1/messages",
+                json={"m": 1}, headers={"content-type": "application/json"})
+            resp = await _send_with_retry(client, req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(posts), 2, "连接建立失败（证明未送达）安全重试")
+
+
+class TestRetryBoundEdge(unittest.IsolatedAsyncioTestCase):
+    """pre-send 证明也受有界约束——连接持续失败不得无限重试。"""
+
+    async def test_persistent_connect_error_stops_after_bound(self):
+        calls = []
+        async def send(req, stream=False):
+            calls.append(req)
+            raise httpx.ConnectError("refused forever")
+        client = MagicMock(spec=httpx.AsyncClient)
+        client.send = send
+        req = httpx.Request("POST", "https://api.example.com/v1/messages")
+        with self.assertRaises(httpx.ConnectError):
+            await _send_with_retry(client, req)
+        self.assertEqual(len(calls), 2)

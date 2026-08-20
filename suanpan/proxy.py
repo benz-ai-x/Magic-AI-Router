@@ -22,25 +22,58 @@ from suanpan.usage_log import UsageEntry, UsageLogger
 
 _log = structlog.get_logger()
 
-# Transport errors (stale pool connection, RST, DNS) mean the request never
-# reached the upstream — one retry on a fresh connection is idempotent and
-# recovers from idle HTTP/2 connections the server closed silently (upstream
-# gateways drop HTTP/2 idle conns at ~60s; our pool holds them 5 min).
-# TimeoutException is NOT here: a slow upstream is not fixed by doubling.
-_RETRYABLE = (httpx.NetworkError, httpx.ProtocolError, httpx.ProxyError,
-              httpx.UnsupportedProtocol)
+# ── RetryPolicy（issue #7）────────────────────────────────────────────
+# 无法证明请求未送达时，非幂等请求绝不自动重放：ReadError /
+# RemoteProtocolError / WriteError / 读写超时都可能发生在上游已经处理
+# 之后——重放即重复推理/计费/tool side effect。
+# 可重试的充分条件：
+#   1. pre-send-proven——连接建立阶段失败（ConnectError/ConnectTimeout/
+#      ProxyError/UnsupportedProtocol），请求一个字节都没出本机；
+#   2. idempotent-transport——幂等方法（GET/HEAD/PUT/DELETE/OPTIONS 或显式
+#      幂等键）遇传输层错误，有界一次。
+# 超时例外沿既有理由：慢上游不靠加倍修复（幂等也不重试）。
+_PRE_SEND_PROVEN = (httpx.ConnectError, httpx.ConnectTimeout,
+                    httpx.ProxyError, httpx.UnsupportedProtocol)
+_TRANSPORT_ERRORS = (httpx.NetworkError, httpx.ProtocolError,
+                     httpx.ProxyError, httpx.UnsupportedProtocol)
+_IDEMPOTENT_METHODS = ("GET", "HEAD", "PUT", "DELETE", "OPTIONS")
+_MAX_RETRIES = 1
+
+
+def should_retry(method, error, *, idempotent=None, attempt=0):
+    """→ (是否重试, reason)。判定见模块 RetryPolicy 注释。"""
+    if isinstance(error, _PRE_SEND_PROVEN) and attempt < _MAX_RETRIES:
+        return True, "pre-send-proven"
+    if isinstance(error, httpx.TimeoutException):
+        return False, "timeout-ambiguous"
+    idem = (idempotent if idempotent is not None
+            else method.upper() in _IDEMPOTENT_METHODS)
+    if idem and isinstance(error, _TRANSPORT_ERRORS) and attempt < _MAX_RETRIES:
+        return True, "idempotent-transport"
+    return False, "post-send-ambiguous"
 
 
 async def _send_with_retry(
-    http_client: httpx.AsyncClient, req: httpx.Request,
+    http_client: httpx.AsyncClient, req: httpx.Request, *, idempotent=None,
 ) -> httpx.Response:
-    """Send once, retry once on a fresh connection for transport-level errors."""
-    try:
-        return await http_client.send(req, stream=True)
-    except _RETRYABLE as e:
-        _log.warning("transport_retry", url=str(req.url),
-                     error=type(e).__name__)
-        return await http_client.send(req, stream=True)
+    """Send once; auto-retry only per RetryPolicy（issue #7）.
+
+    req 必须可重发（content 为完整 bytes，非已消费 stream）——调用方
+    构造的 upstream_req 即此形态。幂等性：方法族自动判定，或显式传
+    ``idempotent=True``（如携带服务端幂等键的 POST）。
+    """
+    attempt = 0
+    while True:
+        try:
+            return await http_client.send(req, stream=True)
+        except (httpx.TransportError, httpx.TimeoutException) as e:
+            retry, reason = should_retry(req.method, e,
+                                         idempotent=idempotent, attempt=attempt)
+            if not retry:
+                raise
+            attempt += 1
+            _log.warning("transport_retry", url=str(req.url),
+                         error=type(e).__name__, reason=reason, attempt=attempt)
 
 
 async def drain_and_log(
@@ -221,10 +254,7 @@ async def forward_count_tokens(
 
     try:
         upstream_req = http_client.build_request("POST", url, json=body, headers=headers)
-        try:
-            r = await http_client.send(upstream_req)
-        except _RETRYABLE:
-            r = await http_client.send(upstream_req)
+        r = await _send_with_retry(http_client, upstream_req)
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
         _log.error("upstream_error", provider=provider_name, error=error)
