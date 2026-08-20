@@ -158,7 +158,7 @@ class TestHtmlOSError(unittest.TestCase):
         with patch.object(config_server, "_resource_path",
                           return_value="/nonexistent/config_ui.html"):
             status, data = _request(
-                self.port, "GET", f"/?token={self.token}")
+                self.port, "GET", "/", token=self.token)
         self.assertEqual(status, 404)
         self.assertIn("config_ui.html not found", json.loads(data)["error"])
 
@@ -181,7 +181,7 @@ class TestSetupClaudeCodeEndpoint(unittest.TestCase):
                           return_value=mock_result):
             status, data = _request(
                 self.port, "POST",
-                f"/api/setup-claude-code?token={self.token}",
+                "/api/setup-claude-code", token=self.token,
                 body=json.dumps({}))
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data), mock_result)
@@ -195,7 +195,7 @@ class TestSetupClaudeCodeEndpoint(unittest.TestCase):
                           return_value=mock_result) as mock_preview:
             status, data = _request(
                 self.port, "POST",
-                f"/api/cc-sync-preview?token={self.token}",
+                "/api/cc-sync-preview", token=self.token,
                 body=json.dumps({"roles": roles}))
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data), mock_result)
@@ -218,7 +218,7 @@ class TestCcDefaultRolesEndpoint(unittest.TestCase):
                           return_value=roles):
             status, data = _request(
                 self.port, "GET",
-                f"/api/cc-default-roles?token={self.token}")
+                "/api/cc-default-roles", token=self.token)
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data), roles)
 
@@ -239,14 +239,14 @@ class TestPutForbidden(unittest.TestCase):
             status, data = _request(
                 self.port, "PUT", "/api/state",
                 body=json.dumps({"mp": {}}))
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 401)
         store_cls.assert_not_called()
 
     def test_put_with_invalid_host_returns_403(self):
         status, data = _request(
-            self.port, "PUT", f"/api/state?token={self.token}",
+            self.port, "PUT", "/api/state", token=self.token,
             body=json.dumps({}), host_header="evil.com")
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 401)
 
 
 # ── config_server: sp_save failure + on_sp_saved (lines 192, 194-197) ─
@@ -266,7 +266,7 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
             store_cls.return_value.prepare.return_value = CommitPlan(
                 False, ["invalid config"])
             status, data = _request(
-                self.port, "PUT", f"/api/state?token={self.token}",
+                self.port, "PUT", "/api/state", token=self.token,
                 body=json.dumps({"sp": {"providers": {}}}))
         self.assertEqual(status, 422)
         self.assertIn("invalid config", json.loads(data)["errors"])
@@ -284,7 +284,7 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
             self.server._server.on_sp_saved = callback
             try:
                 _request(
-                    self.port, "PUT", f"/api/state?token={self.token}",
+                    self.port, "PUT", "/api/state", token=self.token,
                     body=json.dumps({"sp": {"providers": {}}}))
             finally:
                 self.server._server.on_sp_saved = None
@@ -299,7 +299,7 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
             self.server._server.on_sp_saved = callback
             try:
                 status, data = _request(
-                    self.port, "PUT", f"/api/state?token={self.token}",
+                    self.port, "PUT", "/api/state", token=self.token,
                     body=json.dumps({"sp": {"providers": {}}}))
             finally:
                 self.server._server.on_sp_saved = None

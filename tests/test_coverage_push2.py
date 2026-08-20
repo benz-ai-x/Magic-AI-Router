@@ -51,9 +51,11 @@ class TestConfigServerRoutes(unittest.TestCase):
 
     def _get(self, path):
         import urllib.request
-        url = f"http://127.0.0.1:{self._port}{path}?token={self._server.token}"
+        url = f"http://127.0.0.1:{self._port}{path}"
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {self._server.token}"})
         try:
-            with urllib.request.urlopen(url, timeout=5) as r:
+            with urllib.request.urlopen(req, timeout=5) as r:
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
@@ -74,17 +76,18 @@ class TestConfigServerRoutes(unittest.TestCase):
 
     def test_post_test_provider(self):
         import urllib.request
-        url = f"http://127.0.0.1:{self._port}/api/test-provider?token={self._server.token}"
+        url = f"http://127.0.0.1:{self._port}/api/test-provider"
         with patch("services.config_server.test_provider", return_value={"ok": True}):
             req = urllib.request.Request(url, data=json.dumps({"provider": "p"}).encode(),
-                                         headers={"Content-Type": "application/json"})
+                                         headers={"Authorization": f"Bearer {self._server.token}",
+                                                  "Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=5) as r:
                 body = json.loads(r.read())
         self.assertTrue(body["ok"])
 
     def test_put_state(self):
         import urllib.request
-        url = f"http://127.0.0.1:{self._port}/api/state?token={self._server.token}"
+        url = f"http://127.0.0.1:{self._port}/api/state"
         from mpconf.config_state import CommitPlan, SaveResult
         with patch("services.config_server.ConfigStateStore") as store_cls, \
              patch("mpconf.config_store.sp_save", return_value=(True, None)) as mock_ws:
@@ -93,21 +96,23 @@ class TestConfigServerRoutes(unittest.TestCase):
             store_cls.return_value.commit.return_value = SaveResult(True, None, [])
             data = json.dumps({"mp": {"tunnels": []}, "sp": {"providers": {}}}).encode()
             req = urllib.request.Request(url, data=data, method="PUT",
-                                         headers={"Content-Type": "application/json"})
+                headers={"Authorization": f"Bearer {self._server.token}",
+                         "Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=5) as r:
                 body = json.loads(r.read())
         self.assertTrue(body["ok"])
 
     def test_put_with_errors(self):
         import urllib.request
-        url = f"http://127.0.0.1:{self._port}/api/state?token={self._server.token}"
+        url = f"http://127.0.0.1:{self._port}/api/state"
         from mpconf.config_state import CommitPlan
         with patch("services.config_server.ConfigStateStore") as store_cls:
             store_cls.return_value.prepare.return_value = CommitPlan(
                 False, ["error1"])
             data = json.dumps({"mp": {"tunnels": []}}).encode()
             req = urllib.request.Request(url, data=data, method="PUT",
-                                         headers={"Content-Type": "application/json"})
+                headers={"Authorization": f"Bearer {self._server.token}",
+                         "Content-Type": "application/json"})
             try:
                 urllib.request.urlopen(req, timeout=5)
             except urllib.error.HTTPError as e:

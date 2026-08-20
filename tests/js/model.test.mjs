@@ -259,12 +259,13 @@ test("routeTargetOptionsFor skips providers with no models", () => {
 
 // ── apiHeaders ─────────────────────────────────────────
 test("apiHeaders puts token in Authorization header only", () => {
-  assert.deepEqual(L.apiHeaders("abc"), { Authorization: "Bearer abc" });
+  // issue #10：cookie 承载后 token 形参仅兼容旧签名，不产生头
+  assert.deepEqual(L.apiHeaders("abc"), {});
 });
 
 test("apiHeaders merges extra headers", () => {
   assert.deepEqual(L.apiHeaders("abc", { "Content-Type": "application/json" }),
-    { Authorization: "Bearer abc", "Content-Type": "application/json" });
+    { "Content-Type": "application/json" });
 });
 
 // ── ccRoleHint ─────────────────────────────────────────

@@ -593,8 +593,9 @@ function routeTargetOptionsFor(providers,current,emptyLabel){
 }
 
 function apiHeaders(token,extra){
-  // Bearer token rides in the Authorization header, never the URL.
-  return {Authorization:'Bearer '+token,...extra};
+  // issue #10：鉴权由 HttpOnly 会话 cookie（cfgsess）承载——同源 fetch
+  // 自动携带；本函数不再注入 Authorization，token 形参仅为兼容旧签名。
+  return {...extra};
 }
 
 // Role-row guidance. #43: the subagent row carries a hint that subagents
@@ -720,7 +721,8 @@ async function saveFlow(snap,deps,forceRulesSync){
 // LAYER 2 — runtime state, bridge, views (DOM + templates)
 // ════════════════════════════════════════════════════════════════
 let S={mp:{},sp:{}};
-const TOKEN=new URLSearchParams(location.search).get('token')||'';
+// issue #10：token 不再进 URL——鉴权由桥接首航头注入的 HttpOnly
+// 会话 cookie（cfgsess）承载，同源 fetch 自动携带。
 const API='/api/state';
 // credModeOverride：当前供应商凭证模式的手动覆盖（空 = 按数据经 credentialMode 推导）
 let activeView='tunnel',activeTunnel=0,activeProvider='',credModeOverride='',dirty=false;
@@ -885,7 +887,7 @@ function scheduleViewRefresh(view,refresh){
 
 // ── load / save ───────────────────────────────────────
 async function load(){
-  try{const r=await fetch(API,{headers:apiHeaders(TOKEN)});S=normalizeState(await r.json());}
+  try{const r=await fetch(API,{headers:apiHeaders(null)});S=normalizeState(await r.json());}
   catch(e){document.getElementById('viewport').innerHTML='<div class="view is-active" style="padding:40px;color:var(--muted)">加载失败：'+esc(e.message)+'</div>';return;}
   try{const lv=localStorage.getItem('mar.lastView');if(lv&&VIEWS[lv])activeView=lv;}catch(e){}
   activeTunnel=Math.min(S.mp.current_tunnel||0,Math.max(0,S.mp.tunnels.length-1));
@@ -950,7 +952,7 @@ async function saveAll(forceRulesSync){
   await saveFlow(
     {S,ccRoles,baselineState,baselineRoles},
     {
-      fetch:(...a)=>fetch(...a),api:API,token:TOKEN,
+      fetch:(...a)=>fetch(...a),api:API,token:'',
       confirmSync:ccConfirmSync,toast,gotoFirstError,
       viewTitle:v=>(VIEWS[v]||{}).title||v,
       commitConfig:st=>{baselineState=st;},
@@ -1066,7 +1068,7 @@ async function testTunnel(btn){
   const restore=()=>{btn.disabled=false;btn.textContent='测试连接';};
   try{
     // 后端按「已保存」的 tunnels[index] 探测——未保存的表单编辑不参与。
-    const r=await fetch('/api/test-tunnel',{method:'POST',headers:apiHeaders(TOKEN,{'Content-Type':'application/json'}),body:JSON.stringify({index:i})});
+    const r=await fetch('/api/test-tunnel',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({index:i})});
     const d=await r.json();
     if(d.ok)_setTunnelResult('✅ 连接成功','var(--ok)');
     else _setTunnelResult('❌ '+(d.error||'测试失败'),'var(--danger)');
@@ -1171,7 +1173,7 @@ async function cleanCapture(){
   // cdel 确认点击后不会自动还原按钮文案——这里手动恢复再发请求。
   if(btn){btn.innerHTML=btn._oh||'立即清理';btn.classList.remove('btn-confirm');btn.disabled=true;}
   try{
-    const r=await fetch('/api/capture-clean',{method:'POST',headers:apiHeaders(TOKEN,{'Content-Type':'application/json'}),body:'{}'});
+    const r=await fetch('/api/capture-clean',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:'{}'});
     const d=await r.json();
     if(d.ok)toast(`已清理 ${d.removed} 个抓包文件`);
     else toast(d.error||'清理失败',true);
@@ -1331,7 +1333,7 @@ async function fetchProviderModels(btn){
   btn.disabled=true;btn.textContent='拉取中…';
   const restore=()=>{btn.disabled=false;btn.textContent='从 API 拉取';};
   try{
-    const r=await fetch('/api/fetch-models',{method:'POST',headers:apiHeaders(TOKEN,{'Content-Type':'application/json'}),body:JSON.stringify({provider:name})});
+    const r=await fetch('/api/fetch-models',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({provider:name})});
     const d=await r.json();
     if(d.error){if(errEl)errEl.textContent=d.error;restore();}
     else{
@@ -1349,7 +1351,7 @@ async function testProvider(btn){
   btn.disabled=true;btn.textContent='测试中…';
   const restore=()=>{btn.disabled=false;btn.textContent='测试连接';};
   try{
-    const r=await fetch('/api/test-provider',{method:'POST',headers:apiHeaders(TOKEN,{'Content-Type':'application/json'}),body:JSON.stringify({provider:name})});
+    const r=await fetch('/api/test-provider',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({provider:name})});
     const d=await r.json();
     if(d.ok){
       if(errEl){
@@ -1419,7 +1421,7 @@ async function refreshStatus(silent){
     bg.innerHTML='<p class="loading-text">查询中…</p>';
   }
   try{
-    const br=await fetch('/api/balance',{headers:apiHeaders(TOKEN)});
+    const br=await fetch('/api/balance',{headers:apiHeaders(null)});
     const bal=await br.json();
     if(activeView!=='status')return;  // raced: user switched view mid-fetch
     renderBalance(bal);
@@ -1526,7 +1528,7 @@ async function refreshUsage(silent){
   const requestedRange=usageRange;
   if(!silent){summary.className='loading-text';summary.textContent='查询中…';}
   try{
-    const r=await fetch('/api/usage?range='+encodeURIComponent(requestedRange),{headers:apiHeaders(TOKEN)});
+    const r=await fetch('/api/usage?range='+encodeURIComponent(requestedRange),{headers:apiHeaders(null)});
     if(!r.ok)throw new Error(`HTTP ${r.status}`);
     const use=await r.json();
     if(activeView!=='usage'||usageRange!==requestedRange)return;
@@ -1611,7 +1613,7 @@ let ccRoleMeta={};
 
 async function ccInitRoles(){
   try{
-    const r=await fetch('/api/cc-default-roles',{headers:apiHeaders(TOKEN)});
+    const r=await fetch('/api/cc-default-roles',{headers:apiHeaders(null)});
     const d=(await r.json())||{};
     // 边界加固：角色 key 会进 onclick 单引号串、label 进 innerHTML——
     // 当前来源是 Python 常量，但按不可信载荷处理，白名单过滤一劳永逸。

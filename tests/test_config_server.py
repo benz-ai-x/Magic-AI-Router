@@ -19,9 +19,10 @@ def _start_server():
     return s, port
 
 
-def _request(port, method, path, body=None, token=None, host="127.0.0.1"):
+def _request(port, method, path, body=None, token=None, host="127.0.0.1",
+             headers=None):
     conn = HTTPConnection("127.0.0.1", port, timeout=5)
-    headers = {}
+    headers = dict(headers or {})
     if body is not None:
         headers["Content-Type"] = "application/json"
     if token:
@@ -42,12 +43,12 @@ class TestHostHeaderGuard(unittest.TestCase):
         self.server.stop()
 
     def test_valid_host_allowed(self):
-        status, _ = _request(self.port, "GET", f"/api/state?token={self.token}")
+        status, _ = _request(self.port, "GET", "/api/state", token=self.token)
         self.assertNotEqual(status, 403)
 
     def test_invalid_host_rejected(self):
         conn = HTTPConnection("127.0.0.1", self.port, timeout=5)
-        conn.request("GET", f"/api/state?token={self.token}", headers={"Host": "evil.com"})
+        conn.request("GET", "/api/state", headers={"Host": "evil.com", "Authorization": f"Bearer {self.token}"})
         resp = conn.getresponse()
         resp.read()
         conn.close()
@@ -64,14 +65,14 @@ class TestTokenAuth(unittest.TestCase):
 
     def test_no_token_rejected(self):
         status, _ = _request(self.port, "GET", "/api/state")
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 401)
 
     def test_wrong_token_rejected(self):
-        status, _ = _request(self.port, "GET", "/api/state?token=wrong")
-        self.assertEqual(status, 403)
+        status, _ = _request(self.port, "GET", "/api/state", token="wrong")
+        self.assertEqual(status, 401)
 
     def test_correct_token_allowed(self):
-        status, _ = _request(self.port, "GET", f"/api/state?token={self.token}")
+        status, _ = _request(self.port, "GET", "/api/state", token=self.token)
         self.assertEqual(status, 200)
 
     def test_bearer_header_accepted(self):
@@ -83,8 +84,8 @@ class TestTokenAuth(unittest.TestCase):
         from types import SimpleNamespace
         import secrets as _secrets
         h = SimpleNamespace(
-            path=f"/api/state?token={self.token}",
-            headers={},
+            path="/api/state",
+            headers={"Authorization": f"Bearer {self.token}"},
             server=SimpleNamespace(expected_token=self.token),
         )
         with patch("services.config_server.secrets.compare_digest",
@@ -131,7 +132,7 @@ class TestBodySizeLimit(unittest.TestCase):
         with patch("services.config_server.MAX_BODY_BYTES", 2):
             status, _ = _request(
                 self.port, "POST",
-                f"/api/fetch-models?token={self.token}",
+                "/api/fetch-models", token=self.token,
                 body='{"a": 1}',  # 7 bytes > 2
             )
         self.assertEqual(status, 413)
@@ -140,7 +141,7 @@ class TestBodySizeLimit(unittest.TestCase):
         with patch("services.config_server.MAX_BODY_BYTES", 2):
             status, _ = _request(
                 self.port, "PUT",
-                f"/api/state?token={self.token}",
+                "/api/state", token=self.token,
                 body='{"a": 1}',
             )
         self.assertEqual(status, 413)
@@ -150,7 +151,7 @@ class TestBodySizeLimit(unittest.TestCase):
             with patch("mpconf.config_store.sp_load_raw", return_value={"providers": {}}):
                 status, _ = _request(
                     self.port, "POST",
-                    f"/api/fetch-models?token={self.token}",
+                    "/api/fetch-models", token=self.token,
                     body='{"provider": "x"}',
                 )
         self.assertEqual(status, 200)
@@ -160,7 +161,7 @@ class TestBodySizeLimit(unittest.TestCase):
         import socket
         sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
         sock.sendall(
-            f"POST /api/fetch-models?token={self.token} HTTP/1.1\r\n"
+            f"POST /api/fetch-models HTTP/1.1\r\nAuthorization: Bearer {self.token}\r\n"
             f"Host: 127.0.0.1\r\n"
             f"Content-Length: not-a-number\r\n"
             f"\r\n".encode()
@@ -177,7 +178,7 @@ class TestBodySizeLimit(unittest.TestCase):
         import socket
         sock = socket.create_connection(("127.0.0.1", self.port), timeout=5)
         sock.sendall(
-            f"POST /api/fetch-models?token={self.token} HTTP/1.1\r\n"
+            f"POST /api/fetch-models HTTP/1.1\r\nAuthorization: Bearer {self.token}\r\n"
             f"Host: 127.0.0.1\r\n"
             f"Content-Length: -1\r\n"
             f"\r\n".encode()
@@ -214,7 +215,7 @@ class TestApiState(unittest.TestCase):
         return mp_path, sp_path
 
     def test_get_state_returns_json(self):
-        status, data = _request(self.port, "GET", f"/api/state?token={self.token}")
+        status, data = _request(self.port, "GET", "/api/state", token=self.token)
         self.assertEqual(status, 200)
         parsed = json.loads(data)
         self.assertIn("mp", parsed)
@@ -235,11 +236,11 @@ class TestApiState(unittest.TestCase):
         self.assertTrue(result["api_key_set"])
 
     def test_unknown_route_returns_404(self):
-        status, _ = _request(self.port, "GET", f"/api/nonexistent?token={self.token}")
+        status, _ = _request(self.port, "GET", "/api/nonexistent", token=self.token)
         self.assertEqual(status, 404)
 
     def test_html_served_at_root(self):
-        status, data = _request(self.port, "GET", f"/?token={self.token}")
+        status, data = _request(self.port, "GET", "/", token=self.token)
         self.assertEqual(status, 200)
         self.assertIn("<html", data.lower())
 
@@ -253,12 +254,12 @@ class TestPutState(unittest.TestCase):
         self.server.stop()
 
     def test_put_invalid_json_returns_400(self):
-        status, _ = _request(self.port, "PUT", f"/api/state?token={self.token}",
+        status, _ = _request(self.port, "PUT", "/api/state", token=self.token,
                              body="not json")
         self.assertEqual(status, 400)
 
     def test_put_empty_body_returns_400(self):
-        status, _ = _request(self.port, "PUT", f"/api/state?token={self.token}")
+        status, _ = _request(self.port, "PUT", "/api/state", token=self.token)
         self.assertEqual(status, 400)
 
     def test_put_goes_through_config_state_store(self):
@@ -270,7 +271,7 @@ class TestPutState(unittest.TestCase):
             store_cls.return_value.commit.return_value = SaveResult(True, None, [])
             body = json.dumps({"mp": {"tunnels": []}, "sp": {"providers": {}}})
             status, data = _request(self.port, "PUT",
-                                    f"/api/state?token={self.token}",
+                                    "/api/state", token=self.token,
                                     body=body)
         self.assertEqual(status, 200)
         store_cls.return_value.prepare.assert_called_once()
@@ -283,7 +284,7 @@ class TestPutState(unittest.TestCase):
                 False, ["端口无效"])
             body = json.dumps({"mp": {}})
             status, data = _request(self.port, "PUT",
-                                    f"/api/state?token={self.token}",
+                                    "/api/state", token=self.token,
                                     body=body)
         self.assertEqual(status, 422)
         parsed = json.loads(data)
@@ -309,15 +310,15 @@ class TestFetchModelsEndpoint(unittest.TestCase):
         self.server.stop()
 
     def _post(self, body, token=True):
-        t = f"?token={self.token}" if token else ""
-        return _request(self.port, "POST", f"/api/fetch-models{t}", body=body)
+        return _request(self.port, "POST", "/api/fetch-models", body=body,
+                        token=self.token if token else None)
 
     def test_post_requires_token(self):
         status, _ = self._post('{"provider": "deepseek"}', token=False)
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 401)
 
     def test_post_unknown_route_404(self):
-        status, _ = _request(self.port, "POST", f"/api/nope?token={self.token}",
+        status, _ = _request(self.port, "POST", "/api/nope", token=self.token,
                              body="{}")
         self.assertEqual(status, 404)
 
@@ -379,7 +380,7 @@ class TestBalanceUsageEndpoints(unittest.TestCase):
         # Patch fetch_balance so the handler path runs without real network calls.
         with patch.object(config_server, "fetch_balance", return_value=[{"provider": "p"}]):
             status, data = _request(self.port, "GET",
-                                    f"/api/balance?token={self.token}")
+                                    "/api/balance", token=self.token)
         self.assertEqual(status, 200)
         self.assertIsInstance(json.loads(data), list)
 
@@ -387,7 +388,7 @@ class TestBalanceUsageEndpoints(unittest.TestCase):
         cfg = {"usage_log": {"path": "/nonexistent/usage.jsonl"}}
         with patch.object(config_server.config_store, "sp_load_raw", return_value=cfg):
             status, data = _request(self.port, "GET",
-                                    f"/api/usage?token={self.token}")
+                                    "/api/usage", token=self.token)
         self.assertEqual(status, 200)
         payload = json.loads(data)
         self.assertIsInstance(payload, dict)
@@ -401,7 +402,7 @@ class TestBalanceUsageEndpoints(unittest.TestCase):
                 with self.subTest(usage_range=usage_range):
                     status, _ = _request(
                         self.port, "GET",
-                        f"/api/usage?token={self.token}&range={usage_range}",
+                        f"/api/usage?range={usage_range}", token=self.token,
                     )
                     self.assertEqual(status, 200)
 
@@ -419,10 +420,10 @@ class TestBalanceUsageEndpoints(unittest.TestCase):
                     config_server.config_store, "sp_load_raw",
                     return_value={"usage_log": {"path": path}}):
                 default_status, default_data = _request(
-                    self.port, "GET", f"/api/usage?token={self.token}")
+                    self.port, "GET", "/api/usage", token=self.token)
                 all_status, all_data = _request(
                     self.port, "GET",
-                    f"/api/usage?token={self.token}&range=all")
+                    "/api/usage?range=all", token=self.token)
         finally:
             os.unlink(path)
         self.assertEqual(default_status, 200)
@@ -433,7 +434,7 @@ class TestBalanceUsageEndpoints(unittest.TestCase):
     def test_usage_endpoint_rejects_invalid_range(self):
         status, data = _request(
             self.port, "GET",
-            f"/api/usage?token={self.token}&range=month",
+            "/api/usage?range=month", token=self.token,
         )
         self.assertEqual(status, 400)
         self.assertIn("range", json.loads(data)["error"])
@@ -449,7 +450,7 @@ class TestPutStateWrongPath(unittest.TestCase):
 
     def test_put_wrong_path_returns_404(self):
         status, data = _request(self.port, "PUT",
-                                f"/api/wrong?token={self.token}",
+                                "/api/wrong", token=self.token,
                                 body=json.dumps({}))
         self.assertEqual(status, 404)
 
@@ -500,12 +501,12 @@ class TestTestTunnelEndpoint(unittest.TestCase):
         self.server.stop()
 
     def _post(self, body, token=True):
-        t = f"?token={self.token}" if token else ""
-        return _request(self.port, "POST", f"/api/test-tunnel{t}", body=body)
+        return _request(self.port, "POST", "/api/test-tunnel", body=body,
+                        token=self.token if token else None)
 
     def test_requires_token(self):
         status, _ = self._post('{"index": 0}', token=False)
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 401)
 
     def test_invalid_index_type_returns_400(self):
         for bad in ('{"index": "x"}', '{"index": true}', '{"index": null}', '{}', '"str"'):
@@ -706,18 +707,18 @@ class TestCaptureCleanEndpoint(unittest.TestCase):
 
     def _post(self):
         return _request(self.port, "POST",
-                        f"/api/capture-clean?token={self.token}", body="{}")
+                        "/api/capture-clean", token=self.token, body="{}")
 
     def test_requires_token(self):
         status, _ = _request(self.port, "POST", "/api/capture-clean",
                              body="{}")
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 401)
 
     def test_empty_body_returns_400(self):
         # Client contract (mirrors the other POST endpoints): a JSON body is
         # mandatory — config_ui's cleanCapture() sends '{}'.
         status, _ = _request(self.port, "POST",
-                             f"/api/capture-clean?token={self.token}")
+                             "/api/capture-clean", token=self.token)
         self.assertEqual(status, 400)
 
     def test_clean_delegates_to_capture_store(self):
@@ -751,3 +752,72 @@ class TestCaptureCleanEndpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHeaderOnlyAuth(unittest.TestCase):
+    """issue #10：token 只进 Authorization header 与 HttpOnly 会话 cookie。
+
+    URL 永不带凭证；query-string 认证路径删除；无凭证的 / 与 /api/* 一律
+    401。常量时间比较保留。
+    """
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def _get(self, path, headers=None):
+        return _request(self.port, "GET", path, headers=headers or {})
+
+    def test_root_without_credentials_is_401(self):
+        status, _ = self._get("/")
+        self.assertEqual(status, 401)
+
+    def test_query_string_token_no_longer_accepted(self):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", f"/api/state?token={self.token}")  # 真 query 形态
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 401, "query 认证路径必须删除")
+
+    def test_root_with_bearer_header_sets_httponly_session_cookie(self):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/", headers={
+            "Authorization": f"Bearer {self.token}"})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 200)
+        set_cookie = resp.getheader("Set-Cookie", "")
+        self.assertIn("cfgsess=", set_cookie)
+        self.assertIn("HttpOnly", set_cookie)
+        self.assertIn("SameSite=Strict", set_cookie)
+
+    def test_api_with_session_cookie_only_is_authorized(self):
+        _, resp_headers = self._get("/", headers={
+            "Authorization": f"Bearer {self.token}"})
+        # 从原始响应提取 cookie（_request 返回文本，改用 http.client 直取）
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/api/state", headers={
+            "Cookie": f"cfgsess={self.token}"})
+        resp = conn.getresponse()
+        body = resp.read().decode()
+        conn.close()
+        self.assertEqual(resp.status, 200)
+        self.assertIn('"mp"', body)
+
+    def test_bogus_cookie_rejected_constant_time_paths_alive(self):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/api/state", headers={
+            "Cookie": "cfgsess=wrong"})
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 401)

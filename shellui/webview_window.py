@@ -118,8 +118,13 @@ class _ConfigWindowDelegate(NSObject):
             logger.exception("key-file picker failed")
 
 
-def show_config_window(url, title="Magic AI Router 设置", on_action=None):
+def show_config_window(url, title="Magic AI Router 设置", on_action=None,
+                       auth_headers=None):
     """Open (or focus) the config webview window.
+
+    auth_headers（issue #10）：首个导航请求携带的请求头（如 Authorization
+    Bearer）——URL 本身永不包含凭证；桥接负责构造经过鉴权的首屏请求，
+    服务端随响应种下 HttpOnly 会话 cookie 供后续导航与 API 使用。
 
     on_action: optional callable receiving app-level bridge actions
     ({type: "reconnectProxy"} / {type: "openPath", kind: ...}) — the adapter
@@ -172,7 +177,16 @@ def show_config_window(url, title="Magic AI Router 设置", on_action=None):
     cv = win.contentView()
     _webview = WKWebView.alloc().initWithFrame_configuration_(cv.bounds(), config)
     _webview.setAutoresizingMask_(_WidthSizable | _HeightSizable)
-    _webview.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(url)))
+    request = None
+    if auth_headers:
+        mutable = objc.lookUpClass("NSMutableURLRequest").requestWithURL_(
+            NSURL.URLWithString_(url))
+        for name, value in auth_headers.items():
+            mutable.setValue_forHTTPHeaderField_(value, name)
+        request = mutable
+    else:
+        request = NSURLRequest.requestWithURL_(NSURL.URLWithString_(url))
+    _webview.loadRequest_(request)
     cv.addSubview_(_webview)
 
     win.makeKeyAndOrderFront_(None)
