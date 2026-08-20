@@ -25,7 +25,7 @@ import subprocess
 import threading
 import time
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from tunnel import proxy
 from tunnel import async_runtime
@@ -338,7 +338,7 @@ class TestSubprocessMonitorWaitLogThreadJoin(unittest.TestCase):
                 return True
 
         m = _M()
-        block = threading.Event()
+        threading.Event()
 
         def blocker():
             time.sleep(3)

@@ -1,6 +1,5 @@
 """Tests for GET /v1/models endpoint in suanpan/main.py."""
 import unittest
-from unittest.mock import MagicMock
 
 from suanpan.config import AppConfig, ProviderConfig, RouterConfig
 from suanpan.main import create_app

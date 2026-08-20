@@ -25,7 +25,6 @@ from capture.capture_controller import CaptureController
 from capture.resources import CaptureResources
 
 
-from sysctl import sleep_blocker
 from sysctl import system_proxy
 
 

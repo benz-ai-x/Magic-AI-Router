@@ -7,7 +7,6 @@ Seams under test:
 - ProviderConfig.resolve_api_key: → key string or None
 - _send_with_retry: transport-level errors retried once; timeouts never
 """
-import asyncio
 import json
 import unittest
 from unittest.mock import MagicMock, AsyncMock
@@ -564,7 +563,6 @@ class TestCountingUpstreamIntegration(unittest.IsolatedAsyncioTestCase):
     """issue #7 验收：计数 upstream 证明失败响应不触发第二次 POST。"""
 
     async def test_failing_post_reaches_counting_upstream_once(self):
-        import json as _json
         posts = []
 
         def handler(request: httpx.Request) -> httpx.Response:

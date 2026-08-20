@@ -1,8 +1,6 @@
 """Batch coverage: system_proxy, chromium_proxy, suanpan/router edges, conn_coordinator, suanpan_runtime."""
-import os
-import subprocess
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 # ── system_proxy.py ──────────────────────────────────────
 from sysctl import system_proxy

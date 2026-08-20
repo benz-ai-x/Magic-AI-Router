@@ -14,12 +14,22 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - name: Install dependencies
-        run: python -m pip install -r requirements-dev.txt
-      - name: Run tests
-        run: python -m pytest -q tests/
-      - name: Compile check
+          cache-dependency-path: requirements-lock.txt
+      - name: Install locked dependencies
+        run: python -m pip install --require-hashes -r requirements-lock.txt
+      - name: Lock drift check
+        # 语义：只在 requirements-dev.txt 声明的包名集合变化时报错。
+        run: python tools/check_lock_covers_dev.py
+      - name: Python tests + coverage gate
+        run: python -m pytest -q tests/ --cov --cov-fail-under=90
+      - name: Node tests (config_ui.html LAYER 1/2)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node --test tests/js/*.test.mjs
+      - name: Ruff
+        run: ruff check .
+      - name: Compile + shell syntax
         run: |
           python -m py_compile app.py util.py capture/mitmdump_entry.py tunnel/proxy.py services/config_server.py services/suanpan_runtime.py capture/capture.py capture/ai_capture_addon.py sysctl/system_proxy.py shellui/webview_window.py suanpan/main.py suanpan/router.py
           bash -n build.sh scripts/build_dmg.sh scripts/notarize.sh

@@ -2,7 +2,6 @@
 import json
 import tempfile
 import unittest
-from dataclasses import dataclass
 from pathlib import Path
 
 from suanpan.usage_log import UsageLogger, UsageEntry

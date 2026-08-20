@@ -1,17 +1,14 @@
 """Coverage push: suanpan/proxy forward + config_server write + suanpan/main handlers + host_key file ops."""
-import asyncio
-import json
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch, AsyncMock, mock_open
+from unittest.mock import MagicMock, patch, AsyncMock
 from pathlib import Path
 
 # ── suanpan/proxy.py: forward_request + forward_count_tokens ──────
 
 from suanpan.config import AppConfig, ProviderConfig, RouterConfig
 from suanpan.router import RouteDecision
-from suanpan.usage_log import UsageLogger, UsageEntry
 from suanpan import proxy as spproxy
 
 
@@ -407,7 +404,6 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
 
 # ── config_server.py / config_store.py: _write_mp + sp save ────────
 
-from services import config_server
 from mpconf import config_store
 
 class TestWriteSp(unittest.TestCase):

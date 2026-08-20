@@ -99,7 +99,7 @@ class TestFetchModels(unittest.TestCase):
         self.assertEqual(r, {"models": ["m1"]})
         self.assertEqual(m.call_args_list[-1][0][0], "https://api.deepseek.com/anthropic/models")
 
-    def test_404_falls_back_to_models_without_v1(self):
+    def test_404_falls_back_to_models_without_v1_second(self):
         def side_effect(url, headers=None, data=None, method=None, timeout=None):
             if url.endswith("/v1/models"):
                 raise _http_error(404)

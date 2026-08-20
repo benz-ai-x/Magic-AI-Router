@@ -476,7 +476,7 @@ class TestSetupClaudeCodeWithRoles(unittest.TestCase):
             with patch("services.claude_code_setup.config_store.sp_load_raw",
                        return_value=sp), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
-                result = claude_code_setup.setup(roles=roles)
+                claude_code_setup.setup(roles=roles)
             with open(settings_path) as f:
                 written = json.load(f)
         env = written["env"]

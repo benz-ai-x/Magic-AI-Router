@@ -1,5 +1,4 @@
 """Tests for sleep_blocker.py — CaffeinateBlocker lifecycle."""
-import subprocess
 import unittest
 from unittest.mock import patch, MagicMock
 

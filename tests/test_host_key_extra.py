@@ -1,6 +1,5 @@
 """Tests for host_key.py — inspect, accept, replace with mocked subprocess."""
 import os
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock

@@ -93,7 +93,8 @@ class TestLogBuffer(unittest.TestCase):
             funcName = ""
             lineno = 0
             levelno = 20
-            getMessage = lambda self: "x"
+            def getMessage(self):
+                return "x"
 
             def __getattr__(self, k):
                 raise AttributeError(k)

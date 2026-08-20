@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 
 from sysctl import port_check, sleep_blocker
 from sysctl.instance_owner import InstanceOwner

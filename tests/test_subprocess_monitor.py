@@ -8,7 +8,6 @@ Seams under test (confirmed):
 - _start_process: Popen + stderr thread launch
 """
 import subprocess
-import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch

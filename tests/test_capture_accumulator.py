@@ -55,9 +55,9 @@ class TestStoreConvergence(unittest.TestCase):
     """issue #11：单条超大拒收 + append 后总量收敛。"""
 
     def test_oversized_record_rejected(self):
-        import json as _json
         from capture import capture_store as cs
-        import tempfile, pathlib, os
+        import tempfile
+        import os
         with tempfile.TemporaryDirectory(dir=os.path.expanduser("~")) as d:
             cs.append_json({"seed": 1}, os.path.join(d, "cap"))  # 首条建目录+marker
             d = os.path.join(d, "cap")
@@ -66,11 +66,11 @@ class TestStoreConvergence(unittest.TestCase):
 
     def test_post_append_trims_to_store_budget(self):
         from capture import capture_store as cs
-        import tempfile, os
+        import tempfile
+        import os
         with tempfile.TemporaryDirectory(dir=os.path.expanduser("~")) as d:
             cs.append_json({"seed": 1}, os.path.join(d, "cap"))  # 建目录
             d = os.path.join(d, "cap")
-            small = cs.MAX_STORE_BYTES
             old_total = cs.MAX_STORE_BYTES
             try:
                 # 两文件各 ~3/4 上限 → append 第二条后总量超限触发收敛
@@ -78,10 +78,10 @@ class TestStoreConvergence(unittest.TestCase):
                 cs.MAX_FILE_BYTES = 1000
                 cs.append_json({"d": "y" * 60}, d)
                 # 人造第二个更旧文件使总量超限
-                import time
                 p = pathlib.Path(d) / "2026-01-01.jsonl"
                 p.write_text("z" * 80)
-                st = os.stat(p); os.utime(p, (st.st_atime - 100, st.st_mtime - 100))
+                st = os.stat(p)
+                os.utime(p, (st.st_atime - 100, st.st_mtime - 100))
                 cs.append_json({"d": "y" * 5}, d)
                 total = sum(f.stat().st_size for f in pathlib.Path(d).glob("*.jsonl*"))
                 self.assertLessEqual(total, cs.MAX_STORE_BYTES + 20,

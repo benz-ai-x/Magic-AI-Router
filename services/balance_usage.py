@@ -18,10 +18,11 @@ from services.authenticated_http import (
     AuthenticatedHttpClient,
 )
 
-_BALANCE_CLIENT = AuthenticatedHttpClient(timeout=10)
 from datetime import datetime, timedelta, timezone
 
 from mpconf.provider_auth import build_outbound_headers, resolve_api_key
+
+_BALANCE_CLIENT = AuthenticatedHttpClient(timeout=10)
 
 logger = logging.getLogger("magic-proxy.balance_usage")
 

@@ -57,7 +57,7 @@ class AsyncRuntime:
         且不创建新线程（error 记录根因，调用方可重试或放弃）。"""
         if not self._shutdown_previous():
             with self._lock:
-                self._error = f"上一代线程未在超时内终止，拒绝 start"
+                self._error = "上一代线程未在超时内终止，拒绝 start"
             return False
         generation = 0
         stop_event = threading.Event()

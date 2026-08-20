@@ -18,7 +18,7 @@ class TestStatsTick(unittest.TestCase):
         s = Stats()
         s.record_up(500)
         s.tick()
-        snap1 = s.snapshot()
+        s.snapshot()
         s.record_up(500)
         s.tick()
         snap2 = s.snapshot()

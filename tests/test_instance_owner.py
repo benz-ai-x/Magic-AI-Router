@@ -9,7 +9,6 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from sysctl.instance_owner import InstanceOwner
 

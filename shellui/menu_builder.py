@@ -7,12 +7,11 @@ Extracted from MagicProxyApp to isolate ~330 lines of view-layer code.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 import logging
 
 import rumps
 from capture import chromium_proxy
-from mpconf.config import save_config
 from util import resource_path as _resource_path, truncate as _truncate
 
 logger = logging.getLogger("magic-proxy.menu")
