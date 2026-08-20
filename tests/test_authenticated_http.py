@@ -58,6 +58,9 @@ def _make_handler(redirect_to, status, body, seen):
             self.end_headers()
             self.wfile.write(payload)
 
+        def do_POST(self):
+            self.do_GET()
+
         def log_message(self, *a):
             pass
     return H
@@ -110,6 +113,60 @@ class TestRedirectPolicy(unittest.TestCase):
         with self.assertRaises(AuthRedirectError):
             self.client.open_json(a.url(), headers={"x-api-key": "SECRET"})
         self.assertEqual(len(b.seen), 0)
+
+
+class TestRedirectPolicyCompletions(unittest.TestCase):
+    """一审补齐：非 GET 拒绝 / 最大跳数 / 302 同 origin。"""
+
+    def setUp(self):
+        self.client = AuthenticatedHttpClient()
+
+    def test_non_get_redirect_rejected_even_same_origin(self):
+        server = _RecordingServer(redirect_to="/final")
+        self.addCleanup(server.close)
+        with self.assertRaises(AuthRedirectError) as ctx:
+            self.client.open(server.url(), method="POST", data=b"x",
+                             headers={"Authorization": "Bearer k"})
+        self.assertIn("非 GET", ctx.exception.msg)
+
+    def test_max_redirects_capped_at_three(self):
+        # /x → /x 自环：同 origin 放行但 3 跳封顶（urllib 以 HTTPError 收口）
+        import urllib.error
+        server = _RecordingServer(redirect_to="/x")
+        self.addCleanup(server.close)
+        with self.assertRaises(urllib.error.HTTPError):
+            self.client.open(server.url(), headers={"Authorization": "Bearer k"})
+        self.assertGreaterEqual(len(server.seen), 4)  # 首发 + 3 跳
+
+    def test_302_same_origin_follows_for_get(self):
+        import http.server
+        seen = []
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.path)
+                if self.path == "/x":
+                    self.send_response(302)
+                    self.send_header("Location", "/final")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = b'{"ok": 1}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *a):
+                pass
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        import threading
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        data = self.client.open_json(
+            f"http://127.0.0.1:{httpd.server_address[1]}/x",
+            headers={"Authorization": "Bearer k"})
+        self.assertEqual(data, {"ok": 1})
+        self.assertEqual(seen, ["/x", "/final"])
 
 
 if __name__ == "__main__":

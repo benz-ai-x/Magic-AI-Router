@@ -8,7 +8,10 @@ fetch_balance）只传请求意图；redirect、scheme、超时、响应上限�
   ——Authorization、x-api-key 及未来任何自定义敏感头共用同一策略：
   认证请求绝不出原始 origin。
 - HTTPS → HTTP 降级必拒。
-- 同 origin 重定向放行（凭证保留），最大跳数 3，允许 301/302/303/307/308。
+- 同 origin 重定向：GET 跟随（凭证保留），允许 301/302/303/307，
+  最大 3 跳；**非 GET 一律拒绝**——urllib 对 307/308+POST 会硬抛、对
+  301/302/303 会静默改 GET 丢 body，两条路都不可接受，故收口为显式
+  拒绝并给出可解释错误。
 - 响应体上限 1MB，防失控放大。
 """
 from __future__ import annotations
@@ -22,7 +25,7 @@ logger = logging.getLogger("magic-proxy.auth_http")
 
 MAX_REDIRECTS = 3
 MAX_RESPONSE_BYTES = 1024 * 1024
-_REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+_REDIRECT_STATUSES = (301, 302, 303, 307, 308)  # 308 由 urllib 先行处理，此处放行语义一致
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
@@ -49,6 +52,10 @@ class _AuthRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if code not in _REDIRECT_STATUSES:
             return None
+        if req.get_method().upper() != "GET":
+            raise AuthRedirectError(
+                f"拒绝 {req.get_method()} 请求的重定向（{code}）：认证的"
+                "非 GET 请求不跟随任何重定向")
         old = _origin_of(req.full_url)
         new = _origin_of(newurl)
         if new[0] == "http" and old[0] == "https":
