@@ -102,7 +102,14 @@ class MagicProxyApp(rumps.App):
         self._sys_proxy = self._lifecycle.sys_proxy
         self._capture = self._lifecycle.capture
         self._config_server = self._lifecycle.config_server
-        self._lifecycle.start_all()
+        if not self._lifecycle.start_all():
+            # 单实例守卫失败（issue #3）：用户可见的清晰错误，绝不以
+            # 僵尸实例形态继续起菜单。
+            rumps.alert("Magic AI Router",
+                        "已有 Magic AI Router 实例在运行。\n\n"
+                        "本次启动已退出——请通过菜单栏使用现有实例，"
+                        "或先退出它再重新启动。")
+            raise SystemExit(0)
 
         # Menu
         self._menu_builder = MenuBuilder(

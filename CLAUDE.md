@@ -88,7 +88,8 @@ sysctl/ ── 系统集成
   sys_proxy_controller.py ── 系统代理收敛状态机
   sleep_blocker.py ── 防睡眠
   login_item.py ── 登录启动 LaunchAgent（bundle ID 见 build.sh）
-  port_check.py ── 端口占用检测
+  port_check.py ── 端口占用检测（占用仅是线索；SIGTERM→SIGKILL 升级在此）
+  instance_owner.py ── 实例所有权锁：pid+启动时间双匹配抗 PID 复用；O_EXCL 原子创建/陈旧接管/release
   keychain.py ── macOS Keychain 读写
 
 services/ ── 服务

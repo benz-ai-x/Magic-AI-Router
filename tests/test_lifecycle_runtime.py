@@ -10,6 +10,9 @@ CaptureController 子模块接口不变，但不再通过 ServiceCoordinator 暴
 不再穿透 ``svc._suanpan._rt._thread`` 或 ``svc._capture_ctrl._enabled``
 这种内部属性。
 """
+import tempfile
+import os
+from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -145,7 +148,7 @@ class TestQuitOrder(unittest.TestCase):
     def test_start_all_clears_ports_then_starts_services(self):
         svc = _make_coordinator()
         order = []
-        with patch("services.lifecycle_runtime._clear_stale_ports",
+        with patch("services.lifecycle_runtime.report_port_occupancy",
                    side_effect=lambda *a: order.append("clear_ports")), \
              patch("services.lifecycle_runtime._read_suanpan_port",
                    return_value=9527), \
@@ -157,26 +160,7 @@ class TestQuitOrder(unittest.TestCase):
         self.assertEqual(order, ["clear_ports", "config_server", "suanpan"])
 
 
-
-
-class TestStaleInstanceAndPortHelpers(unittest.TestCase):
-    def test_empty_argv_basename_never_matches(self):
-        from services import lifecycle_runtime as lr
-        with patch.object(lr.sys, "argv", [""]):
-            self.assertFalse(lr._is_stale_instance("python3 app.py"))
-
-    def test_kill_failure_logs_and_continues(self):
-        from services import lifecycle_runtime as lr
-        owner = MagicMock(pid=4242, name="Magic", cmd="python3 app.py")
-        with patch.object(lr.port_check, "who_owns", return_value=owner), \
-             patch.object(lr.port_check, "kill",
-                          return_value=(False, "EPERM")), \
-             patch.object(lr.os, "getpid", return_value=1), \
-             patch.object(lr.sys, "argv", ["app.py"]), \
-             self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
-            lr._clear_stale_ports(9528, 9527)
-        self.assertTrue(any("Failed to kill" in m for m in logs.output))
-
+class TestPortHelpers(unittest.TestCase):
     def test_read_suanpan_port_falls_back_on_error(self):
         from services import lifecycle_runtime as lr
         with patch.object(lr.config_store, "suanpan_listen",
@@ -209,12 +193,12 @@ class TestInternalizedReload(unittest.TestCase):
         mock_reload.assert_called_once_with()
 
 
-class TestStartAllFailuresAndPortClearing(unittest.TestCase):
+class TestStartAllFailureBranches(unittest.TestCase):
     def test_config_server_start_failure_warns_but_gateway_still_starts(self):
         svc = _make_coordinator()
         with patch.object(svc._config_server, "start", return_value=False), \
              patch.object(svc._suanpan, "start", return_value=True) as sp_start, \
-             patch("services.lifecycle_runtime._clear_stale_ports"), \
+             patch("services.lifecycle_runtime.report_port_occupancy"), \
              patch("services.lifecycle_runtime._read_suanpan_port",
                    return_value=9527), \
              self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
@@ -226,7 +210,7 @@ class TestStartAllFailuresAndPortClearing(unittest.TestCase):
         svc = _make_coordinator()
         with patch.object(svc._config_server, "start", return_value=True), \
              patch.object(svc._suanpan, "start", return_value=False), \
-             patch("services.lifecycle_runtime._clear_stale_ports"), \
+             patch("services.lifecycle_runtime.report_port_occupancy"), \
              patch("services.lifecycle_runtime._read_suanpan_port",
                    return_value=9527), \
              self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
@@ -234,44 +218,62 @@ class TestStartAllFailuresAndPortClearing(unittest.TestCase):
         self.assertTrue(any("Suanpan gateway auto-start failed" in m
                             for m in logs.output))
 
-    def test_empty_cmd_never_matches(self):
-        from services import lifecycle_runtime as lr
-        self.assertFalse(lr._is_stale_instance(""))
+    def _lifecycle(self, owner):
+        svc = _make_coordinator()
+        svc._owner = owner
+        return svc
 
-    def test_no_owner_or_self_owner_skipped(self):
-        from services import lifecycle_runtime as lr
-        self_pid = 99
-        for owner in (None, MagicMock(pid=self_pid, cmd="python3 app.py")):
-            with patch.object(lr.port_check, "who_owns", return_value=owner), \
-                 patch.object(lr.port_check, "kill") as mock_kill, \
-                 patch.object(lr.os, "getpid", return_value=self_pid):
-                lr._clear_stale_ports(9528, 9527)
-            mock_kill.assert_not_called()
-
-    def test_foreign_process_left_alone_with_warning(self):
-        from services import lifecycle_runtime as lr
-        owner = MagicMock(pid=1234, name="httpd", cmd="/usr/sbin/httpd -p 9528")
-        with patch.object(lr.port_check, "who_owns", return_value=owner), \
-             patch.object(lr.port_check, "kill") as mock_kill, \
-             patch.object(lr.os, "getpid", return_value=1), \
-             patch.object(lr.sys, "argv", ["app.py"]), \
-             self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
-            lr._clear_stale_ports(9528, 9527)
-        mock_kill.assert_not_called()
-        self.assertTrue(any("not our process" in m for m in logs.output))
-
-    def test_successful_kill_logs_info(self):
-        from services import lifecycle_runtime as lr
-        owner = MagicMock(pid=4242, name="Magic", cmd="python3 app.py")
-        with patch.object(lr.port_check, "who_owns", return_value=owner), \
-             patch.object(lr.port_check, "kill",
-                          return_value=(True, None)), \
-             patch.object(lr.os, "getpid", return_value=1), \
-             patch.object(lr.sys, "argv", ["app.py"]), \
-             self.assertLogs("magic-proxy.lifecycle", level="INFO") as logs:
-            lr._clear_stale_ports(9528, 9527)
-        self.assertTrue(any("Killed PID 4242" in m for m in logs.output))
+    def test_occupied_port_reports_and_never_signals_foreign_owner(self):
+        """非本项目端口 owner（含同名异目录脚本形态的 cmd）——只告警。"""
+        svc = _make_coordinator()
+        scenarios = [
+            MagicMock(pid=4242, name="python3", cmd="python3 /other/project/app.py"),
+            MagicMock(pid=5151, name="httpd", cmd="/usr/sbin/httpd -p 9528"),
+        ]
+        for foreign in scenarios:
+            with patch.object(svc._owner, "acquire", return_value={"pid": 1}), \
+                 patch("services.lifecycle_runtime.port_check.who_owns",
+                       return_value=foreign), \
+                 patch("services.lifecycle_runtime.port_check.kill") as kill, \
+                 patch("services.lifecycle_runtime._read_suanpan_port",
+                       return_value=9527), \
+                 patch.object(svc._config_server, "start", return_value=True), \
+                 patch.object(svc._suanpan, "start", return_value=True), \
+                 self.assertLogs("magic-proxy.lifecycle", level="WARNING") as logs:
+                self.assertTrue(svc.start_all())
+            kill.assert_not_called()
+            self.assertTrue(any("不自动处理" in m for m in logs.output))
 
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_start_all_aborts_when_sibling_holds_lock(self):
+        from sysctl import instance_owner as io
+        with tempfile.TemporaryDirectory() as d:
+            holder = io.InstanceOwner(lock_path=str(Path(d) / "i.json"),
+                                      pid_info=lambda p: ("S_A", "/exe"), pid=1)
+            holder.acquire()
+            sibling = io.InstanceOwner(lock_path=holder.lock_path,
+                                       pid_info=lambda p: ("S_A", "/exe"), pid=2)
+            svc = _make_coordinator()
+            svc._owner = sibling  # acquire 将返回 None（活锁冲突）
+            with patch.object(svc._config_server, "start") as cs_start, \
+                 patch.object(svc._suanpan, "start") as sp_start, \
+                 self.assertLogs("magic-proxy.lifecycle", level="ERROR"):
+                ok = svc.start_all()
+            self.assertFalse(ok)
+            cs_start.assert_not_called()
+            sp_start.assert_not_called()
+
+    def test_quit_releases_instance_lock(self):
+        from sysctl import instance_owner as io
+        with tempfile.TemporaryDirectory() as d:
+            owner = io.InstanceOwner(lock_path=str(Path(d) / "i.json"),
+                                     pid_info=lambda p: ("S_A", "/exe"), pid=1)
+            owner.acquire()
+            svc = _make_coordinator()
+            svc._owner = owner
+            with patch.object(svc._sys_proxy, "quit_cleanup"), \
+                 patch.object(type(svc._suanpan), "running", False), \
+                 patch.object(svc._capture, "stop"), \
+                 patch.object(svc._config_server, "stop"):
+                svc.quit(lambda: None)
+            self.assertFalse(os.path.exists(owner.lock_path))

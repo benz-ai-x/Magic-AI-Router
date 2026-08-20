@@ -26,6 +26,7 @@ import os
 import sys
 
 from sysctl import port_check, sleep_blocker
+from sysctl.instance_owner import InstanceOwner
 from capture.capture import CaptureMonitor
 from capture.capture_controller import CaptureController
 from services.suanpan_runtime import SuanpanRuntime
@@ -41,48 +42,25 @@ def _should_prevent_sleep(status, paused, flag):
     return bool(flag and status == "connected" and not paused)
 
 
-def _is_stale_instance(cmd):
-    """True if a port owner's command line is a previous instance of THIS app.
-
-    #40: matches the packaged binary name or the dev-mode script (basename
-    of sys.argv[0]) as a path component ("…/Magic AI Router" — survives names
-    with spaces) or as a standalone whitespace-delimited token ("python3
-    app.py") — never a bare substring — so a foreign service that merely
-    contains a similar word is spared.
-    """
-    if not cmd:
-        return False
-    script = os.path.basename(sys.argv[0])
-    if not script:
-        return False
-    return "/" + script in cmd or script in cmd.split()
 
 
-def _clear_stale_ports(config_port=9528, suanpan_port=9527):
-    """Kill stale previous instances of this app on its own ports.
+def report_port_occupancy(config_port=9528, suanpan_port=9527):
+    """启动期端口占用报告（issue #3）：占用只是线索，启动期永不发信号。
 
-    #40: only processes whose command line identifies this app are killed.
-    A foreign service that happens to listen on 9527/9528 is spared (and
-    warned about) — killing it would be destroying someone else's process.
+    进程死亡即释放监听 socket——真正需要回收的旧实例只剩**陈旧锁**
+    （由 InstanceOwner.acquire 的接管路径清理）。仍被占用的端口只可能是
+    活进程（本应用旧实例由单胜守卫拦截并给出用户可见错误；其余为外来
+    进程），一律清晰告警、人工处置。port_check.kill 的 SIGTERM→SIGKILL
+    升级保留给显式人工/工具路径。
     """
     self_pid = os.getpid()
     for port in (config_port, suanpan_port):
-        owner = port_check.who_owns(port)
-        if not owner or owner.pid == self_pid:
+        po = port_check.who_owns(port)
+        if not po or po.pid == self_pid:
             continue
-        if not _is_stale_instance(owner.cmd):
-            logger.warning(
-                "Port %d occupied by PID %d (%s) — not our process, leaving it alone",
-                port, owner.pid, owner.name)
-            continue
-        logger.info("Port %d occupied by PID %d (%s) — killing",
-                    port, owner.pid, owner.name)
-        ok, err = port_check.kill(owner.pid)
-        if ok:
-            logger.info("Killed PID %d on port %d", owner.pid, port)
-        else:
-            logger.warning("Failed to kill PID %d on port %d: %s",
-                           owner.pid, port, err)
+        logger.warning(
+            "Port %d occupied by PID %d (%s) — 不自动处理；如为本应用旧实例"
+            "请从其菜单栏退出，外来进程请手动确认后处置", port, po.pid, po.name)
 
 
 def _read_suanpan_port():
@@ -103,8 +81,10 @@ class LifecycleRuntime:
         paused_fn,
         on_menu_dirty,
         initial_sys_proxy_on=False,
+        instance_owner=None,
     ):
         self._config_fn = config_fn
+        self._owner = instance_owner or InstanceOwner()
         self._suanpan = SuanpanRuntime()
         self._capture = CaptureMonitor()
         self._capture_ctrl = CaptureController(
@@ -161,9 +141,17 @@ class LifecycleRuntime:
 
     # ── 生命周期 ────────────────────────────────────────────────
     def start_all(self):
-        """启动顺序即契约：清障自有端口 → 配置服务 → 网关自启。"""
+        """启动顺序即契约：实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启。
+
+        单实例守卫（issue #3）：锁被活实例持有时本次启动不接管任何
+        服务，返回 False——由编排器（app.py）转为用户可见错误后退出。
+        """
+        if not self._owner.acquire():
+            logger.error("已有 Magic AI Router 实例在运行（实例锁被持有）——"
+                         "本次启动不接管服务")
+            return False
         config_port = (self._config_fn() or {}).get("config_port", 9528)
-        _clear_stale_ports(config_port, _read_suanpan_port())
+        report_port_occupancy(config_port, _read_suanpan_port())
         if not self._config_server.start():
             logger.warning("Config server failed to start on :%d", config_port)
         # AI router gateway auto-starts with the app (loopback-only);
@@ -171,6 +159,7 @@ class LifecycleRuntime:
         if not self._suanpan.start():
             logger.warning("Suanpan gateway auto-start failed: %s",
                            self._suanpan.error[:120])
+        return True
 
     def quit(self, ssh_stop):
         """退出顺序即契约：系统代理恢复 → SSH 停止 → 服务线 → 配置服务。"""
@@ -178,6 +167,7 @@ class LifecycleRuntime:
         ssh_stop()
         self.stop_all()
         self._config_server.stop()
+        self._owner.release()
 
     def tick(self, capture_port):
         """Per-second: capture check + system proxy sync."""
