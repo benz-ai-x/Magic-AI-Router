@@ -13,7 +13,15 @@ from unittest.mock import MagicMock, patch
 from capture import capture
 from capture import capture_controller
 from capture.capture_controller import CaptureController
+from capture import resources as capture_resources
 
+
+_RES = None  # 模块级 fixture：已验证资源三元组（S2 新缝的桩）
+
+def _res():
+    from capture.resources import CaptureResources
+    return CaptureResources("/bin/mitmdump", "/repo/ai_capture_addon.py",
+                            capture.DEFAULT_CAPTURE_DIR)
 
 def _ctrl(status="stopped", error_msg="", config=None):
     """Build a controller over a mock monitor for direct testing."""
@@ -28,19 +36,19 @@ def _ctrl(status="stopped", error_msg="", config=None):
 class TestResolveMitmdumpBin(unittest.TestCase):
     def test_env_override_wins(self):
         with patch.dict(os.environ, {"MAGIC_PROXY_MITMDUMP_BIN": "/custom/mitmdump"}):
-            self.assertEqual(capture_controller.resolve_mitmdump_bin(), "/custom/mitmdump")
+            self.assertEqual(capture_resources.resolve_mitmdump_bin(), "/custom/mitmdump")
 
     def test_frozen_uses_bundled_path_when_present(self):
         with patch.dict(os.environ, {}, clear=True), \
              patch("sys._MEIPASS", "/App/Contents/Resources", create=True), \
              patch("os.path.exists", return_value=True):
-            self.assertTrue(capture_controller.resolve_mitmdump_bin().endswith("mitmdump/mitmdump"))
+            self.assertTrue(capture_resources.resolve_mitmdump_bin().endswith("mitmdump/mitmdump"))
 
     def test_frozen_returns_none_when_bundled_binary_missing(self):
         with patch.dict(os.environ, {}, clear=True), \
              patch("sys._MEIPASS", "/App/Contents/Resources", create=True), \
              patch("os.path.exists", return_value=False):
-            self.assertIsNone(capture_controller.resolve_mitmdump_bin())
+            self.assertIsNone(capture_resources.resolve_mitmdump_bin())
 
     def test_dev_mode_uses_path_lookup(self):
         with patch.dict(os.environ, {}, clear=True), \
@@ -50,7 +58,7 @@ class TestResolveMitmdumpBin(unittest.TestCase):
             if had:
                 del sys._MEIPASS
             try:
-                self.assertEqual(capture_controller.resolve_mitmdump_bin(), "/opt/homebrew/bin/mitmdump")
+                self.assertEqual(capture_resources.resolve_mitmdump_bin(), "/opt/homebrew/bin/mitmdump")
             finally:
                 if had:
                     sys._MEIPASS = saved
@@ -64,8 +72,8 @@ class TestFreshController(unittest.TestCase):
 class TestEnableDisable(unittest.TestCase):
     def test_enable_starts_mitmdump_with_correct_args(self):
         ctrl = _ctrl(status="stopped")
-        with patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
-             patch.object(capture_controller, "_resource_path", return_value="/repo/ai_capture_addon.py"):
+        with patch.object(capture_controller, "resolve_capture_resources",
+                          return_value=_res()):
             self.assertTrue(ctrl.enable())
         kwargs = ctrl._monitor.start.call_args.kwargs
         self.assertEqual(kwargs["mitmdump_bin"], "/bin/mitmdump")
@@ -78,15 +86,15 @@ class TestEnableDisable(unittest.TestCase):
         cfg = {"http_listen_port": 8888, "capture_port": 8080,
                "capture_dir": capture.DEFAULT_CAPTURE_DIR, "retention_days": 14}
         ctrl = _ctrl(status="stopped", config=cfg)
-        with patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
-             patch.object(capture_controller, "_resource_path", return_value="/x.py"):
+        with patch.object(capture_controller, "resolve_capture_resources",
+                          return_value=_res()):
             ctrl.enable()
         self.assertEqual(ctrl._monitor.start.call_args.kwargs["retention_days"], 14)
 
     def test_enable_defaults_retention_days_to_7(self):
         ctrl = _ctrl(status="stopped")
-        with patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
-             patch.object(capture_controller, "_resource_path", return_value="/x.py"):
+        with patch.object(capture_controller, "resolve_capture_resources",
+                          return_value=_res()):
             ctrl.enable()
         self.assertEqual(ctrl._monitor.start.call_args.kwargs["retention_days"], 7)
 
@@ -109,7 +117,9 @@ class TestEnableDisable(unittest.TestCase):
 
     def test_enable_returns_false_when_bin_missing(self):
         ctrl = _ctrl(status="stopped")
-        with patch.object(capture_controller, "resolve_mitmdump_bin", return_value=None):
+        from capture.resources import CaptureResourcesError
+        with patch.object(capture_controller, "resolve_capture_resources",
+                          side_effect=CaptureResourcesError("未找到 mitmdump 可执行文件")):
             self.assertFalse(ctrl.enable())
         ctrl._monitor.start.assert_not_called()
 
@@ -118,8 +128,8 @@ class TestEnableDisable(unittest.TestCase):
         must propagate — the caller shows the error UI on False."""
         ctrl = _ctrl(status="stopped")
         ctrl._monitor.start.return_value = False
-        with patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
-             patch.object(capture_controller, "_resource_path", return_value="/x.py"):
+        with patch.object(capture_controller, "resolve_capture_resources",
+                          return_value=_res()):
             self.assertFalse(ctrl.enable())
         ctrl._monitor.start.assert_called_once()
         self.assertFalse(ctrl.enabled)
@@ -190,8 +200,8 @@ class TestTrustCaching(unittest.TestCase):
     def test_enable_invalidates_cache(self):
         ctrl = _ctrl(status="stopped")
         with patch("capture.ca_trust.is_trusted", return_value=False) as is_trusted, \
-             patch.object(capture_controller, "resolve_mitmdump_bin", return_value="/bin/mitmdump"), \
-             patch.object(capture_controller, "_resource_path", return_value="/x/addon.py"):
+             patch.object(capture_controller, "resolve_capture_resources",
+                          return_value=_res()):
             ctrl.menu_title()  # populates cache
             ctrl.enable()
             ctrl._enabled = False
@@ -220,3 +230,33 @@ class TestErrorHint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEnableConsumesResourceContract(unittest.TestCase):
+    """Seam S2（issue #2）：enable 只消费已验证的 CaptureResources；
+    preflight 失败不进 enabled 且错误直达菜单文案。"""
+
+    def test_preflight_failure_keeps_disabled_and_surfaces_actionable_error(self):
+        from capture.resources import CaptureResourcesError
+        c = _ctrl()
+        with patch("capture.capture_controller.resolve_capture_resources",
+                   side_effect=CaptureResourcesError("未找到 mitmdump 可执行文件")):
+            ok = c.enable()
+        self.assertFalse(ok)
+        self.assertFalse(c.enabled)
+        self.assertIn("mitmdump", c.error_msg)
+        c._monitor.start.assert_not_called()
+
+    def test_enable_passes_validated_resources_to_monitor(self):
+        from capture.resources import CaptureResources
+        c = _ctrl()
+        c._monitor.start.return_value = True
+        res = CaptureResources("/usr/bin/true", "/x/ai_capture_addon.py", "/tmp/cap")
+        with patch("capture.capture_controller.resolve_capture_resources",
+                   return_value=res):
+            self.assertTrue(c.enable())
+        kw = c._monitor.start.call_args.kwargs
+        self.assertEqual(kw["mitmdump_bin"], "/usr/bin/true")
+        self.assertEqual(kw["addon_path"], "/x/ai_capture_addon.py")
+        self.assertEqual(kw["capture_dir"], "/tmp/cap")
+        self.assertEqual(c.error_msg, "")  # 预检错误已清除，回落 monitor 文案

@@ -15,7 +15,8 @@ import time
 from capture import ca_trust
 from mpconf import netloc
 from capture.capture_store import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
-from util import resource_path as _resource_path, truncate as _truncate
+from util import truncate as _truncate
+from capture.resources import CaptureResourcesError, resolve_capture_resources
 
 logger = logging.getLogger("magic-proxy.capture_ctrl")
 
@@ -26,20 +27,6 @@ logger = logging.getLogger("magic-proxy.capture_ctrl")
 TRUST_CACHE_TTL = 30.0
 
 
-def resolve_mitmdump_bin():
-    """Locate the mitmdump binary (env override → bundled → PATH). None if not found.
-
-    Deliberate deviation from SSHMonitor's hardcoded "ssh" literal: mitmdump is
-    sometimes PATH-resolved (dev venv) and sometimes a bundled path inside the
-    packaged .app. MAGIC_PROXY_MITMDUMP_BIN lets dev/test override explicitly.
-    """
-    override = os.environ.get("MAGIC_PROXY_MITMDUMP_BIN")
-    if override:
-        return override
-    if hasattr(sys, "_MEIPASS"):
-        bundled = _resource_path(os.path.join("mitmdump", "mitmdump"))
-        return bundled if os.path.exists(bundled) else None
-    return shutil.which("mitmdump")
 
 
 class CaptureController:
@@ -56,6 +43,7 @@ class CaptureController:
         self._config_fn = config_fn
         self._on_dirty = on_dirty
         self._enabled = False  # in-memory ONLY (钉死约束 1)
+        self._preflight_error = None
         self._trust_cache = None  # (expiry_monotonic, trusted: bool) | None
 
     @property
@@ -68,6 +56,8 @@ class CaptureController:
 
     @property
     def error_msg(self):
+        if self._preflight_error:
+            return self._preflight_error
         return self._monitor.error_msg
 
     def enable(self):
@@ -81,19 +71,23 @@ class CaptureController:
         if self._monitor.status != "stopped":
             self._enabled = True
             return True
-        mitmdump_bin = resolve_mitmdump_bin()
-        if not mitmdump_bin:
-            logger.warning("capture mode: mitmdump binary not resolvable")
-            return False
         cfg = self._config_fn()
+        try:
+            res = resolve_capture_resources(cfg)
+        except CaptureResourcesError as exc:
+            # issue #2：preflight 失败不进 enabled，可行动错误直达菜单文案
+            self._preflight_error = exc.msg
+            logger.warning("capture mode preflight failed: %s", exc.msg)
+            return False
         self._enabled = True
+        self._preflight_error = None
         self._trust_cache = None  # enabled titles never read trust state
         started = self._monitor.start(
-            mitmdump_bin=mitmdump_bin,
-            addon_path=_resource_path("capture.ai_capture_addon.py"),
+            mitmdump_bin=res.mitmdump_bin,
+            addon_path=res.addon_path,
             capture_port=cfg.get("capture_port", DEFAULT_CAPTURE_PORT),
             upstream=f"http://{netloc.format_listen('127.0.0.1', int(cfg['http_listen_port']))}",
-            capture_dir=cfg.get("capture_dir", DEFAULT_CAPTURE_DIR),
+            capture_dir=res.capture_dir,
             retention_days=cfg.get("retention_days", 7),
         )
         if not started:

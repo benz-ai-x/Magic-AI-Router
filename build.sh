@@ -176,6 +176,37 @@ PLIST="dist/Magic AI Router.app/Contents/Info.plist"
 # (notarize.sh later re-signs with a Developer ID identity, superseding this.)
 codesign --force --deep --sign - "dist/Magic AI Router.app"
 
+# ---------------------------------------------------------------------------
+# 打包冒烟（issue #2）：实际执行 bundled mitmdump 加载 bundled addon——
+# 不只检查文件存在。启动期崩溃或 addon 加载报错都让构建失败。
+# ---------------------------------------------------------------------------
+APP_BUNDLE="dist/Magic AI Router.app"
+SMOKE_ERR="$(mktemp)"
+SMOKE_CONF="$(mktemp -d)"
+"$APP_BUNDLE/Contents/Resources/mitmdump/mitmdump" -q --no-server \
+    --set "confdir=$SMOKE_CONF" \
+    -s "$APP_BUNDLE/Contents/Resources/ai_capture_addon.py" \
+    >/dev/null 2>"$SMOKE_ERR" &
+SMOKE_PID=$!
+sleep 5
+SMOKE_FAIL=0
+if ! kill -0 "$SMOKE_PID" 2>/dev/null; then
+    echo "ERROR: bundled mitmdump died during addon smoke:" >&2
+    SMOKE_FAIL=1
+fi
+kill "$SMOKE_PID" 2>/dev/null
+wait "$SMOKE_PID" 2>/dev/null
+if grep -qE "Error loading script|Traceback" "$SMOKE_ERR"; then
+    echo "ERROR: addon load reported errors during smoke:" >&2
+    SMOKE_FAIL=1
+fi
+cat "$SMOKE_ERR" >&2 || true
+rm -f "$SMOKE_ERR"; rm -rf "$SMOKE_CONF"
+if [ "$SMOKE_FAIL" -ne 0 ]; then
+    exit 1
+fi
+echo "Smoke OK: bundled mitmdump loaded bundled addon"
+
 echo ""
 echo "=== Build complete ==="
 echo "App: dist/Magic AI Router.app"
