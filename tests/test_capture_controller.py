@@ -14,6 +14,7 @@ from capture import capture
 from capture import capture_controller
 from capture.capture_controller import CaptureController
 from capture import resources as capture_resources
+from capture.resources import CaptureResources, CaptureResourcesError
 
 
 def _res():
@@ -115,7 +116,6 @@ class TestEnableDisable(unittest.TestCase):
 
     def test_enable_returns_false_when_bin_missing(self):
         ctrl = _ctrl(status="stopped")
-        from capture.resources import CaptureResourcesError
         with patch.object(capture_controller, "resolve_capture_resources",
                           side_effect=CaptureResourcesError("未找到 mitmdump 可执行文件")):
             self.assertFalse(ctrl.enable())
@@ -233,7 +233,6 @@ class TestEnableConsumesResourceContract(unittest.TestCase):
     preflight 失败不进 enabled 且错误直达菜单文案。"""
 
     def test_preflight_failure_keeps_disabled_and_surfaces_actionable_error(self):
-        from capture.resources import CaptureResourcesError
         c = _ctrl()
         with patch("capture.capture_controller.resolve_capture_resources",
                    side_effect=CaptureResourcesError("未找到 mitmdump 可执行文件")):
@@ -244,7 +243,6 @@ class TestEnableConsumesResourceContract(unittest.TestCase):
         c._monitor.start.assert_not_called()
 
     def test_enable_passes_validated_resources_to_monitor(self):
-        from capture.resources import CaptureResources
         c = _ctrl()
         c._monitor.start.return_value = True
         res = CaptureResources("/usr/bin/true", "/x/ai_capture_addon.py", "/tmp/cap")
@@ -260,7 +258,6 @@ class TestEnableConsumesResourceContract(unittest.TestCase):
 
 class TestPreflightErrorLifecycle(unittest.TestCase):
     def test_disable_clears_stale_preflight_error(self):
-        from capture.resources import CaptureResourcesError
         c = _ctrl(status="stopped")
         with patch.object(capture_controller, "resolve_capture_resources",
                           side_effect=CaptureResourcesError("未找到 mitmdump")):
@@ -273,5 +270,3 @@ class TestPreflightErrorLifecycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

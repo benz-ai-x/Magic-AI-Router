@@ -74,7 +74,7 @@ SMOKE_GRACE_SECONDS = 5  # 进程须带着 addon 活过此时长
 SMOKE_ERROR_MARKERS = ("Error loading script", "Traceback")
 
 
-def smoke_capture_boot(res=None, *, grace_seconds=SMOKE_GRACE_SECONDS):
+def smoke_capture_boot(res=None):
     """启动期冒烟：spawn mitmdump 加载 addon，活过宽限期且无加载报错。
 
     返回 (ok, detail)。dev（SIT）与 frozen（app smoke 钩子，经 build.sh
@@ -92,12 +92,12 @@ def smoke_capture_boot(res=None, *, grace_seconds=SMOKE_GRACE_SECONDS):
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         stderr = b""
         try:
-            time.sleep(grace_seconds)
+            time.sleep(SMOKE_GRACE_SECONDS)
             if proc.poll() is not None:
                 _, stderr = proc.communicate()
                 return False, (
                     f"mitmdump rc={proc.returncode} died during "
-                    f"{grace_seconds}s grace: "
+                    f"{SMOKE_GRACE_SECONDS}s grace: "
                     + stderr.decode("utf-8", "replace")[:300])
         finally:
             proc.terminate()

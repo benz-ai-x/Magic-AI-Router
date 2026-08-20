@@ -50,7 +50,7 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 ### 资源契约（CaptureResources）
 
-抓包模式的资源单一入口（`capture/resources.py`）：`resolve_capture_resources(cfg)` 解析并验证 mitmdump 二进制（env 覆盖 → frozen bundled → PATH 三级链）、addon 脚本（存在 + 可读）与抓包目录（可建），失败抛带可行动中文文案的 `CaptureResourcesError`。控制器只消费已验证的 `CaptureResources` 三元组，不自行拼接文件名；frozen 态资源为扁平布局（`--add-data` dest="."），addon 导入需包限定/扁平双态兼容。
+抓包模式的资源单一入口（`capture/resources.py`）：`resolve_capture_resources(cfg)` 解析并验证 mitmdump 二进制（env 覆盖 → frozen bundled → PATH 三级链）、addon 脚本（存在 + 可读）与抓包目录（可建），失败抛带可行动中文文案的 `CaptureResourcesError`。控制器只消费已验证的 `CaptureResources` 三元组，不自行拼接文件名；frozen 态资源为扁平布局（`--add-data` dest="."），addon 导入需包限定/扁平双态兼容。启动冒烟判据（宽限秒数 + 加载错误标记）以 `smoke_capture_boot`/`SMOKE_*` 为单一归宿，dev SIT 与 build.sh 打包冒烟共用。
 
 ### 配置存储（ConfigStore）
 

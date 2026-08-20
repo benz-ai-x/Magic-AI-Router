@@ -25,10 +25,12 @@ from capture.capture_controller import CaptureController
 from capture.resources import CaptureResources
 
 
-def _stub_resources():
-    return CaptureResources("/bin/mitmdump", "/x/addon.py", "/tmp/cap")
 from sysctl import sleep_blocker
 from sysctl import system_proxy
+
+
+def _stub_resources():
+    return CaptureResources("/bin/mitmdump", "/x/addon.py", "/tmp/cap")
 def _new_app(**attrs):
     inst = app.MagicProxyApp.__new__(app.MagicProxyApp)
     monitor = attrs.pop("_capture", MagicMock())

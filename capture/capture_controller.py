@@ -7,9 +7,6 @@ False when mitmdump can't be resolved, leaving any alert to the caller.
 No auto-restart on crash (钉死约束 2): only a user toggle retries.
 """
 import logging
-import os
-import shutil
-import sys
 import time
 
 from capture import ca_trust
