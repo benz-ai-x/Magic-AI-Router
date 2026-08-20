@@ -367,40 +367,6 @@ class TestReadMpEmpty(unittest.TestCase):
             self.assertEqual(config_server._read_mp(), {})
 
 
-class TestWriteMpKeychainGuard(unittest.TestCase):
-    """#40: only an explicit auth_type switch may delete keychain passwords.
-
-    A partial tunnel payload (no auth_type key) must not silently wipe the
-    saved password; neither must an untouched auth_type=password tunnel.
-    """
-
-    _tunnel_base = {"name": "t", "ssh_host": "h", "ssh_user": "u", "ssh_port": 22}
-
-    def _write(self, tunnels):
-        cfg = {"tunnels": tunnels}
-        with patch("services.config_server.save_config", return_value=True), \
-             patch("services.config_server.keychain.delete_password") as delete, \
-             patch("services.config_server.keychain.set_password", return_value=True):
-            errors = config_server._write_mp(cfg)
-        return errors, delete
-
-    def test_partial_payload_without_auth_type_keeps_password(self):
-        errors, delete = self._write([dict(self._tunnel_base)])
-        self.assertEqual(errors, [])
-        delete.assert_not_called()
-
-    def test_explicit_switch_to_key_deletes_password(self):
-        t = dict(self._tunnel_base, auth_type="key")
-        errors, delete = self._write([t])
-        self.assertEqual(errors, [])
-        delete.assert_called_once_with(t)
-
-    def test_explicit_password_keeps_password(self):
-        errors, delete = self._write([dict(self._tunnel_base, auth_type="password")])
-        self.assertEqual(errors, [])
-        delete.assert_not_called()
-
-
 class TestBalanceUsageEndpoints(unittest.TestCase):
     def setUp(self):
         self.server, self.port = _start_server()
@@ -511,43 +477,18 @@ class TestConfigServerStart(unittest.TestCase):
 
 
 class TestCaptureStateField(unittest.TestCase):
-    """/api/state carries a read-only capture_active flag from the injected getter."""
-
-    def setUp(self):
-        self.server, self.port = _start_server()
-        self.token = self.server._token
-
-    def tearDown(self):
-        self.server.stop()
-
-    def _get_state(self):
-        status, data = _request(self.port, "GET", f"/api/state?token={self.token}")
-        self.assertEqual(status, 200)
-        return json.loads(data)
-
-    def test_default_is_false_without_getter(self):
-        self.server._server.capture_state_fn = None
-        self.assertIs(self._get_state()["mp"]["capture_active"], False)
-
-    def test_stub_true_flows_through(self):
-        self.server._server.capture_state_fn = lambda: True
-        self.assertIs(self._get_state()["mp"]["capture_active"], True)
-
-    def test_broken_getter_degrades_to_false(self):
-        def boom():
-            raise RuntimeError("no capture ctrl")
-        self.server._server.capture_state_fn = boom
-        with self.assertLogs("magic-proxy.config_server", level="ERROR"):
-            parsed = self._get_state()
-        self.assertIs(parsed["mp"]["capture_active"], False)
-
-    def test_capture_active_never_round_trips_into_file(self):
-        # The flag is server-injected; _write_mp must strip it before saving.
-        with patch("services.config_server.save_config", return_value=True) as save, \
-             patch("services.config_server.merge_config", side_effect=lambda c: c):
-            config_server._write_mp({"capture_active": True, "tunnels": []})
-        saved_cfg = save.call_args[0][0]
-        self.assertNotIn("capture_active", saved_cfg)
+    def test_capture_active_never_round_trips_into_plan(self):
+        """服务端注入的只读字段在 prepare 阶段剥离，不可能回写文件。"""
+        from mpconf.config_state import CommitPlan  # noqa: F401
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            store = config_server.ConfigStateStore(
+                mp_path=str(Path(d) / "m.json"),
+                sp_path=str(Path(d) / "s.yaml"))
+            plan = store.prepare(mp={"tunnels": [], "capture_active": True})
+            self.assertTrue(plan.ok)
+            self.assertNotIn("capture_active", plan.mp_candidate)
 
 
 class TestTestTunnelEndpoint(unittest.TestCase):

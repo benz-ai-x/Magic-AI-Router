@@ -92,55 +92,9 @@ class TestReadMpTunnels(unittest.TestCase):
         gp.assert_not_called()
 
 
-# ── config_server: _write_mp lines 55, 63 ─────────────────────────────
+# ── keychain 编排语义（原 _write_mp）——由 ConfigStateStore.prepare 承接 ──
+# 详见 tests/test_config_state.py::TestKeychainTransaction（迁移后唯一权威）
 
-class TestWriteMpKeychainDelete(unittest.TestCase):
-    def test_non_password_tunnel_triggers_keychain_delete(self):
-        """Lines 55 + 63: a tunnel whose auth_type is not 'password' is added
-        to pending_del and keychain.delete_password is called on it."""
-        cfg = {"tunnels": [{"name": "t1", "ssh_host": "h",
-                            "auth_type": "key"}]}
-        with patch.object(config_server, "save_config", return_value=True), \
-             patch.object(config_server.keychain, "delete_password") as dp:
-            errors = config_server._write_mp(cfg)
-        self.assertEqual(errors, [])
-        dp.assert_called_once()
-
-    def test_password_tunnel_with_pw_triggers_set_not_del(self):
-        """A password-auth tunnel WITH a new password goes to pending_set;
-        nothing hits pending_del for that tunnel."""
-        cfg = {"tunnels": [{"name": "t1", "ssh_host": "h",
-                            "auth_type": "password", "password": "pw"}]}
-        with patch.object(config_server, "save_config", return_value=True), \
-             patch.object(config_server.keychain, "set_password",
-                          return_value=True) as sp, \
-             patch.object(config_server.keychain, "delete_password") as dp:
-            errors = config_server._write_mp(cfg)
-        self.assertEqual(errors, [])
-        sp.assert_called_once()
-        dp.assert_not_called()
-
-    def test_password_set_failure_returns_error(self):
-        cfg = {"tunnels": [{"name": "t1", "ssh_host": "h",
-                            "auth_type": "password", "password": "pw"}]}
-        with patch.object(config_server, "save_config", return_value=True), \
-             patch.object(config_server.keychain, "set_password",
-                          return_value=False):
-            errors = config_server._write_mp(cfg)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("钥匙串", errors[0])
-
-    def test_save_config_failure_short_circuits_before_keychain(self):
-        cfg = {"tunnels": [{"name": "t1", "ssh_host": "h",
-                            "auth_type": "key"}]}
-        with patch.object(config_server, "save_config", return_value=False), \
-             patch.object(config_server.keychain, "delete_password") as dp:
-            errors = config_server._write_mp(cfg)
-        self.assertEqual(errors, ["配置文件写入失败"])
-        dp.assert_not_called()
-
-
-# ── config_server: agent.md route (lines 122-127) ─────────────────────
 
 class TestAgentMdRoute(unittest.TestCase):
     def setUp(self):
@@ -281,12 +235,12 @@ class TestPutForbidden(unittest.TestCase):
 
     def test_put_without_token_returns_403(self):
         """Lines 173-174: PUT without a valid token → 403 before any work."""
-        with patch.object(config_server, "_write_mp") as wmp:
+        with patch.object(config_server, "ConfigStateStore") as store_cls:
             status, data = _request(
                 self.port, "PUT", "/api/state",
                 body=json.dumps({"mp": {}}))
         self.assertEqual(status, 403)
-        wmp.assert_not_called()
+        store_cls.assert_not_called()
 
     def test_put_with_invalid_host_returns_403(self):
         status, data = _request(
@@ -318,11 +272,15 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
         self.assertIn("invalid config", json.loads(data)["errors"])
 
     def test_on_sp_saved_callback_invoked_on_success(self):
-        """Lines 194-195: on_sp_saved fires after a successful sp_save."""
+        """issue #6：on_sp_saved 只在完整提交后触发（作为 on_committed）。"""
+        from mpconf.config_state import CommitPlan, SaveResult
         callback = MagicMock()
-        with patch.object(config_server, "_write_mp", return_value=[]), \
-             patch.object(config_server.config_store, "sp_save",
-                          return_value=(True, None)):
+        with patch.object(config_server, "ConfigStateStore") as store_cls:
+            store_cls.return_value.prepare.return_value = CommitPlan(
+                True, [], None, {"providers": {}})
+            store_cls.return_value.commit.side_effect = \
+                lambda plan, on_committed=None: (on_committed and on_committed()
+                                                 or SaveResult(True, None, []))
             self.server._server.on_sp_saved = callback
             try:
                 _request(
@@ -335,7 +293,7 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
     def test_on_sp_saved_exception_swallowed(self):
         """Lines 196-197: a raising on_sp_saved callback must not bubble up."""
         callback = MagicMock(side_effect=RuntimeError("boom"))
-        with patch.object(config_server, "_write_mp", return_value=[]), \
+        with patch.object(config_server, "ConfigStateStore") as store_cls, \
              patch.object(config_server.config_store, "sp_save",
                           return_value=(True, None)):
             self.server._server.on_sp_saved = callback

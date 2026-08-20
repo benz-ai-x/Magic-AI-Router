@@ -7,10 +7,13 @@ load() / prepare() / commit() 三段式——候选配置在首次 mutation 前�
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import NamedTuple
 
 import yaml
+
+logger = logging.getLogger("magic-proxy.config_state")
 
 
 class LoadResult(NamedTuple):
@@ -47,12 +50,11 @@ def _read_one(path: str, loader):
         return "io_error", None, str(exc)
     try:
         data = loader(text)
-    except ValueError as exc:
+    except (ValueError, yaml.YAMLError) as exc:
         return "invalid", None, str(exc)
     if not isinstance(data, dict):
         return "invalid", None, "根节点必须是对象"
     return "valid", data, None
-
 
 
 # ── prepare：候选配置在首次 mutation 前的完整校验 ─────────────────────
@@ -136,6 +138,11 @@ class ConfigStateStore:
 
         if errors:
             return CommitPlan(False, errors)
+        # merge 默认值必须在校验之后：merge_config 会把非法端口/负保留
+        # 静默重置为默认，前置会让 mp 侧数值约束在真实入口永不触发
+        if mp_c is not None:
+            from mpconf.config import merge_config
+            mp_c = merge_config(mp_c)
         kc_sets, kc_dels = [], []
         if mp_c is not None:
             import copy
@@ -152,7 +159,6 @@ class ConfigStateStore:
         return CommitPlan(True, [], mp_c, sp_c, kc_sets, kc_dels)
 
 
-def _extend_commit():
     """commit/recover 挂到 ConfigStateStore（保持模块顶部声明整洁）。"""
 
     @property
@@ -173,14 +179,45 @@ def _extend_commit():
         parent = os.path.dirname(path) or "."
         if not os.path.isdir(parent):
             os.makedirs(parent, mode=0o700)  # 首创建目录权限
-        tmp = path + ".tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        os.replace(tmp, path)
+        from mpconf import config_store
+        if not config_store.atomic_write(path, text):  # 唯一安全写入口
+            raise OSError(f"atomic_write failed: {path}")
+
+    def _current_text(self, path):
+        try:
+            with open(path) as f:
+                return f.read()
+        except OSError:
+            return None
+
+    def _rollback(self, payload):
+        """文件段/Keychain 失败后恢复旧内容（尽力而为，异常只记日志）。"""
+        for key, path in (("mp_old", self.mp_path), ("sp_old", self.sp_path)):
+            if key in payload:
+                try:
+                    if payload[key] is None:
+                        try:
+                            os.unlink(path)
+                        except FileNotFoundError:
+                            pass  # 本就不存在 = 已是旧状态
+                    else:
+                        self._atomic_install(path, payload[key])
+                except OSError:
+                    logger.warning("rollback %s 失败，journal 保留待启动恢复", path)
+                    return False
+        try:
+            os.unlink(self.journal_path)
+        except OSError:
+            pass
+        return True
 
     def commit(self, plan, on_committed=None) -> SaveResult:
-        """journal → MP → SP → 清 journal → 回调（只在完整提交后）。"""
+        """journal → MP → SP → Keychain → 清 journal → 回调.
+
+        任何文件段/Keychain 失败：尽力回滚两文件到旧内容——不暴露
+        「接口失败但部分新状态已生效」；回不成则 journal 保留，下次
+        启动 recover() 收敛。
+        """
         if not plan.ok:
             return SaveResult(False, "validate", list(plan.errors))
         payload = {}
@@ -190,9 +227,15 @@ def _extend_commit():
         if plan.sp_candidate is not None:
             payload["sp"] = yaml.safe_dump(plan.sp_candidate,
                                            allow_unicode=True, sort_keys=False)
+        # *_old 只在对应侧参与本事务时存在；None 表示「事务前文件不存在」，
+        # 键缺失表示「该侧不在事务内，回滚不得触碰」
+        if "mp" in payload:
+            payload["mp_old"] = self._current_text(self.mp_path)
+        if "sp" in payload:
+            payload["sp_old"] = self._current_text(self.sp_path)
         stage = "journal"
         try:
-            if payload:
+            if any(k in payload for k in ("mp", "sp")):
                 self._journal_write(payload)
             if "mp" in payload:
                 stage = "mp"
@@ -201,17 +244,20 @@ def _extend_commit():
                 stage = "sp"
                 self._atomic_install(self.sp_path, payload["sp"])
         except OSError as exc:
+            self._rollback(payload)
             return SaveResult(False, stage, [f"提交失败：{exc}"])
         keychain_errors = []
         if self._keychain is not None:
             for tunnel, pw in plan.keychain_sets:
                 if not self._keychain.set_password(tunnel, pw):
                     keychain_errors.append(
-                        f"隧道 {tunnel.get('name', '?')} 的密码保存到钥匙串失败"
-                        "（配置已保存，请重试保存密码）")
+                        f"隧道 {tunnel.get('name', '?')} 的密码保存到钥匙串失败")
             for tunnel in plan.keychain_dels:
-                self._keychain.delete_password(tunnel)
+                if not self._keychain.delete_password(tunnel):
+                    keychain_errors.append(
+                        f"隧道 {tunnel.get('name', '?')} 的旧密码清理失败")
         if keychain_errors:
+            self._rollback(payload)  # 文件回到旧内容：不暴露部分新状态
             return SaveResult(False, "keychain", keychain_errors)
         try:
             if os.path.exists(self.journal_path):
@@ -222,17 +268,24 @@ def _extend_commit():
             try:
                 on_committed()
             except Exception:
-                import logging
-                logging.getLogger("magic-proxy.config_state").exception(
-                    "on_committed callback failed")
+                logger.exception("on_committed callback failed")
         return SaveResult(True, None, [])
 
     def recover(self) -> bool:
-        """journal 重放：跨文件崩溃后补齐到一致状态（幂等）。"""
+        """journal 重放：跨文件崩溃后补齐到一致状态（幂等）。
+
+        损坏 journal 视为无事务清除——残留只会永久阻塞后续提交。
+        """
         try:
             with open(self.journal_path) as f:
                 payload = json.load(f)
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError:
+            return True
+        except ValueError:
+            try:
+                os.unlink(self.journal_path)
+            except OSError:
+                pass
             return True
         try:
             if "mp" in payload:
@@ -244,11 +297,4 @@ def _extend_commit():
             return False
         return True
 
-    ConfigStateStore.journal_path = journal_path
-    ConfigStateStore._journal_write = _journal_write
-    ConfigStateStore._atomic_install = _atomic_install
-    ConfigStateStore.commit = commit
-    ConfigStateStore.recover = recover
 
-
-_extend_commit()

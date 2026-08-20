@@ -51,36 +51,6 @@ def _read_mp():
     return cfg
 
 
-def _write_mp(cfg):
-    """Write Magic AI Router config. Returns list of error strings (empty = ok).
-
-    The file is saved FIRST; keychain writes happen only after the config is
-    durable — a failed save must not orphan passwords for unsaved tunnels.
-    """
-    pending_set, pending_del = [], []
-    # Server-injected read-only fields must never round-trip into the file.
-    cfg.pop("capture_active", None)
-    for i, t in enumerate(cfg.get("tunnels", [])):
-        pw = t.pop("password", None)
-        t.pop("has_password", None)
-        if pw:
-            pending_set.append((i, t, pw))
-        # #40: only an EXPLICIT auth_type switch away from password may
-        # delete the keychain entry — a partial payload that omits
-        # auth_type must not silently wipe a saved password.
-        if "auth_type" in t and t.get("auth_type") != "password":
-            pending_del.append(t)
-    if not save_config(merge_config(cfg)):
-        return ["配置文件写入失败"]
-    errors = []
-    for i, t, pw in pending_set:
-        if not keychain.set_password(t, pw):
-            errors.append(f"隧道 {i + 1}: 密码保存到钥匙串失败")
-    for t in pending_del:
-        keychain.delete_password(t)
-    return errors
-
-
 # Hard ceiling for one tunnel connectivity probe: ssh's own ConnectTimeout
 # covers TCP, this covers everything else (sshpass prompt waits, key
 # exchange stalls) so the HTTP request can never hang indefinitely.
@@ -288,7 +258,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/state":
             mp = _read_mp()
             sp = config_store.sp_load_masked()
-            # Read-only runtime status injected for the config UI; _write_mp
+            # Read-only runtime status injected for the config UI; ConfigStateStore
             # strips it again so it can never round-trip into the file.
             try:
                 fn = self.server.capture_state_fn

@@ -150,31 +150,51 @@ class TestCommitTransaction(unittest.TestCase):
         store = self._store()
         plan = store.prepare(mp={"http_listen_port": 8888},
                              sp={"listen_port": 9527})
-        # 故障注入：SP 写入阶段抛错（模拟 mp 已提交、sp 未提交即崩溃）
+        # 故障注入 A：SP 安装失败但回滚成功——不暴露部分新状态
         calls = {"n": 0}
         real_replace = os.replace
         def flaky_replace(src, dst, *a, **kw):
             calls["n"] += 1
-            # replace 序：journal(1) → mp(2) → sp(3)；在 SP 安装时崩溃
+            # journal(1) → mp(2) → sp(3)；SP 安装时失败
             if calls["n"] == 3:
-                raise OSError("simulated crash between commits")
+                raise OSError("simulated sp failure")
             return real_replace(src, dst, *a, **kw)
         import mpconf.config_state as cs
-        with unittest.mock.patch.object(cs.os, "replace", side_effect=flaky_replace):
+        with mock.patch.object(cs.os, "replace", side_effect=flaky_replace):
             result = store.commit(plan)
         self.assertFalse(result.ok)
         self.assertEqual(result.stage, "sp")
-        self.assertTrue(os.path.exists(store.journal_path),
-                        "跨文件窗口必须有 journal")
-        # MP 已提交、SP 未提交：中间态可见
         loaded = store.load()
-        self.assertEqual(loaded.mp_data.get("http_listen_port"), 8888)
-        self.assertIsNone(loaded.sp_data)
-        # 恢复：journal 重放补齐 SP
+        self.assertEqual(loaded.mp_state, "missing",
+                         "回滚成功：MP 不残留新状态")
+        self.assertEqual(loaded.sp_state, "missing")
+        self.assertFalse(os.path.exists(store.journal_path),
+                         "回滚成功后 journal 清除")
+
+        # 故障注入 B：真崩溃——安装与回滚都失败，journal 保留待启动恢复
+        # 先成功提交一轮建立旧文件（旧内容非空，回滚才有会失败的写）
+        pre = store.prepare(mp={"http_listen_port": 1000},
+                            sp={"listen_port": 1000})
+        self.assertTrue(store.commit(pre).ok)
+        plan_b = store.prepare(mp={"http_listen_port": 8889},
+                               sp={"listen_port": 9528})
+        calls["n"] = 99  # 之后所有 replace 都失败（进程崩溃等价）
+        def crash_replace(src, dst, *a, **kw):
+            # journal 落盘放行；此后安装与回滚全崩（进程崩溃等价）
+            if str(src).endswith(".txn.json.tmp"):
+                return real_replace(src, dst, *a, **kw)
+            raise OSError("simulated crash, rollback also dead")
+        with mock.patch.object(cs.os, "replace", side_effect=crash_replace):
+            result_b = store.commit(plan_b)
+        self.assertFalse(result_b.ok)
+        self.assertTrue(os.path.exists(store.journal_path),
+                        "回滚也失败时 journal 必须保留")
+        # 启动恢复：journal 重放收敛到一致
         recovered = store.recover()
         self.assertTrue(recovered)
         loaded = store.load()
-        self.assertEqual(loaded.sp_data.get("listen_port"), 9527)
+        self.assertEqual(loaded.mp_data.get("http_listen_port"), 8889)
+        self.assertEqual(loaded.sp_data.get("listen_port"), 9528)
         self.assertFalse(os.path.exists(store.journal_path))
 
     def test_validation_failure_touches_nothing(self):
@@ -257,9 +277,9 @@ class TestKeychainTransaction(unittest.TestCase):
         self.assertEqual(result.stage, "keychain")
         self.assertTrue(all("sekrit" not in e for e in result.errors),
                         "错误不得泄露 secret")
-        # 文件已提交（keychain 是尾段，语义=提示人工处理而非回滚文件）
+        # 文件已回滚：不暴露「接口失败但部分新状态已生效」
         loaded = store.load()
-        self.assertIsNotNone(loaded.mp_data)
+        self.assertEqual(loaded.mp_state, "missing")
 
 
 if __name__ == "__main__":
@@ -307,3 +327,60 @@ class TestBackupProtectionAndCreation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFaultInjectionCompletions(unittest.TestCase):
+    """验收⑧补齐：journal 写失败 / mp 安装失败 / journal 损坏恢复。"""
+
+    def _store(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        return ConfigStateStore(
+            mp_path=str(Path(d.name) / "magic-proxy.json"),
+            sp_path=str(Path(d.name) / "suanpan.yaml"))
+
+    def test_journal_write_failure_aborts_cleanly(self):
+        from unittest import mock
+        import mpconf.config_state as cs
+        store = self._store()
+        plan = store.prepare(mp={"http_listen_port": 8888})
+        with mock.patch.object(cs.os, "replace",
+                               side_effect=OSError("journal dead")):
+            result = store.commit(plan)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "journal")
+        loaded = store.load()
+        self.assertEqual(loaded.mp_state, "missing", "journal 失败零落盘")
+
+    def test_mp_install_failure_rolls_back_sp_untouched(self):
+        from unittest import mock
+        import mpconf.config_state as cs
+        store = self._store()
+        # 先有旧文件
+        self.assertTrue(store.commit(store.prepare(
+            mp={"http_listen_port": 1000}, sp={"listen_port": 1000})).ok)
+        plan = store.prepare(mp={"http_listen_port": 8888})
+        calls = {"n": 0}
+        real_replace = os.replace
+        def fail_mp_install(src, dst, *a, **kw):
+            calls["n"] += 1
+            # journal(1) 放行；mp 安装(2) 失败
+            if calls["n"] == 2:
+                raise OSError("mp install dead")
+            return real_replace(src, dst, *a, **kw)
+        with mock.patch.object(cs.os, "replace", side_effect=fail_mp_install):
+            result = store.commit(plan)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "mp")
+        loaded = store.load()
+        self.assertEqual(loaded.mp_data.get("http_listen_port"), 1000,
+                         "MP 回滚到旧内容")
+        self.assertEqual(loaded.sp_data.get("listen_port"), 1000,
+                         "SP 未被触碰")
+
+    def test_corrupt_journal_recovered_and_cleared(self):
+        store = self._store()
+        Path(store.journal_path).write_text("{corrupt")
+        self.assertTrue(store.recover())
+        self.assertFalse(os.path.exists(store.journal_path),
+                         "损坏 journal 必须清除，不得永久残留")
