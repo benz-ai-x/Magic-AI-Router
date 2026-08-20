@@ -60,8 +60,9 @@ async def read_head(reader, first_line=None, max_bytes=64 * 1024):
 
 
 def parse_framing(header_lines):
-    """从头部分析 body 定界：返回 (content_length, chunked, conn_close)。"""
+    """从头部分析 body 定界。非法/对立定界抛 ValueError（smuggling 面）。"""
     content_length = None
+    saw_cl = False
     chunked = False
     conn_close = False
     for raw in header_lines:
@@ -70,12 +71,17 @@ def parse_framing(header_lines):
             continue
         n = name.strip().lower()
         v = value.strip()
-        if n == "content-length" and content_length is None:
-            content_length = int(v)  # 非法值 → ValueError → 调用方安全关闭
+        if n == "content-length":
+            if saw_cl:
+                raise ValueError("duplicate Content-Length headers")
+            saw_cl = True
+            content_length = int(v)
         elif n == "transfer-encoding" and "chunked" in v.lower():
             chunked = True
         elif n == "connection" and "close" in v.lower():
             conn_close = True
+    if saw_cl and chunked:
+        raise ValueError("Content-Length with Transfer-Encoding: chunked")
     return Framing(content_length, chunked, conn_close)
 
 

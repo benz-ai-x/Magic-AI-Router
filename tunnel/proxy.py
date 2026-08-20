@@ -312,25 +312,36 @@ async def _relay_one_response(remote_reader, client_writer, request_method):
     if head is None:
         return False
     start, header_lines = head
-    try:
-        _ver, code_text, _rest = start.decode("latin-1").split(maxsplit=2)
-        code = int(code_text)
-    except ValueError:
-        return False
-    if 100 <= code < 200:
-        # interim 响应：转发后继续等真响应（不得把 1xx 当一条完整消息）
+    while True:
+        try:
+            _ver, code_text, _rest = start.decode("latin-1").split(maxsplit=2)
+            code = int(code_text)
+        except ValueError:
+            return False
+        if not 100 <= code < 200:
+            break  # 真响应——出接续循环
+        # interim 响应：转发后继续等真响应（迭代接续——上游狂发 1xx
+        # 也不触发 RecursionError；issue #20）
         client_writer.write(start)
         for raw in header_lines:
             client_writer.write(raw)
         client_writer.write(b"\r\n")
         await client_writer.drain()
-        return await _relay_one_response(remote_reader, client_writer, request_method)
+        try:
+            head = await asyncio.wait_for(
+                http_framer.read_head(remote_reader),
+                timeout=RELAY_IDLE_TIMEOUT)
+        except (ValueError, ConnectionError, asyncio.TimeoutError):
+            return False
+        if head is None:
+            return False
+        start, header_lines = head
     client_writer.write(start)
     for raw in header_lines:
         client_writer.write(raw)
     client_writer.write(b"\r\n")
 
-    no_body = request_method == "HEAD" or code in (204, 304) or 100 <= code < 200
+    no_body = request_method == "HEAD" or code in (204, 304)
     keep = True
     if not no_body:
         try:
