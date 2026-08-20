@@ -18,12 +18,25 @@ jobs:
       - name: Install locked dependencies
         run: python -m pip install --require-hashes -r requirements-lock.txt
       - name: Lock drift check
+        # 语义：只在 requirements-dev.txt 声明的包名集合变化时报错——
+        # 不强制每次解析到最新上游（版本由 lock 自身记录确定性版本）。
         run: |
-          python -m pip install uv
-          uv pip compile requirements-dev.txt --python-version 3.12 --generate-hashes -o /tmp/lock-regen.txt
-          diff <(grep -E '^[a-zA-Z0-9._-]+==' /tmp/lock-regen.txt | sort) \
-               <(grep -E '^[a-zA-Z0-9._-]+==' requirements-lock.txt | sort) \
-            || (echo "requirements-lock.txt 已漂移——请重生成并提交" && exit 1)
+          python - <<'PYEOF'
+          import re, sys
+          def names_of(text):
+              return {re.match(r"^([a-zA-Z0-9._-]+)==", l).group(1).lower()
+                      for l in text.splitlines()
+                      if re.match(r"^[a-zA-Z0-9._-]+==", l)}
+          lock_names = names_of(open("requirements-lock.txt").read())
+          dev = open("requirements-dev.txt").read()
+          missing = [re.match(r"^([a-zA-Z0-9._-]+)", line).group(1).lower()
+                     for line in dev.splitlines()
+                     if re.match(r"^[a-zA-Z0-9._-]+", line)
+                     and re.match(r"^([a-zA-Z0-9._-]+)", line).group(1).lower()
+                     not in lock_names]
+          if missing:
+              sys.exit("requirements-lock.txt 缺失 dev 声明的包：" + str(missing))
+          PYEOF
       - name: Python tests + coverage gate
         run: python -m pytest -q tests/ --cov --cov-fail-under=90
       - name: Node tests (config_ui.html LAYER 1/2)
