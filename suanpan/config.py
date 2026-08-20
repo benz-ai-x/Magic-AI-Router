@@ -12,7 +12,6 @@ from mpconf import netloc
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from mpconf.provider_auth import HOP_HEADERS as _HOP_HEADERS
 from mpconf.provider_auth import build_outbound_headers as _build_outbound
 from mpconf.provider_auth import resolve_api_key as _resolve_key
 

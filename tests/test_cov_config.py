@@ -18,7 +18,6 @@ from http.client import HTTPConnection
 from unittest.mock import MagicMock, patch
 
 from shellui import bridge_protocol
-from capture import capture_controller
 from services import claude_code_setup
 from mpconf import config
 from services import config_server
@@ -293,7 +292,7 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
     def test_on_sp_saved_exception_swallowed(self):
         """Lines 196-197: a raising on_sp_saved callback must not bubble up."""
         callback = MagicMock(side_effect=RuntimeError("boom"))
-        with patch.object(config_server, "ConfigStateStore") as store_cls, \
+        with patch.object(config_server, "ConfigStateStore"), \
              patch.object(config_server.config_store, "sp_save",
                           return_value=(True, None)):
             self.server._server.on_sp_saved = callback

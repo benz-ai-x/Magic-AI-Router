@@ -83,18 +83,16 @@ build_mitmdump
 # (matches app.py's _resolve_mitmdump_bin() frozen-mode lookup).
 echo "--- Building Magic AI Router.app ---"
 
-# Main app venv: install ALL deps (rumps, pyobjc, Pillow, AND the Suanpan
-# gateway deps — FastAPI, uvicorn, httpx, tiktoken, pydantic, etc.) so
-# PyInstaller can discover and bundle every import.  requirements-dev.txt
-# supersedes requirements-lock.txt for the main build because suanpan deps use
-# >= constraints incompatible with --require-hashes.
+# Main app venv: 从带 hashes 的 requirements-lock.txt 安装（issue #14）——
+# dev requirements 不决定发布成品；lock 已是主构建依赖的完整超集
+# （rumps/pyobjc/Suanpan/mitmproxy/Pillow/PyInstaller 全部覆盖）。
 MAIN_VENV=".build-venv-main"
 rm -rf "$MAIN_VENV"
 "$MAIN_PYTHON_BIN" -m venv "$MAIN_VENV"
 # shellcheck source=/dev/null
 source "$MAIN_VENV/bin/activate"
 pip install -q --upgrade pip
-pip install -q -r requirements-dev.txt
+pip install -q --require-hashes -r requirements-lock.txt
 
 # Generate the menu-bar state icon if missing (Pillow is in the venv).  The
 # production app icon is the approved v2 artwork under assets/icon; the menu-bar
@@ -118,33 +116,52 @@ python -m PyInstaller \
     --windowed \
     --name "Magic AI Router" \
     --add-data "build_time.txt:." \
-    --add-data "services/stats.py:." \
-    --add-data "tunnel/proxy.py:." \
-    --add-data "services/config_server.py:." \
     --add-data "shellui/config_ui.html:." \
     --add-data "docs/agent.md:." \
-    --add-data "shellui/webview_window.py:." \
-    --add-data "sysctl/keychain.py:." \
-    --add-data "tunnel/host_key.py:." \
-    --add-data "sysctl/system_proxy.py:." \
-    --add-data "sysctl/port_check.py:." \
-    --add-data "shellui/log_window.py:." \
-    --add-data "capture/capture.py:." \
-    --add-data "capture/capture_store.py:." \
-    --add-data "mpconf/config.py:." \
-    --add-data "tunnel/subprocess_monitor.py:." \
-    --add-data "sysctl/sys_proxy_controller.py:." \
-    --add-data "tunnel/retry_scheduler.py:." \
-    --add-data "shellui/menu_builder.py:." \
-    --add-data "tunnel/host_key_flow.py:." \
-    --add-data "capture/ca_trust.py:." \
+    --add-data "docs/examples/suanpan.example.yaml:." \
     --add-data "capture/ai_capture_addon.py:." \
-    --add-data "sysctl/sleep_blocker.py:." \
-    --add-data "sysctl/login_item.py:." \
-    --add-data "services/suanpan_runtime.py:." \
     --add-data "assets/MenubarIcon.png:." \
     --add-data "assets/MenubarIcon-gray.png:." \
     --add-data "assets/MenubarIcon-yellow.png:." \
+    --add-data "util.py:." \
+    --add-data "services/stats.py:." \
+    --add-data "tunnel/proxy.py:." \
+    --add-data "tunnel/async_runtime.py:." \
+    --add-data "tunnel/http_framer.py:." \
+    --add-data "tunnel/connection_coordinator.py:." \
+    --add-data "tunnel/subprocess_monitor.py:." \
+    --add-data "tunnel/retry_scheduler.py:." \
+    --add-data "tunnel/host_key.py:." \
+    --add-data "tunnel/host_key_flow.py:." \
+    --add-data "mpconf/config.py:." \
+    --add-data "mpconf/config_store.py:." \
+    --add-data "mpconf/config_state.py:." \
+    --add-data "mpconf/netloc.py:." \
+    --add-data "mpconf/provider_auth.py:." \
+    --add-data "shellui/menu_builder.py:." \
+    --add-data "shellui/webview_window.py:." \
+    --add-data "shellui/log_window.py:." \
+    --add-data "shellui/bridge_protocol.py:." \
+    --add-data "capture/capture.py:." \
+    --add-data "capture/capture_controller.py:." \
+    --add-data "capture/capture_store.py:." \
+    --add-data "capture/ca_trust.py:." \
+    --add-data "capture/chromium_proxy.py:." \
+    --add-data "capture/resources.py:." \
+    --add-data "capture/mitmdump_entry.py:." \
+    --add-data "sysctl/system_proxy.py:." \
+    --add-data "sysctl/sys_proxy_controller.py:." \
+    --add-data "sysctl/sleep_blocker.py:." \
+    --add-data "sysctl/login_item.py:." \
+    --add-data "sysctl/port_check.py:." \
+    --add-data "sysctl/keychain.py:." \
+    --add-data "sysctl/instance_owner.py:." \
+    --add-data "services/config_server.py:." \
+    --add-data "services/suanpan_runtime.py:." \
+    --add-data "services/claude_code_setup.py:." \
+    --add-data "services/lifecycle_runtime.py:." \
+    --add-data "services/balance_usage.py:." \
+    --add-data "services/authenticated_http.py:." \
     --add-data "dist-mitmdump/mitmdump:mitmdump" \
     --collect-all suanpan \
     --collect-submodules uvicorn \

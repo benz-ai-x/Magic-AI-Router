@@ -9,7 +9,6 @@ REAL `security add-trusted-cert` -- it needs interactive macOS admin auth
 and would persist a change to the real trust store. Every test here mocks
 subprocess.run/Popen.
 """
-import os
 import subprocess
 import unittest
 from unittest.mock import patch, MagicMock

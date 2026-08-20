@@ -10,7 +10,7 @@ import stat
 import types
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 from capture import ai_capture_addon as addon
 from capture import capture

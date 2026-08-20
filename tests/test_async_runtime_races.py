@@ -81,7 +81,6 @@ class TestCoroutineClosed(unittest.TestCase):
 class TestGenerationIsolation(unittest.TestCase):
     def test_old_generation_cleanup_does_not_clobber_new(self):
         rt = AsyncRuntime("t")
-        errors = []
         def factory(loop):
             async def noop():
                 pass

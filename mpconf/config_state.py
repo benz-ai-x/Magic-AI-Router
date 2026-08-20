@@ -111,7 +111,7 @@ class ConfigStateStore:
             lp = sp_c.get("listen_port")
             if lp is not None and (not isinstance(lp, int)
                                    or not 1 <= lp <= _SP_PORT_MAX):
-                errors.append(f"listen_port 端口无效（须 1..65535）")
+                errors.append("listen_port 端口无效（须 1..65535）")
             server = sp_c.get("server") or {}
             timeout = server.get("request_timeout_s")
             if timeout is not None and (not isinstance(timeout, int)

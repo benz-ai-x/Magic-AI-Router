@@ -24,7 +24,7 @@ from mpconf.config_state import ConfigStateStore
 from tunnel import host_key
 from services import claude_code_setup
 from capture import capture_store
-from mpconf.config import load_config, save_config, merge_config
+from mpconf.config import load_config, merge_config
 from services.balance_usage import (
     USAGE_RANGES,
     fetch_balance,
@@ -47,7 +47,6 @@ def _read_mp():
     except Exception:
         # 迁移可行动错误等：降级为带 _load_error 的空态供 UI 提示，
         # /api/state 不 500（UI 保存被 validateConfig/prepare 双带阻断）
-        from mpconf.config import IdentityMigrationError
         import logging as _lg
         _lg.getLogger("magic-proxy.config_server").exception("_read_mp degraded")
         return {"_load_error": "Magic Proxy 配置装载失败，已阻止保存以防覆盖"}

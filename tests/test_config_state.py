@@ -11,8 +11,7 @@ import unittest
 from unittest import mock  # noqa: F401
 from pathlib import Path
 
-from mpconf import config_state
-from mpconf.config_state import ConfigStateStore, LoadResult
+from mpconf.config_state import ConfigStateStore
 
 
 class TestLoadStates(unittest.TestCase):
@@ -291,7 +290,6 @@ class TestBackupProtectionAndCreation(unittest.TestCase):
             sp_path=str(Path(d.name) / "suanpan.yaml"))
 
     def test_invalid_main_file_does_not_clobber_good_backup(self):
-        import stat
         store = self._store()
         # 先正常提交一轮（建立良好状态），此时 .bak 尚不存在
         plan = store.prepare(sp={"listen_port": 9527})
@@ -577,7 +575,7 @@ class TestProviderIdSemantics(unittest.TestCase):
     """issue #8 S3：rename 后 keep/replace/clear 三态按 id 正确。"""
 
     def _roundtrip(self, old_providers, new_providers):
-        import tempfile, os
+        import tempfile
         from pathlib import Path
         from suanpan.config import save_config_dict, load_config_raw
         with tempfile.TemporaryDirectory() as d:
@@ -691,7 +689,7 @@ class TestRound3Holes(unittest.TestCase):
 
     def test_explicit_id_tunnel_registers_identity(self):
         """已迁移 A（id=hash 身份）+ 手工加同身份无 id B → B 不再静默同 id。"""
-        from mpconf.config import assign_stable_ids, stable_tunnel_id, IdentityMigrationError
+        from mpconf.config import assign_stable_ids, stable_tunnel_id
         real_id = stable_tunnel_id("u", "h", 22)
         tunnels = [
             {"id": real_id, "name": "a", "ssh_user": "u",
@@ -704,7 +702,7 @@ class TestRound3Holes(unittest.TestCase):
                             "B 得序数后缀 id，绝不与 A 静默同 id")
 
     def test_fresh_assign_collision_detected(self):
-        from mpconf.config import assign_stable_ids, IdentityMigrationError
+        from mpconf.config import assign_stable_ids
         # 两条同身份隧道：第一条得 ordinal=1 id；第二条 #2 后缀
         # 但若 #2 id 撞显式 id —— 分配后查重兜底
         tunnels = [

@@ -6,7 +6,6 @@ port 任一变化）重定向一律拒绝、HTTPS→HTTP 降级必拒、同 orig
 **凭证绝不出原始 origin**。
 """
 import http.server
-import json
 import threading
 import unittest
 

@@ -531,7 +531,7 @@ class TestSSHMonitorPasswordAuth(unittest.TestCase):
         mock_popen.return_value = MagicMock(pid=12345)
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         monitor = proxy.SSHMonitor(line_sink=lambda _: None)
-        ok = monitor.start(
+        monitor.start(
             {"ssh_host": "srv", "ssh_user": "u", "ssh_port": 22,
              "auth_type": "password"},
             1080, "hunter2")

@@ -1,6 +1,6 @@
 """Tests for suanpan/main.py — middleware + routes via TestClient."""
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, AsyncMock
 
 from suanpan.config import AppConfig, ProviderConfig, RouterConfig
 from suanpan.main import create_app

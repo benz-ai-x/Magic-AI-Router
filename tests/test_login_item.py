@@ -24,7 +24,7 @@ class TestLaunchAtLoginLaunchAgent(unittest.TestCase):
 
     def test_missing_executable_rejected(self):
         login_item.FROZEN = True
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory():
             with patch.object(login_item.sys, "executable", "/nonexistent/exe"), \
                  patch.object(login_item.os.path, "exists", return_value=False):
                 ok, err = login_item.set_launch_at_login(True)

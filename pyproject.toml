@@ -1,0 +1,5 @@
+[tool.ruff]
+# 测试文件按段导入（每段就近引入该段所需模块）是库内成熟惯例——
+# 逐行 noqa 会让 30+ 处 E402 噪音盖过真实问题。
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E402"]

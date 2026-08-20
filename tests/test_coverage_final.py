@@ -1,13 +1,8 @@
 """Final coverage batch: chipping away at all remaining < 92% modules."""
-import json
 import os
-import socket
-import subprocess
-import tempfile
 import time
 import unittest
-from pathlib import Path
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 # ── connection_coordinator.py: tick/check_ssh error paths ─────────
 from tunnel.connection_coordinator import ConnectionCoordinator
@@ -33,7 +28,6 @@ class TestConnCoordTickPaths(unittest.TestCase):
         self.assertFalse(conn.proxy_running)
 
 
-from unittest.mock import PropertyMock
 
 
 # ── service_coordinator.py: tick/stop_all paths ───────────────────

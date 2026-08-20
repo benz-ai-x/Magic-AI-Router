@@ -1,22 +1,16 @@
 """Final push: config_server routes + sys_proxy sync + proxy SSHMonitor + main middleware."""
 import json
-import os
-import socket
-import struct
-import subprocess
-import threading
 import time
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 # ── config_server.py: missing handler routes + lifecycle ──────────
-from http.server import HTTPServer
-from services.config_server import ConfigServer, _Handler, CONFIG_PORT
+from services.config_server import ConfigServer
 
 
 class TestConfigServerLifecycle(unittest.TestCase):
     def test_start_and_stop(self):
-        cs = ConfigServer(port=0)  # port 0 = OS picks free port
+        ConfigServer(port=0)  # port 0 = OS picks free port
         # Can't easily bind port 0 with current API; test start on real port
         cs2 = ConfigServer(port=19876)
         self.assertTrue(cs2.start())
@@ -90,7 +84,7 @@ class TestConfigServerRoutes(unittest.TestCase):
         url = f"http://127.0.0.1:{self._port}/api/state"
         from mpconf.config_state import CommitPlan, SaveResult
         with patch("services.config_server.ConfigStateStore") as store_cls, \
-             patch("mpconf.config_store.sp_save", return_value=(True, None)) as mock_ws:
+             patch("mpconf.config_store.sp_save", return_value=(True, None)):
             store_cls.return_value.prepare.return_value = CommitPlan(
                 True, [], {"tunnels": []}, {"providers": {}})
             store_cls.return_value.commit.return_value = SaveResult(True, None, [])

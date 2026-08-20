@@ -6,7 +6,6 @@ helpers) and never writes real user config (conftest sandboxes paths).
 """
 import io
 import json
-import os
 import tempfile
 import unittest
 import urllib.error
@@ -178,7 +177,7 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
         ).encode()
         with patch.object(AuthenticatedHttpClient, "open", return_value=body) as m:
             balance_usage.fetch_balance({"providers": self.PROVIDERS})
-        req = m.call_args[0][0]
+        _ = m.call_args[0][0]
         self.assertEqual(m.call_args.kwargs["headers"].get("Authorization"), "Bearer sk-test")
 
     def test_raw_auth_used_for_raw_style(self):

@@ -4,15 +4,11 @@ import logging
 import os
 import socket
 import struct
-import subprocess
-import threading
-import time
 from urllib.parse import urlsplit
 
 from services.stats import Stats
 from tunnel import host_key, http_framer
 from tunnel.http_framer import Framing, split_header
-from mpconf import netloc
 from tunnel.subprocess_monitor import SubprocessMonitor
 from tunnel.async_runtime import AsyncRuntime
 

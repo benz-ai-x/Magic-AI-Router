@@ -136,15 +136,18 @@ class TestEnableDisable(unittest.TestCase):
 
 class TestMenuTitle(unittest.TestCase):
     def test_running_shows_on(self):
-        ctrl = _ctrl(status="running"); ctrl._enabled = True
+        ctrl = _ctrl(status="running")
+        ctrl._enabled = True
         self.assertEqual(ctrl.menu_title(), "抓包模式：开")
 
     def test_starting_shows_transitional(self):
-        ctrl = _ctrl(status="starting"); ctrl._enabled = True
+        ctrl = _ctrl(status="starting")
+        ctrl._enabled = True
         self.assertEqual(ctrl.menu_title(), "抓包模式：启动中…")
 
     def test_error_shows_warning_even_if_enabled(self):
-        ctrl = _ctrl(status="error"); ctrl._enabled = True
+        ctrl = _ctrl(status="error")
+        ctrl._enabled = True
         self.assertEqual(ctrl.menu_title(), "抓包模式：异常")
 
     def test_off_and_ca_trusted_shows_plain_off(self):
@@ -156,7 +159,8 @@ class TestMenuTitle(unittest.TestCase):
             self.assertEqual(_ctrl(status="stopped").menu_title(), "抓包模式：关（需信任证书）")
 
     def test_does_not_check_ca_trust_while_enabled(self):
-        ctrl = _ctrl(status="running"); ctrl._enabled = True
+        ctrl = _ctrl(status="running")
+        ctrl._enabled = True
         with patch("capture.ca_trust.is_trusted") as is_trusted:
             ctrl.menu_title()
         is_trusted.assert_not_called()

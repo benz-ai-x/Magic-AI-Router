@@ -17,10 +17,11 @@ from sysctl import keychain
 from sysctl import login_item
 from mpconf import netloc
 from sysctl import port_check
-from mpconf import config_store
 from shellui.bridge_protocol import ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY
 from capture.capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
-from mpconf.config import IdentityMigrationError, load_config, save_config, merge_config, DEFAULT_CONFIG
+from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
+    DEFAULT_CONFIG, IdentityMigrationError, load_config, merge_config,
+    save_config)
 from shellui.log_window import LogBuffer, show_log_window
 from shellui.webview_window import show_config_window
 from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
