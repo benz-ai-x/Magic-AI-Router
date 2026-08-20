@@ -781,6 +781,31 @@ class TestKeepAliveOriginBinding(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"GET /two HTTP/1.1", data)
 
 
+class TestPerRequestHeaderHygiene(unittest.IsolatedAsyncioTestCase):
+    """issue #5：hop-by-hop/凭证剥离逐请求独立生效（非仅首请求）。"""
+
+    async def test_second_request_connection_tokens_stripped(self):
+        client_reader = _reader(
+            b"Host: a.test\r\n\r\n"
+            b"GET http://a.test/two HTTP/1.1\r\nHost: a.test\r\n"
+            b"Connection: X-Custom\r\nX-Custom: secret\r\n"
+            b"Proxy-Authorization: Basic sekrit\r\n\r\n")
+        remote_reader = _reader(
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+        remote_writer = _Writer()
+        with patch.object(proxy, "socks5_connect", new=AsyncMock(
+                return_value=(remote_reader, remote_writer))):
+            await proxy.handle_http(
+                client_reader, _Writer(),
+                b"GET http://a.test/one HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats())
+        second = bytes(remote_writer.data).split(b"GET /two", 1)[-1]
+        self.assertNotIn(b"X-Custom: secret", second)
+        self.assertNotIn(b"Proxy-Authorization", second)
+        self.assertIn(b"Host: a.test", second)
+
+
 class TestFramedBodies(unittest.IsolatedAsyncioTestCase):
     """issue #5 验收：Content-Length / chunked 定界下 keep-alive 不破。"""
 

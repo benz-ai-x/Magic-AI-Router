@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from services.stats import Stats
 from tunnel import host_key, http_framer
+from tunnel.http_framer import Framing, split_header
 from mpconf import netloc
 from tunnel.subprocess_monitor import SubprocessMonitor
 from tunnel.async_runtime import AsyncRuntime
@@ -199,13 +200,15 @@ async def handle_http(client_reader, client_writer, request_line, socks_addr, st
     绝不静默误投）。无法定界 body 的消息按「本消息后关闭」安全拒绝。
     """
     stats.inc_connections()
-    remote = None  # (reader, writer, (host, port))
+    remote = None  # http_framer 上游三元组，经 namedtuple 访问
     try:
         line = request_line
         while True:
             try:
-                head = await http_framer.read_head(client_reader, first_line=line)
-            except ValueError:
+                head = await asyncio.wait_for(
+                    http_framer.read_head(client_reader, first_line=line),
+                    timeout=CLIENT_HEADER_TIMEOUT)
+            except (ValueError, ConnectionError, asyncio.TimeoutError):
                 break
             if head is None:
                 break
@@ -232,31 +235,33 @@ async def handle_http(client_reader, client_writer, request_line, socks_addr, st
             # 代理凭证与 hop-by-hop 头只属于本地代理，绝不发往 origin。
             connection_tokens = set()
             for raw in header_lines:
-                name, sep, value = raw.decode("iso-8859-1", "replace").partition(":")
-                if sep and name.strip().lower() == "connection":
-                    connection_tokens.update(
-                        v.strip().lower() for v in value.split(","))
+                name, value = split_header(raw)
+                if name == "connection":
+                    connection_tokens.update(v.lower() for v in value.split(","))
             blocked = ({"proxy-authorization", "proxy-connection",
                         "connection", "keep-alive", "te", "trailer", "upgrade"}
                        | connection_tokens)
             forwarded = [raw for raw in header_lines
-                         if raw.decode("iso-8859-1", "replace")
-                         .partition(":")[0].strip().lower() not in blocked]
+                         if split_header(raw)[0] not in blocked]
 
             try:
-                req_cl, req_chunked, req_close = http_framer.parse_framing(header_lines)
+                framing = http_framer.parse_framing(header_lines)
             except ValueError:
-                req_cl = None
-                req_chunked = False
-                req_close = True  # 非法 Content-Length：本消息后关闭
+                # 非法 Content-Length：转发前拒绝（坏 CL 不得发往 origin）
+                client_writer.write(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n"
+                    b"Connection: close\r\n\r\n")
+                await client_writer.drain()
+                break
+            req_cl, req_chunked, req_close = framing
             # 可能有 body 却未定界（无 CL/chunked 的 POST 等）：无法安全
             # 定界后续 pipelining——本消息后关闭连接。
             body_indeterminate = (method in ("POST", "PUT", "PATCH")
                                   and req_cl is None and not req_chunked)
 
             # 跨 origin：关闭旧 upstream，安全重连（绝不静默误投）。
-            if remote is not None and remote[2] != (host, port):
-                await _close_writer(remote[1])
+            if remote is not None and remote.origin != (host, port):
+                await _close_writer(remote.writer)
                 remote = None
             if remote is None:
                 try:
@@ -269,8 +274,8 @@ async def handle_http(client_reader, client_writer, request_line, socks_addr, st
                         b"Connection: close\r\n\r\n")
                     await client_writer.drain()
                     break
-                remote = (rr, rw, (host, port))
-            rr, rw = remote[0], remote[1]
+                remote = http_framer.Upstream(rr, rw, (host, port))
+            rr, rw = remote.reader, remote.writer
 
             rw.write(f"{method} {path} {version}".encode("latin-1") + b"\r\n")
             for raw in forwarded:
@@ -278,9 +283,13 @@ async def handle_http(client_reader, client_writer, request_line, socks_addr, st
             rw.write(b"\r\n")
             try:
                 if req_cl:
-                    await http_framer.relay_fixed(client_reader, rw, req_cl)
+                    await asyncio.wait_for(
+                        http_framer.relay_fixed(client_reader, rw, req_cl),
+                        timeout=RELAY_IDLE_TIMEOUT)
                 elif req_chunked:
-                    if not await http_framer.relay_chunked(client_reader, rw):
+                    if not await asyncio.wait_for(
+                            http_framer.relay_chunked(client_reader, rw),
+                            timeout=RELAY_IDLE_TIMEOUT):
                         break
                 await rw.drain()
             except (ConnectionError, ValueError):
@@ -292,7 +301,7 @@ async def handle_http(client_reader, client_writer, request_line, socks_addr, st
             line = None  # 后续请求从 reader 自然续读（pipelined 字节天然缓冲）
     finally:
         if remote is not None:
-            await _close_writer(remote[1])
+            await _close_writer(remote.writer)
         client_writer.close()
         stats.dec_connections()
 
@@ -300,8 +309,9 @@ async def handle_http(client_reader, client_writer, request_line, socks_addr, st
 async def _relay_one_response(remote_reader, client_writer, request_method):
     """转发恰好一条 framed 响应。返回是否可继续 keep-alive。"""
     try:
-        head = await http_framer.read_head(remote_reader)
-    except ValueError:
+        head = await asyncio.wait_for(
+            http_framer.read_head(remote_reader), timeout=RELAY_IDLE_TIMEOUT)
+    except (ValueError, ConnectionError, asyncio.TimeoutError):
         return False
     if head is None:
         return False
@@ -311,6 +321,14 @@ async def _relay_one_response(remote_reader, client_writer, request_method):
         code = int(code_text)
     except ValueError:
         return False
+    if 100 <= code < 200:
+        # interim 响应：转发后继续等真响应（不得把 1xx 当一条完整消息）
+        client_writer.write(start)
+        for raw in header_lines:
+            client_writer.write(raw)
+        client_writer.write(b"\r\n")
+        await client_writer.drain()
+        return await _relay_one_response(remote_reader, client_writer, request_method)
     client_writer.write(start)
     for raw in header_lines:
         client_writer.write(raw)
@@ -320,18 +338,25 @@ async def _relay_one_response(remote_reader, client_writer, request_method):
     keep = True
     if not no_body:
         try:
-            cl, chunked, conn_close = http_framer.parse_framing(header_lines)
+            framing = http_framer.parse_framing(header_lines)
         except ValueError:
-            cl, chunked, conn_close = None, False, True
+            framing = Framing(None, False, True)
+        cl, chunked, conn_close = framing
         try:
             if cl is not None:
-                await http_framer.relay_fixed(remote_reader, client_writer, cl)
+                await asyncio.wait_for(
+                    http_framer.relay_fixed(remote_reader, client_writer, cl),
+                    timeout=RELAY_IDLE_TIMEOUT)
             elif chunked:
-                if not await http_framer.relay_chunked(remote_reader, client_writer):
+                if not await asyncio.wait_for(
+                        http_framer.relay_chunked(remote_reader, client_writer),
+                        timeout=RELAY_IDLE_TIMEOUT):
                     return False
             else:
                 # 响应无定界 = 服务端将关闭连接；如实转发至 EOF。
-                await http_framer.relay_until_eof(remote_reader, client_writer)
+                await asyncio.wait_for(
+                    http_framer.relay_until_eof(remote_reader, client_writer),
+                    timeout=RELAY_IDLE_TIMEOUT)
                 keep = False
         except (ConnectionError, ValueError):
             return False

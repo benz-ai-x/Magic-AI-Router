@@ -9,10 +9,32 @@ pipelined 的后续消息字节自动留给下一轮（readexactly 只取本消�
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 CHUNK = 65536
 
 
-async def read_head(reader, first_line=None, max_bytes=16384):
+class Framing(NamedTuple):
+    content_length: int | None
+    chunked: bool
+    conn_close: bool
+
+
+class Upstream(NamedTuple):
+    reader: object
+    writer: object
+    origin: tuple
+
+
+def split_header(raw):
+    """一行头部 → (小写名, 值)；无冒号返回 (None, "")。"""
+    name, sep, value = raw.decode("iso-8859-1", "replace").partition(":")
+    if not sep:
+        return None, ""
+    return name.strip().lower(), value.strip()
+
+
+async def read_head(reader, first_line=None, max_bytes=64 * 1024):
     """读一条消息的起始行 + 头部行。
 
     返回 (start_line_bytes, [header_line_bytes...])；在起始行前遇到 EOF
@@ -29,7 +51,10 @@ async def read_head(reader, first_line=None, max_bytes=16384):
         total += len(line)
         if total > max_bytes:
             raise ValueError("HTTP header exceeds limit")
-        if line in (b"\r\n", b"\n", b""):
+        if line == b"":
+            # 头部中途 EOF：残缺请求不得被静默补全转发——安全拒绝
+            raise ConnectionError("connection closed mid-headers")
+        if line in (b"\r\n", b"\n"):
             return start, headers
         headers.append(line)
 
@@ -51,7 +76,7 @@ def parse_framing(header_lines):
             chunked = True
         elif n == "connection" and "close" in v.lower():
             conn_close = True
-    return content_length, chunked, conn_close
+    return Framing(content_length, chunked, conn_close)
 
 
 async def relay_fixed(src, dst, length):
@@ -73,7 +98,7 @@ async def relay_chunked(src, dst):
             return False
         dst.write(line)
         try:
-            size = int(line.split(b";")[0].strip() or b"0", 16)
+            size = int(line.split(b";")[0].strip(), 16)  # 空白/垃圾 size 行 = 拒绝
         except ValueError:
             return False
         if size == 0:
