@@ -523,18 +523,19 @@ class MagicProxyApp(rumps.App):
 if __name__ == "__main__":
     if os.environ.get("MAGIC_PROXY_SMOKE_TEST") == "1":
         logger.info("Magic AI Router smoke import OK: v%s", VERSION)
-        # frozen 冒烟穿真实资源契约（issue #2）：在 _MEIPASS 内解析
-        # mitmdump + addon，任一失败即非零退出——bash 冒烟只查文件存在
-        # 时永远测不到这条路径。
-        from capture.resources import CaptureResourcesError, resolve_capture_resources
+        # frozen 冒烟（issue #2）：契约解析 + 实际 spawn bundled mitmdump
+        # 加载 addon，判据单一归宿在 capture.resources；失败原因直达
+        # stderr（windowed 包 logger 不落终端，print 才可见）。
+        from capture.resources import (
+            CaptureResourcesError, resolve_capture_resources, smoke_capture_boot)
         try:
-            res = resolve_capture_resources({})
-            assert res.mitmdump_bin and res.addon_path
-            logger.info("frozen resource contract OK: %s + %s",
-                        res.mitmdump_bin.rsplit("/", 1)[-1],
-                        res.addon_path.rsplit("/", 1)[-1])
-        except (CaptureResourcesError, AssertionError) as exc:
-            logger.error("frozen resource contract FAILED: %s", exc)
+            ok, detail = smoke_capture_boot(resolve_capture_resources({}))
+        except CaptureResourcesError as exc:
+            print(f"frozen resource contract FAILED: {exc.msg}", file=sys.stderr)
             raise SystemExit(1)
+        if not ok:
+            print(f"frozen capture smoke FAILED: {detail}", file=sys.stderr)
+            raise SystemExit(1)
+        logger.info("frozen capture smoke OK: %s", detail)
     else:
         MagicProxyApp().run()

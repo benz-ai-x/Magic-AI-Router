@@ -96,10 +96,6 @@ class TestMissingAddon(unittest.TestCase):
         self.assertIn("ai_capture_addon.py", ctx.exception.msg)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestCaptureDirPreflight(unittest.TestCase):
     def test_unwritable_capture_dir_raises_actionable_error(self):
         with patch.dict(os.environ, {"MAGIC_PROXY_MITMDUMP_BIN": "/usr/bin/true"}), \
@@ -119,3 +115,9 @@ class TestCaptureDirPreflight(unittest.TestCase):
                 with self.assertRaises(CaptureResourcesError) as ctx:
                     resolve_capture_resources({})
         self.assertIn("mitmdump", ctx.exception.msg)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+

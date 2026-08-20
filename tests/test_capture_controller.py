@@ -258,10 +258,6 @@ class TestEnableConsumesResourceContract(unittest.TestCase):
         self.assertEqual(c.error_msg, "")  # 预检错误已清除，回落 monitor 文案
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestPreflightErrorLifecycle(unittest.TestCase):
     def test_disable_clears_stale_preflight_error(self):
         from capture.resources import CaptureResourcesError
@@ -273,3 +269,9 @@ class TestPreflightErrorLifecycle(unittest.TestCase):
         c._monitor.status = "running"
         c.disable()
         self.assertEqual(c.error_msg, "")  # 回落 monitor 文案，过期错误清除
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+

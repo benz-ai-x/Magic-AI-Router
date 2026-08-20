@@ -177,43 +177,16 @@ PLIST="dist/Magic AI Router.app/Contents/Info.plist"
 codesign --force --deep --sign - "dist/Magic AI Router.app"
 
 # ---------------------------------------------------------------------------
-# 打包冒烟（issue #2）：两层——① frozen 态真实执行资源契约（app 二进制
-# 在 _MEIPASS 内跑 resolve_capture_resources）；② 实际执行 bundled
-# mitmdump 加载 bundled addon。启动期崩溃或 addon 加载报错都让构建失败。
-# 判据与 tests/sit/test_capture_smoke_sit.py 保持同步（跨语言双写，改动
-# 需两处同步；统一收敛见 issue #14）。
+# 打包冒烟（issue #2）：执行 bundled app 二进制的 smoke 钩子——在
+# _MEIPASS 内跑资源契约解析并实际 spawn bundled mitmdump 加载 bundled
+# addon。判据单一归宿在 capture/resources.py（SMOKE_* 常量）。
 # ---------------------------------------------------------------------------
 APP_BUNDLE="dist/Magic AI Router.app"
-MAGIC_PROXY_SMOKE_TEST=1 "$APP_BUNDLE/Contents/MacOS/Magic AI Router" || {
-    echo "ERROR: frozen resource contract smoke failed" >&2
-    exit 1
-}
-echo "Smoke OK: frozen resource contract resolved inside bundle"
-SMOKE_ERR="$(mktemp)"
-SMOKE_CONF="$(mktemp -d)"
-"$APP_BUNDLE/Contents/Resources/mitmdump/mitmdump" -q --no-server \
-    --set "confdir=$SMOKE_CONF" \
-    -s "$APP_BUNDLE/Contents/Resources/ai_capture_addon.py" \
-    >/dev/null 2>"$SMOKE_ERR" &
-SMOKE_PID=$!
-sleep 5
-SMOKE_FAIL=0
-if ! kill -0 "$SMOKE_PID" 2>/dev/null; then
-    echo "ERROR: bundled mitmdump died during addon smoke:" >&2
-    SMOKE_FAIL=1
-fi
-kill "$SMOKE_PID" 2>/dev/null
-wait "$SMOKE_PID" 2>/dev/null
-if grep -qE "Error loading script|Traceback" "$SMOKE_ERR"; then
-    echo "ERROR: addon load reported errors during smoke:" >&2
-    SMOKE_FAIL=1
-fi
-cat "$SMOKE_ERR" >&2 || true
-rm -f "$SMOKE_ERR"; rm -rf "$SMOKE_CONF"
-if [ "$SMOKE_FAIL" -ne 0 ]; then
+if ! MAGIC_PROXY_SMOKE_TEST=1 "$APP_BUNDLE/Contents/MacOS/Magic AI Router"; then
+    echo "ERROR: frozen capture smoke failed (see stderr above)" >&2
     exit 1
 fi
-echo "Smoke OK: bundled mitmdump loaded bundled addon"
+echo "Smoke OK: frozen contract + bundled mitmdump loaded bundled addon"
 
 echo ""
 echo "=== Build complete ==="

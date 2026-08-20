@@ -66,3 +66,48 @@ def resolve_capture_resources(cfg: dict) -> CaptureResources:
     except OSError as exc:
         raise CaptureResourcesError(f"抓包目录不可用：{exc}") from exc
     return CaptureResources(mitmdump_bin, addon, capture_dir)
+
+
+# ── 启动冒烟判据：单一归宿（此前正则/宽限秒散落 build.sh、SIT、app.py
+#    三处且已漂移 5≠4；统一收敛，彻底方案归 issue #14）───────────────
+SMOKE_GRACE_SECONDS = 5  # 进程须带着 addon 活过此时长
+SMOKE_ERROR_MARKERS = ("Error loading script", "Traceback")
+
+
+def smoke_capture_boot(res=None, *, grace_seconds=SMOKE_GRACE_SECONDS):
+    """启动期冒烟：spawn mitmdump 加载 addon，活过宽限期且无加载报错。
+
+    返回 (ok, detail)。dev（SIT）与 frozen（app smoke 钩子，经 build.sh
+    调用）共用此判据。
+    """
+    import subprocess
+    import tempfile
+    import time
+    if res is None:
+        res = resolve_capture_resources({})
+    with tempfile.TemporaryDirectory() as confdir:
+        proc = subprocess.Popen(
+            [res.mitmdump_bin, "-q", "--no-server",
+             "--set", f"confdir={confdir}", "-s", res.addon_path],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        stderr = b""
+        try:
+            time.sleep(grace_seconds)
+            if proc.poll() is not None:
+                _, stderr = proc.communicate()
+                return False, (
+                    f"mitmdump rc={proc.returncode} died during "
+                    f"{grace_seconds}s grace: "
+                    + stderr.decode("utf-8", "replace")[:300])
+        finally:
+            proc.terminate()
+            try:
+                _, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                _, stderr = proc.communicate()
+    err_text = stderr.decode("utf-8", "replace")
+    for marker in SMOKE_ERROR_MARKERS:
+        if marker in err_text:
+            return False, f"addon load reported: {marker}"
+    return True, "mitmdump carried the addon past the grace window"
