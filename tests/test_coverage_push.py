@@ -409,39 +409,6 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
 
 from services import config_server
 from mpconf import config_store
-class TestWriteMp(unittest.TestCase):
-    @patch("services.config_server.keychain")
-    @patch("services.config_server.save_config")
-    @patch("services.config_server.merge_config")
-    def test_write_success(self, mock_merge, mock_save, mock_kc):
-        mock_merge.return_value = {"tunnels": []}
-        mock_save.return_value = True
-        errors = config_server._write_mp({"tunnels": []})
-        self.assertEqual(errors, [])
-
-    @patch("services.config_server.keychain")
-    @patch("services.config_server.save_config")
-    @patch("services.config_server.merge_config")
-    def test_write_keychain_password(self, mock_merge, mock_save, mock_kc):
-        mock_merge.return_value = {"tunnels": [{"auth_type": "password", "ssh_host": "h"}]}
-        mock_save.return_value = True
-        mock_kc.set_password.return_value = True
-        cfg = {"tunnels": [{"auth_type": "password", "ssh_host": "h", "ssh_user": "u", "ssh_port": 22, "password": "pw"}]}
-        errors = config_server._write_mp(cfg)
-        mock_kc.set_password.assert_called_once()
-        self.assertEqual(errors, [])
-
-    @patch("services.config_server.keychain")
-    @patch("services.config_server.save_config")
-    @patch("services.config_server.merge_config")
-    def test_keychain_failure_reports_error(self, mock_merge, mock_save, mock_kc):
-        mock_merge.return_value = {"tunnels": []}
-        mock_save.return_value = True
-        mock_kc.set_password.return_value = False
-        cfg = {"tunnels": [{"auth_type": "password", "ssh_host": "h", "password": "pw"}]}
-        errors = config_server._write_mp(cfg)
-        self.assertTrue(any("钥匙串" in e for e in errors))
-
 
 class TestWriteSp(unittest.TestCase):
     def test_write_validates_and_dumps(self):

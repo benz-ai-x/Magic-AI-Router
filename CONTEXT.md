@@ -64,6 +64,10 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 抓包模式的资源单一入口（`capture/resources.py`）：`resolve_capture_resources(cfg)` 解析并验证 mitmdump 二进制（env 覆盖 → frozen bundled → PATH 三级链）、addon 脚本（存在 + 可读）与抓包目录（可建），失败抛带可行动中文文案的 `CaptureResourcesError`。控制器只消费已验证的 `CaptureResources` 三元组，不自行拼接文件名；frozen 态资源为扁平布局（`--add-data` dest="."），addon 导入需包限定/扁平双态兼容。启动冒烟判据（宽限秒数 + 加载错误标记）以 `smoke_capture_boot`/`SMOKE_*` 为单一归宿，dev SIT 与 build.sh 打包冒烟共用。
 
+### 配置事务（ConfigStateStore）
+
+配置持久化的唯一事务边界（`mpconf/config_state.py`）：`load()` 区分 missing/valid/invalid/io_error（损坏不再折叠成空）；`prepare()` 在首次 mutation 前完成数值/URL/跨引用全量校验并派生 Keychain 变更计划（密码剥离出候选）；`commit()` 按序执行 journal（载荷内嵌）→ MP → SP → Keychain → 清 journal → 回调（`on_sp_saved` 只在完整提交后）；`recover()` 在启动时幂等重放 journal 补齐跨文件崩溃。invalid 主文件不覆盖最后已知良好的 `.bak`；首创建与保存同一 0600/0700 路径。
+
 ### 配置存储（ConfigStore）
 
 两个配置文件（`~/.magic-proxy.json` 与 `~/.suanpan.yaml`）路径的唯一权威注册表 + 共享安全写管线，位于 `mpconf/config_store.py`。所有读取方在调用时从 `PATHS` 注册表取路径——测试只需 `patch.dict(config_store.PATHS)` 单点重定向，任何测试都无法再写真实配置文件。

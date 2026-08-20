@@ -63,10 +63,13 @@ def get_password(tunnel: dict) -> str:
     return ""
 
 
-def delete_password(tunnel: dict) -> None:
+def delete_password(tunnel: dict) -> bool:
+    """删除隧道密码。返回是否成功（条目本就不存在视为成功）。"""
     if not tunnel.get("ssh_host"):
-        return
+        return True
     try:
         Security.SecItemDelete(_base_query(tunnel))
+        return True
     except Exception as e:  # noqa: BLE001
         logger.warning("Keychain delete failed: %s", type(e).__name__)
+        return False

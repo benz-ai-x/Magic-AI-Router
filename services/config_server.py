@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from sysctl import keychain
 from mpconf import config_store
+from mpconf.config_state import ConfigStateStore
 from tunnel import host_key
 from services import claude_code_setup
 from capture import capture_store
@@ -48,36 +49,6 @@ def _read_mp():
         t["has_password"] = bool(
             t.get("auth_type") == "password" and keychain.get_password(t))
     return cfg
-
-
-def _write_mp(cfg):
-    """Write Magic AI Router config. Returns list of error strings (empty = ok).
-
-    The file is saved FIRST; keychain writes happen only after the config is
-    durable — a failed save must not orphan passwords for unsaved tunnels.
-    """
-    pending_set, pending_del = [], []
-    # Server-injected read-only fields must never round-trip into the file.
-    cfg.pop("capture_active", None)
-    for i, t in enumerate(cfg.get("tunnels", [])):
-        pw = t.pop("password", None)
-        t.pop("has_password", None)
-        if pw:
-            pending_set.append((i, t, pw))
-        # #40: only an EXPLICIT auth_type switch away from password may
-        # delete the keychain entry — a partial payload that omits
-        # auth_type must not silently wipe a saved password.
-        if "auth_type" in t and t.get("auth_type") != "password":
-            pending_del.append(t)
-    if not save_config(merge_config(cfg)):
-        return ["配置文件写入失败"]
-    errors = []
-    for i, t, pw in pending_set:
-        if not keychain.set_password(t, pw):
-            errors.append(f"隧道 {i + 1}: 密码保存到钥匙串失败")
-    for t in pending_del:
-        keychain.delete_password(t)
-    return errors
 
 
 # Hard ceiling for one tunnel connectivity probe: ssh's own ConnectTimeout
@@ -287,7 +258,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/state":
             mp = _read_mp()
             sp = config_store.sp_load_masked()
-            # Read-only runtime status injected for the config UI; _write_mp
+            # Read-only runtime status injected for the config UI; ConfigStateStore
             # strips it again so it can never round-trip into the file.
             try:
                 fn = self.server.capture_state_fn
@@ -382,22 +353,28 @@ class _Handler(BaseHTTPRequestHandler):
         data = self._read_json_body()
         if data is None:
             return
-        errors = []
         mp_in = data.get("mp")
         sp_in = data.get("sp")
-        if isinstance(mp_in, dict):
-            errors.extend(_write_mp(mp_in))
-        if isinstance(sp_in, dict):
-            ok, err = config_store.sp_save(sp_in)
-            if not ok:
-                errors.append(err)
-            elif self.server.on_sp_saved:
-                try:
-                    self.server.on_sp_saved()
-                except Exception:
-                    logger.exception("on_sp_saved callback failed")
-        if errors:
-            self._json(422, {"ok": False, "errors": errors})
+        if not isinstance(mp_in, dict):
+            mp_in = None
+        if not isinstance(sp_in, dict):
+            sp_in = None
+        if mp_in is None and sp_in is None:
+            self._json(200, {"ok": True})
+            return
+        store = ConfigStateStore(keychain=keychain)
+        plan = store.prepare(mp=mp_in, sp=sp_in)
+        if not plan.ok:
+            self._json(422, {"ok": False, "errors": plan.errors})
+            return
+        # on_sp_saved 只在完整提交后（含 MP 段成功）触发
+        result = store.commit(
+            plan,
+            on_committed=(self.server.on_sp_saved
+                          if (sp_in is not None
+                              and self.server.on_sp_saved) else None))
+        if not result.ok:
+            self._json(422, {"ok": False, "errors": result.errors})
         else:
             self._json(200, {"ok": True})
 

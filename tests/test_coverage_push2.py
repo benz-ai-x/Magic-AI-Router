@@ -85,8 +85,12 @@ class TestConfigServerRoutes(unittest.TestCase):
     def test_put_state(self):
         import urllib.request
         url = f"http://127.0.0.1:{self._port}/api/state?token={self._server.token}"
-        with patch("services.config_server._write_mp", return_value=[]) as mock_wm, \
+        from mpconf.config_state import CommitPlan, SaveResult
+        with patch("services.config_server.ConfigStateStore") as store_cls, \
              patch("mpconf.config_store.sp_save", return_value=(True, None)) as mock_ws:
+            store_cls.return_value.prepare.return_value = CommitPlan(
+                True, [], {"tunnels": []}, {"providers": {}})
+            store_cls.return_value.commit.return_value = SaveResult(True, None, [])
             data = json.dumps({"mp": {"tunnels": []}, "sp": {"providers": {}}}).encode()
             req = urllib.request.Request(url, data=data, method="PUT",
                                          headers={"Content-Type": "application/json"})
@@ -97,7 +101,10 @@ class TestConfigServerRoutes(unittest.TestCase):
     def test_put_with_errors(self):
         import urllib.request
         url = f"http://127.0.0.1:{self._port}/api/state?token={self._server.token}"
-        with patch("services.config_server._write_mp", return_value=["error1"]):
+        from mpconf.config_state import CommitPlan
+        with patch("services.config_server.ConfigStateStore") as store_cls:
+            store_cls.return_value.prepare.return_value = CommitPlan(
+                False, ["error1"])
             data = json.dumps({"mp": {"tunnels": []}}).encode()
             req = urllib.request.Request(url, data=data, method="PUT",
                                          headers={"Content-Type": "application/json"})

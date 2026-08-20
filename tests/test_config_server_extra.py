@@ -1,4 +1,4 @@
-"""Tests for config_server.py — _write_mp, sp save pipeline, handler dispatch."""
+"""Tests for config_server.py — sp save pipeline, handler dispatch."""
 import json
 import os
 import unittest
@@ -21,35 +21,6 @@ class TestRestoreKey(unittest.TestCase):
 
     def test_none_without_keep_clears(self):
         self.assertIsNone(_restore_key(None, "sk-old", keep=False))
-
-
-class TestWriteMp(unittest.TestCase):
-    @patch("services.config_server.save_config")
-    @patch("services.config_server.keychain")
-    def test_writes_config_and_returns_errors(self, mock_kc, mock_save):
-        mock_save.return_value = True
-        cfg = {"tunnels": [{"auth_type": "password", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22}]}
-        errors = config_server._write_mp(cfg)
-        self.assertEqual(errors, [])
-        mock_save.assert_called_once()
-
-    @patch("services.config_server.save_config")
-    def test_save_failure_returns_error(self, mock_save):
-        mock_save.return_value = False
-        errors = config_server._write_mp({"tunnels": []})
-        self.assertTrue(any("写入失败" in e for e in errors))
-
-    @patch("services.config_server.save_config")
-    @patch("services.config_server.keychain")
-    def test_save_failure_leaves_keychain_untouched(self, mock_kc, mock_save):
-        """File save fails → keychain must not hold orphans for unsaved tunnels."""
-        mock_save.return_value = False
-        cfg = {"tunnels": [{"auth_type": "password", "ssh_host": "h",
-                            "ssh_user": "u", "ssh_port": 22, "password": "pw"}]}
-        errors = config_server._write_mp(cfg)
-        self.assertTrue(errors)
-        mock_kc.set_password.assert_not_called()
-        mock_kc.delete_password.assert_not_called()
 
 
 class TestWriteSp(unittest.TestCase):
