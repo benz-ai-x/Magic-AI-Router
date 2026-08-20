@@ -16,7 +16,7 @@ RESOURCE_MANIFEST = [
 # 运行时 import 的域包模块（PyInstaller 经 add-data 装入根平铺——
 # frozen 下按扁平名 import；漏装即 ModuleNotFoundError）
 RUNTIME_MODULES = [
-    "app.py", "util.py", "stats.py" if False else "services/stats.py",
+    "app.py", "util.py", "services/stats.py",
     "tunnel/proxy.py", "tunnel/async_runtime.py", "tunnel/http_framer.py",
     "tunnel/connection_coordinator.py", "tunnel/subprocess_monitor.py",
     "tunnel/retry_scheduler.py", "tunnel/host_key.py", "tunnel/host_key_flow.py",
