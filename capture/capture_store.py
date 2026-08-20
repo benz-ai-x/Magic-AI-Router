@@ -10,6 +10,7 @@ DEFAULT_CAPTURE_PORT = 8080
 MARKER = ".magic-proxy-capture-store"
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_STORE_BYTES = 200 * 1024 * 1024
+MAX_RECORD_BYTES = 8 * 1024 * 1024  # 单条 record 上限：append 前拒收
 
 
 def _home_dir():
@@ -90,6 +91,19 @@ def _trim_store(directory):
         total -= size
 
 
+def _converge_after_append(directory):
+    """append 后即时预算收敛（_trim_store：留新删旧；绝非全清）。
+
+    best-effort——失败只记日志，写入结果不受影响。
+    """
+    try:
+        _trim_store(directory)
+    except OSError:
+        import logging
+        logging.getLogger("magic-proxy.capture_store").debug(
+            "post-append converge skipped", exc_info=True)
+
+
 def append_json(record, directory):
     directory = prepare(directory)
     _trim_store(directory)
@@ -101,6 +115,10 @@ def append_json(record, directory):
     name = datetime.now().strftime("%Y-%m-%d") + ".jsonl"
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     try:
+        payload = json.dumps(record, ensure_ascii=False)
+        if len(payload.encode("utf-8")) > MAX_RECORD_BYTES:
+            raise OSError(
+                f"单条抓包记录超过 {MAX_RECORD_BYTES} 字节上限，已拒收")
         try:
             info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode):
@@ -120,7 +138,9 @@ def append_json(record, directory):
             raise OSError("抓包文件所有者或类型不安全")
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+            fh.write(payload + "\n")
+        # append 后容量收敛：单条超大也不让总量长期超限
+        _converge_after_append(directory)
         return os.path.join(directory, name)
     finally:
         os.close(dir_fd)
