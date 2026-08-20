@@ -111,7 +111,8 @@ suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM �
   compat.py ── 供应商请求 body 归一化（system 扁平化 / document 块剥离 / beta 字段剥离）
   usage_extractor.py ── UsageExtractor SSE 用量提取（CRLF 兼容 + max-merge 跨供应商）
   router.py ── 路由决策（内联覆盖 → SUBAGENT 标签 → 规则 → 默认）
-  usage_log.py ── 追加写 JSONL + 50MB 轮转 + 内存滚动总计
+  usage_log.py ── 追加写 JSONL + 50MB 轮转 + 内存滚动总计（写失败吞并计数，0700/0600+拒 symlink）
+  prewarmer.py ── 启动预热 best-effort adapter：有界并发 + 总预算 + 可取消
   __main__.py ── `python3 -m suanpan` 独立启动入口
 ```
 
