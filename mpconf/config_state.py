@@ -141,19 +141,50 @@ class ConfigStateStore:
         # merge 默认值必须在校验之后：merge_config 会把非法端口/负保留
         # 静默重置为默认，前置会让 mp 侧数值约束在真实入口永不触发
         if mp_c is not None:
+            if mp_c.get("_load_error"):
+                return CommitPlan(False, [
+                    f"配置装载失败，已阻止保存以防覆盖：{mp_c['_load_error']}"])
             from mpconf.config import merge_config
             mp_c = merge_config(mp_c)
+        if sp_c is not None:
+            if sp_c.get("_load_error"):
+                return CommitPlan(False, [
+                    f"配置装载失败，已阻止保存以防覆盖：{sp_c['_load_error']}"])
+            # 掩码 key 恢复（原 save_config_dict 语义——live PUT 唯一保存
+            # 路径在此）：按 id 匹配旧档恢复真实 key；legacy 无 id 档按名
+            sp_c = self._restore_masked_sp_keys(sp_c)
         kc_sets, kc_dels = [], []
         if mp_c is not None:
             import copy
             mp_c = copy.deepcopy(mp_c)
+            # 删除的隧道（id 在旧档、不在候选）：双账户清理 secret
+            old_mp = self._read_mp_current() or {}
+            new_ids = {t.get("id") for t in mp_c.get("tunnels") or []
+                       if isinstance(t, dict)}
+            for t in old_mp.get("tunnels") or []:
+                if isinstance(t, dict) and t.get("id") and t["id"] not in new_ids:
+                    kc_dels.append(("all", t))
             for t in mp_c.get("tunnels") or []:
                 t.pop("has_password", None)      # 服务端注入的只读字段
                 t.pop("capture_active", None)
                 pw = t.pop("password", None)
-                # 显式切换离 password 才删（部分载荷不得静默清密）
                 if pw:
                     kc_sets.append((dict(t), pw))
+                elif (t.get("auth_type") == "password" and t.get("id")
+                      and self._keychain is not None):
+                    # issue #8 re-pin——只在 id==当前身份哈希时读 legacy：
+                    # 身份编辑过的隧道 id 与地址已脱钩，legacy 账户可能
+                    # 属于别的实体（Y 改址到 X 旧地址会串走 X 的密码），
+                    # 绝不猜测归属。收敛：写入 id 账户 + legacy-only 删除。
+                    from mpconf.config import stable_tunnel_id
+                    if t["id"] == stable_tunnel_id(
+                            t.get("ssh_user", ""), t.get("ssh_host", ""),
+                            t.get("ssh_port", 22)):
+                        legacy = {k: v for k, v in t.items() if k != "id"}
+                        old_pw = self._keychain.get_password(legacy)
+                        if old_pw:
+                            kc_sets.append((dict(t), old_pw))
+                            kc_dels.append(("legacy-only", legacy))
                 elif "auth_type" in t and t.get("auth_type") != "password":
                     kc_dels.append(dict(t))
         return CommitPlan(True, [], mp_c, sp_c, kc_sets, kc_dels)
@@ -179,6 +210,46 @@ class ConfigStateStore:
         from mpconf import config_store
         if not config_store.atomic_write(path, text):  # 唯一安全写入口
             raise OSError(f"atomic_write failed: {path}")
+
+    def _restore_masked_sp_keys(self, sp_c: dict) -> dict:
+        """api_key_set 掩码契约：UI 回传 api_key=null+api_key_set=true 表示
+        保留旧 key——按 id（或 legacy 名）从当前磁盘档恢复真实值。"""
+        import copy
+        sp_c = copy.deepcopy(sp_c)
+        sp_c.pop("_load_error", None)  # 装载错误标记永不落盘
+        try:
+            with open(self.sp_path) as f:
+                old = yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError):
+            old = {}
+        old_by_id = {p.get("id"): p for p in (old.get("providers") or {}).values()
+                     if isinstance(p, dict) and p.get("id")}
+        old_by_name = old.get("providers") or {}
+        for name, p in sp_c.get("providers", {}).items():
+            if not isinstance(p, dict):
+                continue
+            old_p = old_by_id.get(p.get("id"))
+            if old_p is None:
+                legacy = old_by_name.get(name)
+                if isinstance(legacy, dict) and not legacy.get("id"):
+                    old_p = legacy
+            keep = bool(p.pop("api_key_set", False))
+            new_key = p.get("api_key")
+            p["api_key"] = (old_p or {}).get("api_key") if (keep and not new_key) \
+                else (new_key or None)
+        top_keep = bool(sp_c.pop("api_key_set", False))
+        top_new = sp_c.get("api_key")
+        sp_c["api_key"] = old.get("api_key") if (top_keep and not top_new) \
+            else (top_new or None)
+        return sp_c
+
+    def _read_mp_current(self) -> dict | None:
+        try:
+            with open(self.mp_path) as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
 
     def _current_text(self, path):
         try:
@@ -254,10 +325,17 @@ class ConfigStateStore:
                         f"隧道 {tunnel.get('name', '?')} 的密码保存到钥匙串失败")
                     break
             if not keychain_errors:
-                for tunnel in plan.keychain_dels:
-                    if not self._keychain.delete_password(tunnel):
+                for entry in plan.keychain_dels:
+                    if isinstance(entry, tuple):
+                        mode, tunnel = entry
+                    else:
+                        mode, tunnel = "all", entry
+                    ok = (self._keychain.delete_legacy_password(tunnel)
+                          if mode == "legacy-only"
+                          else self._keychain.delete_password(tunnel))
+                    if not ok:
                         keychain_errors.append(
-                            f"隧道 {tunnel.get('name', '?')} 的旧密码清理失败")
+                            f"隧道 {tunnel.get('name', tunnel.get('ssh_host', '?'))} 的旧密码清理失败")
         if keychain_errors:
             self._rollback(payload)  # 文件回到旧内容：不暴露部分新状态
             return SaveResult(False, "keychain", keychain_errors)

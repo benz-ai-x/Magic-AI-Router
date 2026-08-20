@@ -360,7 +360,7 @@ function viewSnapshot(view,state,roles){
   if(view==='tunnel')return{
     current_tunnel:numberDefault(mp.current_tunnel,0),
     tunnels:(mp.tunnels||[]).map(t=>({
-      name:t.name||'',ssh_user:t.ssh_user||'',ssh_host:t.ssh_host||'',
+      id:t.id||'',name:t.name||'',ssh_user:t.ssh_user||'',ssh_host:t.ssh_host||'',
       ssh_port:numberDefault(t.ssh_port,22),auth_type:t.auth_type||'key',
       ssh_key:t.ssh_key||'',ssh_compression:t.ssh_compression!==false,
       password:t.password||(t.has_password?'__saved_password__':''),
@@ -385,6 +385,7 @@ function viewSnapshot(view,state,roles){
     Object.keys(sp.providers||{}).sort().forEach(name=>{
       const p=sp.providers[name]||{};
       providers[name]={
+        id:p.id||'',
         base_url:p.base_url||'',
         api_key:p.api_key||(p.api_key_set?'__saved_api_key__':''),
         api_key_env:p.api_key_env||'',auth_header:p.auth_header||'',
@@ -407,6 +408,8 @@ function viewSnapshot(view,state,roles){
 function validateConfig(S){
   // Pre-save validation; returns a list of human-readable error strings.
   const errors=[];
+  if(S&&S.sp&&S.sp._load_error)errors.push('Suanpan 配置装载失败，已阻止保存以防覆盖：'+S.sp._load_error);
+  if(S&&S.mp&&S.mp._load_error)errors.push('Magic Proxy 配置装载失败，已阻止保存以防覆盖：'+S.mp._load_error);
   (S.mp.tunnels||[]).forEach((t,i)=>{
     if(!t.ssh_host)errors.push(`隧道 ${i+1}: 未填写地址`);
     if(t.ssh_port&&(t.ssh_port<1||t.ssh_port>65535))errors.push(`隧道 ${i+1}: SSH 端口无效`);
@@ -1318,6 +1321,7 @@ function collectProvider(){
   const sw=d.querySelector('[data-pf="enabled"]');p.enabled=sw&&sw.getAttribute('aria-checked')==='true';
   const swAN=d.querySelector('[data-pf="anthropic_native"]');p.anthropic_native=swAN&&swAN.getAttribute('aria-checked')==='true';
   if(newName!==activeProvider){
+    if(S.sp.providers[newName]){toast('供应商名称「'+newName+'」已被占用，未重命名',true);return;}
     const oldName=activeProvider;
     const np={};for(const[k2,v2]of Object.entries(S.sp.providers))np[k2===activeProvider?newName:k2]=v2;S.sp.providers=np;activeProvider=newName;
     // Update rule references

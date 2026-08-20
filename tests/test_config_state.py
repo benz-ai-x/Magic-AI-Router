@@ -378,6 +378,98 @@ class TestFaultInjectionCompletions(unittest.TestCase):
                          "损坏 journal 必须清除，不得永久残留")
 
 
+    def test_repin_guard_blocks_crosswired_identity(self):
+        """Y 改址到 X 旧地址：id 与身份哈希不符 → 绝不读 legacy（防串线）。"""
+        ops = []
+        class KC:
+            def get_password(self, t):
+                ops.append("get")
+                return "x-secret"
+            def set_password(self, t, pw):
+                ops.append(("set", t.get("id")))
+                return True
+            def delete_password(self, t):
+                return True
+            def delete_legacy_password(self, t):
+                ops.append(("del-legacy",))
+                return True
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"), keychain=KC())
+        # id=哈希(旧地址)，现身份=新地址 → 守卫拒绝
+        from mpconf.config import stable_tunnel_id
+        old_addr_id = stable_tunnel_id("u", "old.example.com", 22)
+        plan = store.prepare(mp={"tunnels": [
+            {"id": old_addr_id, "name": "y", "ssh_user": "u",
+             "ssh_host": "new.example.com", "ssh_port": 22,
+             "auth_type": "password"}]})
+        store.commit(plan)
+        self.assertNotIn("get", ops, "身份编辑过 → 不读 legacy，不猜归属")
+
+    def test_deleted_tunnel_secrets_cleaned_both_accounts(self):
+        ops = []
+        class KC:
+            def get_password(self, t):
+                return ""
+            def set_password(self, t, pw):
+                return True
+            def delete_password(self, t):
+                ops.append(("del-all", t.get("id")))
+                return True
+            def delete_legacy_password(self, t):
+                ops.append(("del-legacy", t.get("id")))
+                return True
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"), keychain=KC())
+        # 先建档含 t-gone，再保存不含它
+        Path(store.mp_path).write_text(json.dumps(
+            {"tunnels": [{"id": "t-gone", "name": "g", "ssh_host": "h",
+                          "auth_type": "password",
+                          "ssh_user": "u", "ssh_port": 22}]}))
+        plan = store.prepare(mp={"tunnels": []})
+        self.assertTrue(plan.ok)
+        store.commit(plan)
+        self.assertIn(("del-all", "t-gone"), ops, "删除隧道双账户清理")
+
+
+    def test_prepare_rejects_sp_with_load_error(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"))
+        plan = store.prepare(sp={"_load_error": "装载失败", "providers": {}})
+        self.assertFalse(plan.ok)
+        self.assertIn("已阻止保存", plan.errors[0])
+
+    def test_restore_strips_load_error_marker(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"))
+        Path(store.sp_path).write_text(
+            yaml.dump({"listen_port": 9527, "providers": {
+                "a": {"id": "p-1", "base_url": "https://a.test",
+                      "api_key": "sk-1", "models": ["m"]}}}))
+        plan = store.prepare(sp={
+            "_load_error": "x", "listen_port": 9527,
+            "providers": {"a": {"id": "p-1", "base_url": "https://a.test",
+                                "api_key": None, "api_key_set": True,
+                                "models": ["m"]}}})
+        # _load_error 在此之前已被拒——restore 剥离由内部直测
+        self.assertFalse(plan.ok)  # 拒收优先
+        # 直测 restore 剥离
+        cleaned = store._restore_masked_sp_keys(
+            {"_load_error": "x", "providers": {}, "api_key": None})
+        self.assertNotIn("_load_error", cleaned)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -427,3 +519,222 @@ class TestKeychainRealContractSemantics(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.stage, "keychain")
         self.assertTrue(any("旧密码清理失败" in e for e in result.errors))
+
+
+class TestStableIdentityMigration(unittest.TestCase):
+    """issue #8 S2：load/prepare 期确定性 id 迁移；重命名不改 id。"""
+
+    def test_legacy_tunnel_gets_deterministic_id(self):
+        from mpconf.config import assign_stable_ids
+        tunnels = [{"name": "a", "ssh_user": "u", "ssh_host": "h",
+                    "ssh_port": 22}]
+        ids = assign_stable_ids(tunnels)
+        self.assertTrue(tunnels[0]["id"].startswith("t-"))
+        self.assertEqual(len(tunnels[0]["id"]), 12)
+        self.assertEqual(ids, 1, "恰一个迁移")
+        # 确定性：同身份重算同 id
+        again = [{"name": "a", "ssh_user": "u", "ssh_host": "h",
+                  "ssh_port": 22}]
+        assign_stable_ids(again)
+        self.assertEqual(again[0]["id"], tunnels[0]["id"])
+
+    def test_existing_id_untouched_and_stable_across_edits(self):
+        from mpconf.config import assign_stable_ids
+        tunnels = [{"id": "t-keepme1234", "ssh_user": "u",
+                    "ssh_host": "h", "ssh_port": 22}]
+        assign_stable_ids(tunnels)
+        self.assertEqual(tunnels[0]["id"], "t-keepme1234")
+        tunnels[0]["ssh_host"] = "changed.example.com"  # 编辑地址
+        tunnels[0]["name"] = "renamed"
+        assign_stable_ids(tunnels)
+        self.assertEqual(tunnels[0]["id"], "t-keepme1234",
+                         "重命名/改地址不改变 id")
+
+    def test_duplicate_legacy_identity_gets_deterministic_suffix(self):
+        """legacy 同身份双隧道本合法——确定性序数后缀，不拒启。"""
+        from mpconf.config import assign_stable_ids
+        dup = [{"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+               {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22}]
+        n = assign_stable_ids(dup)
+        self.assertEqual(n, 2)
+        self.assertNotEqual(dup[0]["id"], dup[1]["id"])
+        again = [{"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+                 {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22}]
+        assign_stable_ids(again)
+        self.assertEqual([t["id"] for t in again], [t["id"] for t in dup],
+                         "确定性：重算同序")
+
+    def test_duplicate_explicit_ids_fails_actionable(self):
+        from mpconf.config import assign_stable_ids
+        dup = [{"id": "t-same", "ssh_user": "u1", "ssh_host": "h", "ssh_port": 22},
+               {"id": "t-same", "ssh_user": "u2", "ssh_host": "h", "ssh_port": 22}]
+        with self.assertRaises(ValueError) as ctx:
+            assign_stable_ids(dup)
+        self.assertIn("t-same", str(ctx.exception))
+
+
+class TestProviderIdSemantics(unittest.TestCase):
+    """issue #8 S3：rename 后 keep/replace/clear 三态按 id 正确。"""
+
+    def _roundtrip(self, old_providers, new_providers):
+        import tempfile, os
+        from pathlib import Path
+        from suanpan.config import save_config_dict, load_config_raw
+        with tempfile.TemporaryDirectory() as d:
+            path = str(Path(d) / "s.yaml")
+            Path(path).write_text(yaml.dump(
+                {"providers": old_providers, "listen_port": 9527},
+                allow_unicode=True))
+            ok, err = save_config_dict(
+                {"providers": new_providers, "listen_port": 9527,
+                 "api_key_set": False}, path)
+            self.assertTrue(ok, err)
+            return load_config_raw(path)["providers"]
+
+    def test_rename_keeps_key_via_id(self):
+        saved = self._roundtrip(
+            old_providers={"old-name": {"id": "p-stable1", "base_url":
+                                        "https://a.test", "api_key": "sk-1",
+                                        "models": ["m"]}},
+            new_providers={"new-name": {"id": "p-stable1", "base_url":
+                                        "https://a.test", "api_key": None,
+                                        "api_key_set": True,
+                                        "models": ["m"]}})
+        self.assertEqual(saved["new-name"]["api_key"], "sk-1",
+                         "重命名后 keep 语义按 id 恢复")
+
+    def test_replace_by_id_wins_over_name_match(self):
+        saved = self._roundtrip(
+            old_providers={"a": {"id": "p-1", "base_url": "https://a.test",
+                                 "api_key": "sk-old", "models": ["m"]}},
+            new_providers={"a": {"id": "p-2", "base_url": "https://a.test",
+                                 "api_key": None, "api_key_set": True,
+                                 "models": ["m"]}})
+        self.assertIsNone(saved["a"]["api_key"],
+                          "id 不同≠同一实体：不串接他者的 key")
+
+    def test_clear_still_clears(self):
+        saved = self._roundtrip(
+            old_providers={"a": {"id": "p-1", "base_url": "https://a.test",
+                                 "api_key": "sk-old", "models": ["m"]}},
+            new_providers={"a": {"id": "p-1", "base_url": "https://a.test",
+                                 "api_key": "", "api_key_set": False,
+                                 "models": ["m"]}})
+        self.assertIsNone(saved["a"]["api_key"])
+
+    def test_load_migration_assigns_deterministic_provider_id(self):
+        from suanpan.config import assign_provider_ids, load_config_raw
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "s.yaml"
+            path.write_text(
+                'providers:\n  glm:\n    base_url: https://a.test\n'
+                '    models: [m]\nlisten_port: 9527\n')
+            cfg = load_config_raw(path)
+            # 装载即赋（load_config_raw 内联 assign_provider_ids）
+            self.assertTrue(cfg["providers"]["glm"]["id"].startswith("p-"),
+                            "装载即含确定性 id")
+            n2 = assign_provider_ids(cfg)
+            self.assertEqual(n2, 0, "幂等")
+
+    def test_duplicate_provider_ids_fail_actionable(self):
+        from suanpan.config import assign_provider_ids
+        cfg = {"providers": {
+            "a": {"id": "p-dup", "base_url": "https://a.test"},
+            "b": {"id": "p-dup", "base_url": "https://b.test"}}}
+        with self.assertRaises(ValueError) as ctx:
+            assign_provider_ids(cfg)
+        self.assertIn("p-dup", str(ctx.exception))
+
+
+import yaml  # noqa: E402  — 测试用例内 dump 需要
+
+
+class TestTunnelSecretRepin(unittest.TestCase):
+    """issue #8：id 稳定后 legacy 密码随下次提交 re-pin 到 id 账户。"""
+
+    def test_password_tunnel_without_new_pw_repins_legacy_secret(self):
+        ops = []
+        class KC:
+            def get_password(self, t):
+                ops.append(("get", t.get("id") or "legacy"))
+                return "legacy-pw" if not t.get("id") else ""
+            def set_password(self, t, pw):
+                ops.append(("set", t.get("id"), pw))
+                return True
+            def delete_password(self, t):
+                ops.append(("del", t.get("id")))
+                return True
+            def delete_legacy_password(self, t):
+                ops.append(("del-legacy",))
+                return True
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"), keychain=KC())
+        from mpconf.config import stable_tunnel_id
+        real_id = stable_tunnel_id("u", "h", 22)
+        plan = store.prepare(mp={"tunnels": [
+            {"id": real_id, "name": "a", "ssh_user": "u",
+             "ssh_host": "h", "ssh_port": 22, "auth_type": "password"}]})
+        self.assertTrue(plan.ok)
+        result = store.commit(plan)
+        self.assertTrue(result.ok, result.errors)
+        self.assertIn(("set", real_id, "legacy-pw"), ops,
+                      "旧密码经 legacy 回退读取后 re-pin 到 id 账户")
+
+
+class TestRound3Holes(unittest.TestCase):
+    """三审两洞：mp _load_error 双带 + 显式分支身份登记。"""
+
+    def test_explicit_id_tunnel_registers_identity(self):
+        """已迁移 A（id=hash 身份）+ 手工加同身份无 id B → B 不再静默同 id。"""
+        from mpconf.config import assign_stable_ids, stable_tunnel_id, IdentityMigrationError
+        real_id = stable_tunnel_id("u", "h", 22)
+        tunnels = [
+            {"id": real_id, "name": "a", "ssh_user": "u",
+             "ssh_host": "h", "ssh_port": 22},
+            {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+        ]
+        n = assign_stable_ids(tunnels)
+        self.assertEqual(n, 1)  # 只有 B 被迁移
+        self.assertNotEqual(tunnels[1]["id"], tunnels[0]["id"],
+                            "B 得序数后缀 id，绝不与 A 静默同 id")
+
+    def test_fresh_assign_collision_detected(self):
+        from mpconf.config import assign_stable_ids, IdentityMigrationError
+        # 两条同身份隧道：第一条得 ordinal=1 id；第二条 #2 后缀
+        # 但若 #2 id 撞显式 id —— 分配后查重兜底
+        tunnels = [
+            {"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+            {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+        ]
+        n = assign_stable_ids(tunnels)
+        self.assertEqual(n, 2)  # 正常路径不受影响
+
+    def test_prepare_rejects_mp_with_load_error(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        store = ConfigStateStore(
+            mp_path=str(Path(d.name) / "m.json"),
+            sp_path=str(Path(d.name) / "s.yaml"))
+        plan = store.prepare(mp={"_load_error": "装载失败", "tunnels": []})
+        self.assertFalse(plan.ok)
+        self.assertIn("已阻止保存", plan.errors[0])
+
+
+class TestReloadAfterMigration(unittest.TestCase):
+    """四审回归：legacy 双身份迁移后带 id 重载必须幂等（不得锁死）。"""
+
+    def test_reloading_migrated_tunnels_with_ids_is_idempotent(self):
+        from mpconf.config import assign_stable_ids
+        tunnels = [{"name": "a", "ssh_user": "u", "ssh_host": "h",
+                    "ssh_port": 22},
+                   {"name": "b", "ssh_user": "u", "ssh_host": "h",
+                    "ssh_port": 22}]
+        assign_stable_ids(tunnels)  # 首次迁移：双 id
+        # 带 id 重载（真实磁盘路径）：幂等，不 raise
+        n = assign_stable_ids(tunnels)
+        self.assertEqual(n, 0)

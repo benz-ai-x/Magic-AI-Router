@@ -20,7 +20,7 @@ from sysctl import port_check
 from mpconf import config_store
 from shellui.bridge_protocol import ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY
 from capture.capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
-from mpconf.config import load_config, save_config, merge_config, DEFAULT_CONFIG
+from mpconf.config import IdentityMigrationError, load_config, save_config, merge_config, DEFAULT_CONFIG
 from shellui.log_window import LogBuffer, show_log_window
 from shellui.webview_window import show_config_window
 from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
@@ -67,7 +67,16 @@ ssh_log = logging.getLogger("magic-proxy.ssh")
 
 class MagicProxyApp(rumps.App):
     def __init__(self):
-        cfg = load_config()
+        try:
+            cfg = load_config()
+        except IdentityMigrationError as exc:
+            # 迁移可行动错误（显式重复 id）：绝不带病运行——弹窗给出
+            # 处置指引后退出，原配置文件未被动过
+            rumps.alert(
+                "Magic AI Router",
+                f"配置包含重复的隧道 id，无法安全启动。\n\n{exc}\n\n"
+                "请打开配置文件修正重复 id 后重启应用。")
+            raise SystemExit(1)
         self._config = merge_config(cfg)
         self._stats = Stats()
         self.VERSION = VERSION

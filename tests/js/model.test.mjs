@@ -667,6 +667,12 @@ test("ccBackupNote renders both backup branches", () => {
   assert.equal(L.ccBackupNote({ ok: false }), "");
 });
 
+test("validateConfig blocks save when sp has _load_error (#8)", () => {
+  const errs = L.validateConfig(
+    L.normalizeState({ sp: { _load_error: "重复 id" } }));
+  assert.ok(errs.some((e) => e.includes("已阻止保存")));
+});
+
 // ── 保存流（saveFlow）：两阶段保存状态机（架构候选 1）──────────────
 // 事故回归：99999 端口写库、幽灵 api_key 保存都发生在这条流上。
 

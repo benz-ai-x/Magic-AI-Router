@@ -46,6 +46,54 @@ DEFAULT_CONFIG = {
 }
 
 
+class IdentityMigrationError(ValueError):
+    """稳定 id 迁移的可行动错误（重复身份/重复 id）——绝不与文件损坏
+    混同：不触发 .bak 隔离，原样上抛（issue #8）。"""
+
+
+def stable_tunnel_id(user: str, host: str, port) -> str:
+    """确定性 id：t-<sha1(user@host:port)[:10]>——同身份恒同 id（issue #8）。"""
+    import hashlib
+    basis = f"{user or ''}@{host or ''}:{port or 22}"
+    return "t-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:10]
+
+
+def assign_stable_ids(tunnels) -> int:
+    """为无 id 的隧道赋确定性 id；重复身份/重复 id 抛可行动错误。
+
+    返回迁移数量。已有 id 一律不动（重命名/改地址不影响）。
+    """
+    seen_ids, seen_identity = {}, {}
+    migrated = 0
+    for t in tunnels or []:
+        ident = f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}:{t.get('ssh_port', 22)}"
+        if t.get("id"):
+            if t["id"] in seen_ids:
+                raise IdentityMigrationError(
+                    f"隧道配置存在重复 id：{t['id']}（请修正配置文件后重试）")
+            seen_ids[t["id"]] = ident
+            seen_identity[ident] = True
+            continue
+        ordinal = 2 if ident in seen_identity else 1
+        if ordinal > 1:
+            # legacy 同身份双隧道（如 key+password 并存）本合法——确定性
+            # 序数后缀区分 id；两隧道仍共享同一 legacy 凭证槽（与迁移前
+            # 行为一致），不猜归属。显式手写重复 id 才致命。
+            logger.warning("隧道重复身份 %s：以序数后缀区分 id", ident)
+        seen_identity[ident] = True
+        import hashlib as _hl
+        basis = f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}:{t.get('ssh_port', 22)}"
+        if ordinal > 1:
+            basis += f"#{ordinal}"
+        t["id"] = "t-" + _hl.sha1(basis.encode("utf-8")).hexdigest()[:10]
+        if t["id"] in seen_ids:
+            raise IdentityMigrationError(
+                f"隧道配置存在重复 id：{t['id']}（请修正配置文件后重试）")
+        seen_ids[t["id"]] = ident
+        migrated += 1
+    return migrated
+
+
 def load_config(path=None):
     """Load and migrate config; returns merged dict or None."""
     p = path or get_path("mp")
@@ -56,6 +104,9 @@ def load_config(path=None):
             cfg = json.load(f)
         before = json.dumps(cfg, sort_keys=True)
         migrated = _migrate(cfg)
+        # issue #8：迁移错误（重复身份/id）是可行动错误——绝不与损坏
+        # 混同进 .bak 隔离；原样上抛让编排层给出可行动提示
+        assign_stable_ids(migrated.get("tunnels") or [])
         if json.dumps(migrated, sort_keys=True) != before and not save_config(migrated, p):
             # The migrated dict is already clean in memory, but the file on
             # disk is still the pre-migration version — it may hold plaintext
@@ -71,6 +122,11 @@ def load_config(path=None):
                     "Migrated config could not be written AND the old file "
                     "could not be isolated")
         return migrated
+    except IdentityMigrationError as e:
+        # 迁移可行动错误：不隔离、不改写——上抛（JSONDecodeError 等仍走
+        # 既有损坏隔离路径）
+        logger.error("配置迁移失败（需人工处理，原文件未动）：%s", e)
+        raise
     except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
         backup = p + ".bak"
         try:
