@@ -95,6 +95,58 @@ class TestTokenAuth(unittest.TestCase):
             spy.assert_called_once_with(self.token, self.token)
 
 
+class TestLoginPage(unittest.TestCase):
+    """GET / 无 token 时返回登录页 HTML（浏览器直接打开可用）；API 401 仍 JSON。
+
+    macOS 桥接首导航带 Bearer → 200（不经过此路径），零变化；Docker 版
+    浏览器直接打开获得登录页。
+    """
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_get_root_no_token_returns_login_html(self):
+        status, body = _request(self.port, "GET", "/")
+        self.assertEqual(status, 401)
+        # 登录页是自包含 HTML（非 JSON 错误）
+        self.assertIn("<!doctype html>", body.lower())
+        self.assertIn("token", body.lower())
+        # 含表单与 JS：fetch 带 Authorization 头调 / 种 cookie 后跳转
+        self.assertIn("Authorization", body)
+        self.assertIn("Bearer", body)
+        self.assertIn("fetch", body)
+
+    def test_get_root_wrong_token_also_returns_login_html(self):
+        status, body = _request(self.port, "GET", "/", token="wrong")
+        self.assertEqual(status, 401)
+        self.assertIn("<!doctype html>", body.lower())
+
+    def test_api_401_remains_json(self):
+        """API 路径的 401 保持纯 JSON——curl/脚本客户端不期待 HTML。"""
+        status, body = _request(self.port, "GET", "/api/state")
+        self.assertEqual(status, 401)
+        data = json.loads(body)
+        self.assertEqual(data, {"error": "unauthorized"})
+
+    def test_post_401_remains_json(self):
+        status, body = _request(self.port, "POST", "/api/test-provider",
+                                body="{}")
+        self.assertEqual(status, 401)
+        data = json.loads(body)
+        self.assertEqual(data, {"error": "unauthorized"})
+
+    def test_bridge_bearer_still_200(self):
+        """macOS 桥接路径不回归：带 Bearer 首导航仍直接进页面。"""
+        status, body = _request(self.port, "GET", "/", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertIn("<!doctype html>", body.lower())
+        self.assertNotIn("登录", body[:500])  # 不是登录页
+
+
 class TestFavicon(unittest.TestCase):
     """Browsers auto-request /favicon.ico without a token — 204, not 403."""
 

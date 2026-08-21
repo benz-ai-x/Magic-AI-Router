@@ -40,6 +40,44 @@ CONFIG_PORT = 9528
 MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB — reject oversized POST/PUT bodies
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
+# GET / 无 token 时的登录页（自包含 HTML，无外部资源）。填 token → JS 用
+# Bearer 调 / 种 HttpOnly cookie → 成功则 reload 进配置页。仅 GET / 返回此页；
+# /api/* 的 401 保持纯 JSON（curl/脚本客户端不期待 HTML）。macOS 桥接首导航
+# 带 Bearer → 200 不经过此页，行为不变。
+_LOGIN_HTML = """<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Magic AI Router — 登录</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;background:#f5f5f7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.card{background:#fff;border-radius:12px;padding:32px;box-shadow:0 4px 24px rgba(0,0,0,.08);width:320px}
+h1{font-size:18px;margin:0 0 8px}p{font-size:13px;color:#666;margin:0 0 20px}
+input{width:100%;padding:10px;border:1px solid #d2d2d7;border-radius:8px;font-size:14px;box-sizing:border-box;margin-bottom:12px}
+button{width:100%;padding:10px;background:#007aff;color:#fff;border:0;border-radius:8px;font-size:14px;cursor:pointer}
+button:disabled{background:#ccc;cursor:default}.err{color:#ff3b30;font-size:13px;margin-top:8px;display:none}
+</style></head><body>
+<div class="card">
+<h1>Magic AI Router</h1>
+<p>输入配置页面的访问 token（Docker 版用 <code>suanpan.sh config-ui</code> 查看）</p>
+<input id="tok" type="password" placeholder="token" autocomplete="off" autofocus>
+<button id="go">进入</button>
+<div class="err" id="err">token 无效，请重试</div>
+</div>
+<script>
+const tok=document.getElementById('tok'),go=document.getElementById('go'),err=document.getElementById('err');
+async function login(){
+  const t=tok.value.trim();if(!t)return;
+  go.disabled=true;err.style.display='none';
+  try{
+    const r=await fetch('/',{headers:{Authorization:'Bearer '+t}});
+    if(r.ok){location.reload();return;}
+  }catch(e){}
+  err.style.display='block';go.disabled=false;tok.select();
+}
+go.onclick=login;
+tok.onkeydown=e=>{if(e.key==='Enter')login();};
+</script></body></html>"""
+
 
 def _read_mp():
     try:
@@ -265,7 +303,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "agent.md not found"})
             return
         if not self._valid_token():
-            self._json(401, {"error": "unauthorized"})
+            # GET / 的 401 返回登录页（浏览器直接打开可用）；API 路径仍 JSON
+            if path in ("/", "/index.html"):
+                self._send(401, _LOGIN_HTML, "text/html; charset=utf-8")
+            else:
+                self._json(401, {"error": "unauthorized"})
             return
         if path in ("/", "/index.html"):
             try:
