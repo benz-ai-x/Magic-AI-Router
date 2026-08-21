@@ -131,18 +131,31 @@ def load_app(sp_path: str):
 
 
 def run_serve() -> int:
-    """serve 模式：网关绑 0.0.0.0 + 配置页面 :9528（共用同一 token）。"""
+    """serve 模式：网关绑 0.0.0.0 + 配置页面 :9528（共用同一 token）。
+
+    GatewayRunner 线程化跑网关；DockerConfigServer 的 on_sp_saved 指向
+    runner.reload——配置页保存 → 网关热重载，无需重启容器（macOS 版经
+    SuanpanRuntime.reload 的等价机制）。
+    """
     paths = default_paths()
+    runner = GatewayRunner(paths["sp"])
+    runner.start()
     # 配置页面与网关同容器、同 token——config-ui 失败不阻塞网关（best-effort）
-    cfg = DockerConfigServer(mp_path=paths["mp"], sp_path=paths["sp"])
+    cfg = DockerConfigServer(mp_path=paths["mp"], sp_path=paths["sp"],
+                             on_sp_saved=runner.reload)
     ok, url = cfg.start()
     if ok:
         print(f"配置页面: {url}  Bearer token: {cfg.token}", flush=True)
     else:
         print("config-ui 启动失败（9528 占用？），仅跑网关", file=sys.stderr)
-    app, port = load_app(paths["sp"])
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    # 主线程阻塞保活（GatewayRunner 在 daemon 线程跑网关）
+    try:
+        import time
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        runner.stop()
+        cfg.stop()
     return 0
 
 
@@ -194,12 +207,13 @@ def config_token(mp_path: str) -> str:
 class DockerConfigServer:
     """services.config_server 的 Docker 适配（薄包装，零修改基类）."""
 
-    def __init__(self, port=9528, mp_path=None, sp_path=None):
+    def __init__(self, port=9528, mp_path=None, sp_path=None, on_sp_saved=None):
         self._port = port
         self._bind_host = "0.0.0.0"   # 基类硬编码 127.0.0.1，容器外不可达
         self._keychain = None          # Linux 无 Keychain——见 config_state 守卫
         self._mp_path = mp_path
         self._sp_path = sp_path
+        self._on_sp_saved = on_sp_saved  # SP 保存成功后回调（热重载网关）
         self._server = None
         self._token = None
 
@@ -222,7 +236,8 @@ class DockerConfigServer:
         try:
             server = cs._ThreadingHTTPServer(
                 (self._bind_host, self._port), cs._Handler,
-                expected_token=self._token)
+                expected_token=self._token,
+                on_sp_saved=self._on_sp_saved)
         except OSError:
             return False, ""
         self._server = server
@@ -237,6 +252,76 @@ class DockerConfigServer:
             self._server.shutdown()
             self._server.server_close()
             self._server = None
+
+
+class GatewayRunner:
+    """Suanpan 网关的线程化运行器：uvicorn 跑在 daemon 线程，可 reload。
+
+    macOS 版经 SuanpanRuntime（AsyncRuntime 状态机）管理；Docker 版
+    uvicorn.run() 阻塞主线程，reload 须能从 config server 线程触发——
+    此类把 Server.run() 协程放进独立线程，reload = should_exit + join +
+    重读配置重起。容器内绑 0.0.0.0（信任边界=宿主机端口映射）。
+    """
+
+    def __init__(self, sp_path: str):
+        self._sp_path = sp_path
+        self._server = None
+        self._thread = None
+        self._config = None
+
+    @property
+    def running(self):
+        return bool(self._thread and self._thread.is_alive())
+
+    @property
+    def port(self):
+        return self._config.listen_port if self._config else None
+
+    @property
+    def providers(self):
+        return dict(self._config.providers) if self._config else {}
+
+    def _serve_once(self):
+        """在线程里跑一个 uvicorn Server（阻塞至 should_exit）。"""
+        import asyncio
+        import uvicorn
+        from suanpan.config import load_config
+        from suanpan.main import create_app
+
+        self._config = load_config(self._sp_path)
+        app = create_app(self._config, config_path=self._sp_path)
+        config = uvicorn.Config(
+            app, host="0.0.0.0", port=self._config.listen_port,
+            log_level="warning", loop="asyncio")
+        self._server = uvicorn.Server(config)
+        asyncio.run(self._server.serve())
+
+    def start(self):
+        import threading
+        self._thread = threading.Thread(
+            target=self._serve_once, name="SuanpanGateway", daemon=True)
+        self._thread.start()
+        return True
+
+    def reload(self):
+        """热重载：停旧实例、重读配置、起新实例。未运行则 no-op。"""
+        if not self.running:
+            return True
+        if self._server:
+            self._server.should_exit = True
+        if self._thread:
+            self._thread.join(timeout=5)
+        self._server = None
+        self._thread = None
+        return self.start()
+
+    def stop(self):
+        if self._server:
+            self._server.should_exit = True
+        if self._thread:
+            self._thread.join(timeout=5)
+        self._server = None
+        self._thread = None
 
 
 def run_config_ui() -> int:
