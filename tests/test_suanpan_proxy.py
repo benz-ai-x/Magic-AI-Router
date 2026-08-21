@@ -145,10 +145,12 @@ class TestBuildOutboundHeaders(unittest.TestCase):
         self.assertEqual(result["Authorization"], "Bearer sk-456")
 
     def test_no_api_key_passes_through_original_auth(self):
+        """issue #9 契约反转：keyless 出站剥除一切入站凭证。"""
         cfg = ProviderConfig(base_url="http://x")
         incoming = {"Authorization": "Bearer oauth-token", "Content-Type": "application/json"}
         result = cfg.build_outbound_headers(incoming, None)
-        self.assertEqual(result["authorization"], "Bearer oauth-token")
+        self.assertNotIn("authorization", result)
+        self.assertEqual(result["Content-Type"], "application/json")
 
     def test_gateway_key_not_passed_through(self):
         """The gateway's own gate key must never reach a keyless backend."""
