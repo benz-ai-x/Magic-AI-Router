@@ -20,9 +20,16 @@ COPY mpconf/ /app/mpconf/
 COPY services/ /app/services/
 COPY sysctl/ /app/sysctl/
 COPY capture/ /app/capture/
+COPY tunnel/ /app/tunnel/
+# config-ui（:9528 配置页面）的页面资源与 util.resource_path 查找目标
+COPY shellui/ /app/shellui/
+COPY util.py /app/util.py
+COPY docs/agent.md /app/docs/agent.md
 COPY docker/entry.py /app/docker/entry.py
 
 # 容器内监听端口（config listen_port 可改；compose 映射须同步改）
 EXPOSE 9527
+EXPOSE 9528
 
+# 默认同时跑网关(:9527) + 配置页面(:9528)；entry.py 内部并发两个服务
 CMD ["python3", "/app/docker/entry.py", "serve"]

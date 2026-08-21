@@ -131,8 +131,15 @@ def load_app(sp_path: str):
 
 
 def run_serve() -> int:
-    """serve 模式：网关绑 0.0.0.0（信任边界=宿主机端口映射）。"""
+    """serve 模式：网关绑 0.0.0.0 + 配置页面 :9528（共用同一 token）。"""
     paths = default_paths()
+    # 配置页面与网关同容器、同 token——config-ui 失败不阻塞网关（best-effort）
+    cfg = DockerConfigServer(mp_path=paths["mp"], sp_path=paths["sp"])
+    ok, url = cfg.start()
+    if ok:
+        print(f"配置页面: {url}  Bearer token: {cfg.token}", flush=True)
+    else:
+        print("config-ui 启动失败（9528 占用？），仅跑网关", file=sys.stderr)
     app, port = load_app(paths["sp"])
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
@@ -155,9 +162,103 @@ def main(argv=None) -> int:
         paths = default_paths()
         return run_sync(paths["sp"], paths["mp"], paths["claude_settings"],
                         dry_run="--dry-run" in rest)
-    print("用法: entry.py [serve | sync-claude-code [--dry-run]]",
+    if argv[0] == "config-ui":
+        rest = argv[1:]
+        if rest:
+            print(f"config-ui 不接受参数: {' '.join(rest)}", file=sys.stderr)
+            return 2
+        return run_config_ui()
+    if argv[0] == "config-token":
+        paths = default_paths()
+        print(config_token(paths["mp"]))
+        return 0
+    print("用法: entry.py [serve | sync-claude-code [--dry-run] | config-ui | config-token]",
           file=sys.stderr)
     return 2
+
+
+# ── config-ui：Web 配置页面（:9528）──────────────────────────────────
+# 复用 services.config_server（纯 stdlib），两处 Docker 适配：
+# 1. 绑定 0.0.0.0（基类硬编码 127.0.0.1，容器外不可达）——子类覆盖，零修改基类
+# 2. keychain 传 None（Linux 无 macOS Keychain）——ConfigStateStore 的
+#    `self._keychain is not None` 守卫让 SP-only 保存自然跳过 keychain 段。
+# token 复用 #22 的 local_client_token（get_local_token 幂等，零新 secret）。
+
+
+def config_token(mp_path: str) -> str:
+    """config-ui 的 bearer token = 本地客户端 token（幂等读取）。"""
+    from mpconf.local_token import get_local_token
+    return get_local_token(mp_path)
+
+
+class DockerConfigServer:
+    """services.config_server 的 Docker 适配（薄包装，零修改基类）."""
+
+    def __init__(self, port=9528, mp_path=None, sp_path=None):
+        self._port = port
+        self._bind_host = "0.0.0.0"   # 基类硬编码 127.0.0.1，容器外不可达
+        self._keychain = None          # Linux 无 Keychain——见 config_state 守卫
+        self._mp_path = mp_path
+        self._sp_path = sp_path
+        self._server = None
+        self._token = None
+
+    @property
+    def token(self):
+        return self._token
+
+    def start(self):
+        """启动 config server（绑 0.0.0.0 + 固定 token）。返回 (ok, url)。"""
+        install_macos_stubs()
+        from services import config_server as cs
+
+        paths = default_paths()
+        mp_path = self._mp_path or paths["mp"]
+        sp_path = self._sp_path or paths["sp"]
+        # 让 config_server 的 sp_load_masked / ConfigStateStore 读写目标文件
+        redirect_paths(sp_path, mp_path, paths["claude_settings"])
+        self._token = config_token(mp_path)
+
+        try:
+            server = cs._ThreadingHTTPServer(
+                (self._bind_host, self._port), cs._Handler,
+                expected_token=self._token)
+        except OSError:
+            return False, ""
+        self._server = server
+        import threading
+        threading.Thread(
+            target=server.serve_forever, name="DockerConfigServer",
+            daemon=True).start()
+        return True, f"http://127.0.0.1:{self._port}/"
+
+    def stop(self):
+        if self._server:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+
+
+def run_config_ui() -> int:
+    """config-ui 模式：启动 :9528 配置页面（容器内阻塞运行）。"""
+    install_macos_stubs()
+    paths = default_paths()
+    bootstrap_default_config(paths["sp"], os.path.dirname(paths["sp"]))
+    srv = DockerConfigServer(mp_path=paths["mp"], sp_path=paths["sp"])
+    ok, url = srv.start()
+    if not ok:
+        print("config server 启动失败（9528 端口占用？）", file=sys.stderr)
+        return 1
+    print(f"配置页面: {url}", flush=True)
+    print(f"Bearer token（浏览器带 Authorization 头访问）: {srv.token}",
+          flush=True)
+    try:
+        import time
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        srv.stop()
+    return 0
 
 
 if __name__ == "__main__":

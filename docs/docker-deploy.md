@@ -26,10 +26,44 @@ bash docker/suanpan.sh sync
 ## 命令
 
 命令清单以脚本自身为准——`bash docker/suanpan.sh help`（up / down /
-status / logs / sync）。下面只记 help 里没有的语义：
+status / logs / sync / config-ui）。下面只记 help 里没有的语义：
 
 **sync** 改的是**宿主机** `~/.claude/settings.json`（不是容器内文件）——
 把 Claude Code 指向本网关。见下文「Claude Code 对接」。
+
+**config-ui** 打印配置页面的 URL 与 Bearer token（见下节）。
+
+## 配置页面（:9528）
+
+容器默认同时跑网关（:9527）和 Web 配置页面（:9528，复用 macOS 版的
+`services/config_server` 同一实现）。compose 已映射
+`127.0.0.1:9528:9528`。
+
+**访问**：浏览器打开 `http://127.0.0.1:9528/`，首次需带 Bearer token
+（页面 401 时用任意能发自定义 header 的方式，或 `curl`）：
+
+```bash
+# 取 token（复用本地客户端 token，与 sync 写入 Claude Code 的同源同值）
+bash docker/suanpan.sh config-ui
+# 或
+docker compose -f docker/compose.yml exec suanpan python3 /app/docker/entry.py config-token
+
+# 带 token 访问
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:9528/
+```
+
+token 存于 `docker/data/magic-proxy.json` 的 `local_client_token`——跨
+容器重建稳定，与 `sync` 写入 `~/.claude/settings.json` 的
+`ANTHROPIC_AUTH_TOKEN` 是同一个值。
+
+**能配什么**：供应商（模型路由）的全部字段、Claude Code 同步、运行
+统计、余额速览——与 macOS 版同一 `config_ui.html`。macOS 专属的视图
+（SSH 隧道、抓包、系统选项）在 Docker 版无对应后端，相应操作会报
+"不可用"——这是预期，隧道/抓包本就不在 Docker 形态内（见「非目标」）。
+
+**Linux 无 Keychain**：保存供应商配置走 SP-only 事务
+（`ConfigStateStore` 的 `keychain is None` 守卫），正常落盘；macOS 的
+SSH 隧道密码存取在 Docker 版不适用。
 
 ## 配置
 
