@@ -261,3 +261,125 @@ class TestMain:
     def test_unknown_mode_usage_exit_2(self, entry, capsys):
         assert entry.main(["bogus"]) == 2
         assert "serve" in capsys.readouterr().err
+
+
+# ── config-ui：DockerConfigServer ─────────────────────────────────
+
+class TestDockerConfigServer:
+    def test_subclass_binds_wildcard(self, entry):
+        """容器内须绑 0.0.0.0（基类硬编码 127.0.0.1）——子类覆盖，零修改基类。"""
+        srv = entry.DockerConfigServer(port=0)
+        assert srv._bind_host == "0.0.0.0"
+
+    def test_default_port_9528(self, entry):
+        srv = entry.DockerConfigServer()
+        assert srv._port == 9528
+
+    def test_keychain_stubbed(self, entry):
+        """Linux 无 Keychain——注入存根，SP-only 保存跳过 keychain 段。"""
+        srv = entry.DockerConfigServer()
+        assert srv._keychain is None
+
+
+# ── config-ui：token 解析 ─────────────────────────────────────────
+
+class TestConfigToken:
+    def test_token_is_local_token_from_mp(self, entry, tmp_path):
+        """config token 复用 #22 的 local_client_token（零新 secret 文件）。"""
+        mp = str(tmp_path / "magic-proxy.json")
+        tok = entry.config_token(mp)
+        import json as _j
+        persisted = _j.loads((tmp_path / "magic-proxy.json").read_text())
+        assert tok == persisted["local_client_token"]
+        assert len(tok) == 32
+
+    def test_token_idempotent(self, entry, tmp_path):
+        mp = str(tmp_path / "magic-proxy.json")
+        assert entry.config_token(mp) == entry.config_token(mp)
+
+
+# ── config-ui：真实 HTTP 冒烟（tmp 路径 + 随机端口，不碰真实配置） ────
+
+class TestConfigUiHttp:
+    def _server(self, entry, tmp_path):
+        mp = str(tmp_path / "magic-proxy.json")
+        sp = str(tmp_path / "suanpan.yaml")
+        entry.bootstrap_default_config(sp, str(tmp_path))
+        srv = entry.DockerConfigServer(port=0, mp_path=mp, sp_path=sp)
+        ok, _url = srv.start()
+        assert ok
+        # 端口 0 → OS 分配；从 server 对象取实际端口
+        port = srv._server.server_address[1]
+        return srv, port
+
+    def test_get_root_requires_token(self, entry, tmp_path):
+        import urllib.request
+        import urllib.error
+        srv, port = self._server(entry, tmp_path)
+        try:
+            with pytest.raises(urllib.error.HTTPError) as ei:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/")
+            assert ei.value.code == 401
+        finally:
+            srv.stop()
+
+    def test_get_root_with_token_serves_html(self, entry, tmp_path):
+        import urllib.request
+        srv, port = self._server(entry, tmp_path)
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/",
+                headers={"Authorization": f"Bearer {srv.token}"})
+            html = urllib.request.urlopen(req).read().decode("utf-8")
+            assert "AI 路由" in html or "供应商" in html  # config_ui.html 内容
+        finally:
+            srv.stop()
+
+    def test_api_state_returns_masked_sp(self, entry, tmp_path):
+        import urllib.request
+        import json as _j
+        srv, port = self._server(entry, tmp_path)
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/state",
+                headers={"Authorization": f"Bearer {srv.token}"})
+            data = _j.loads(urllib.request.urlopen(req).read())
+            assert data["sp"]["listen_port"] == 9527
+            assert data["sp"]["providers"] == {}
+        finally:
+            srv.stop()
+
+    def test_agent_md_public_no_token(self, entry, tmp_path):
+        import urllib.request
+        srv, port = self._server(entry, tmp_path)
+        try:
+            body = urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/agent.md").read().decode("utf-8")
+            assert len(body) > 0
+        finally:
+            srv.stop()
+
+    def test_non_loopback_host_rejected(self, entry, tmp_path):
+        import urllib.request
+        import urllib.error
+        srv, port = self._server(entry, tmp_path)
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/agent.md",
+                headers={"Host": "evil.example.com"})
+            with pytest.raises(urllib.error.HTTPError) as ei:
+                urllib.request.urlopen(req)
+            assert ei.value.code == 403
+        finally:
+            srv.stop()
+
+
+# ── config-ui：main 分发 ──────────────────────────────────────────
+
+class TestMainConfigUi:
+    def test_config_ui_dispatch(self, entry, monkeypatch):
+        calls = []
+        monkeypatch.setattr(entry, "run_config_ui",
+                            lambda: calls.append("config-ui") or 0)
+        assert entry.main(["config-ui"]) == 0
+        assert calls == ["config-ui"]

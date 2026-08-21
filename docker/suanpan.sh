@@ -35,6 +35,11 @@ case "$cmd" in
   sync)
     docker compose exec suanpan python3 /app/docker/entry.py sync-claude-code "$@"
     ;;
+  config-ui)
+    echo "配置页面: http://127.0.0.1:9528/"
+    echo "Bearer token:"
+    docker compose exec suanpan python3 /app/docker/entry.py config-token
+    ;;
   help|*)
     # 从第 2 行起取连续注释行——不硬编码行号，注释改动不漂移
     awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' \

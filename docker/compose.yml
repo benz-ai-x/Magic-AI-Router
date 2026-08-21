@@ -15,6 +15,7 @@ services:
     container_name: suanpan-gateway
     ports:
       - "127.0.0.1:9527:9527"
+      - "127.0.0.1:9528:9528"   # 配置页面（config-ui）
     volumes:
       - ./data:/data
       - ~/.claude:/host-claude
