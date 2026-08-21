@@ -10,7 +10,7 @@ issue #22：把 Suanpan AI 路由网关以 Docker 容器形态部署到 Linux �
 # 1. 构建并启动（首启自动生成 docker/data/suanpan.yaml 默认配置）
 bash docker/suanpan.sh up
 
-# 2. 编辑配置，填入你的 Provider（也可直接编辑 docker/data/suanpan.yaml）
+# 2. 编辑配置，填入你的 Provider
 vim docker/data/suanpan.yaml
 
 # 3. 重启使配置生效
@@ -23,15 +23,13 @@ curl http://127.0.0.1:9527/health
 bash docker/suanpan.sh sync
 ```
 
-## 命令一览（docker/suanpan.sh）
+## 命令
 
-| 命令 | 作用 |
-|---|---|
-| `up` | 构建镜像并启动容器（后台） |
-| `down` | 停止并移除容器（`./data` 卷保留） |
-| `status` | 容器运行状态 |
-| `logs` | 跟随网关日志 |
-| `sync [--dry-run]` | 同步宿主机 `~/.claude/settings.json` 指向本网关 |
+命令清单以脚本自身为准——`bash docker/suanpan.sh help`（up / down /
+status / logs / sync）。下面只记 help 里没有的语义：
+
+**sync** 改的是**宿主机** `~/.claude/settings.json`（不是容器内文件）——
+把 Claude Code 指向本网关。见下文「Claude Code 对接」。
 
 ## 配置
 
@@ -63,23 +61,27 @@ bash docker/suanpan.sh sync
 
 ### 若启用了网关 api_key
 
-默认配置**不设**顶层 `api_key`（网关不校验客户端身份，信任边界=宿主机
-回环端口映射）。若你在 `suanpan.yaml` 设了顶层 `api_key`，其值必须等于
-`docker/data/magic-proxy.json` 的 `local_client_token`——否则 sync 写入的
-`AUTH_TOKEN` 会被网关 401。两值对齐或保持 `api_key` 为空，二选一。
+默认配置**不设**顶层 `api_key`（网关不校验客户端身份——信任边界就是
+宿主机回环端口映射，见下文）。若你在 `suanpan.yaml` 设了顶层 `api_key`，
+其值必须等于 `docker/data/magic-proxy.json` 的 `local_client_token`——
+否则 sync 写入的 `AUTH_TOKEN` 会被网关 401。两值对齐或保持 `api_key`
+为空，二选一。
 
 ## 两条必须知道的边界
+
+本文的**信任边界** = 谁能读写网关配置与你的 Claude Code 配置的那条线。
+Docker 版把它放在两处宿主机侧控制上，容器内不做访问控制。
 
 1. **宿主机映射端口必须等于容器 `listen_port`**。compose 固定
    `127.0.0.1:9527:9527`；若改了 `suanpan.yaml` 的 `listen_port`，compose
    的端口映射（和 `sync` 写入的 BASE_URL 端口）须同步改。映射永远绑定
-   `127.0.0.1`——不要改成对外网卡，容器内监听 `0.0.0.0` 是 Docker 标准
-   姿势，唯一的访问控制就在宿主机侧这个回环绑定上。
-2. **`~/.claude` 是读写挂载**。`sync` 直接改宿主机的
+   `127.0.0.1`——不要改成对外网卡：容器内监听 `0.0.0.0` 是 Docker 标准
+   姿势，**回环绑定就是信任边界本身**。
+2. **`~/.claude` 是读写挂载——这是第二条信任边界**。`sync` 直接改宿主机的
    `~/.claude/settings.json`（容器内路径 `/host-claude/settings.json`）。
-   自托管共享服务器上这意味着"能操作该容器的人能改你的 Claude Code
-   配置"。谨慎场景先 `sync --dry-run` 看逐键 diff 再实跑；首次写入会
-   自动备份 `settings.json.bak`。
+   自托管共享服务器上，能操作该容器的人就能改你的 Claude Code 配置。
+   谨慎场景先 `sync --dry-run` 看逐键 diff 再实跑；首次写入会自动备份
+   `settings.json.bak`。
 
 ## Linux 兼容（Security stub）
 
