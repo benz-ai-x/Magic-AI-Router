@@ -58,6 +58,23 @@ bash build.sh
 cp -R "dist/Magic AI Router.app" /Applications/
 ```
 
+### 方式四：Linux / 无 GUI（Docker）
+
+只有 Suanpan AI 路由网关——不带隧道、抓包或 GUI。一条命令起网关 + Web 配置页面：
+
+```bash
+git clone git@github.com:benz-ai-x/Magic-AI-Router.git
+cd Magic-AI-Router
+bash docker/suanpan.sh up
+```
+
+- **网关** `http://127.0.0.1:9527`（Claude Code 指向这里）
+- **配置页面** `http://127.0.0.1:9528`——浏览器打开，输 token 登录管理供应商/模型路由
+- **一键对接 Claude Code**：`bash docker/suanpan.sh sync`（写入 `~/.claude/settings.json`）
+- **配置即存即生效**——配置页保存后网关热重载，无需重启容器
+
+取 token：`bash docker/suanpan.sh config-ui`。配置/用量日志落在 `docker/data/`（容器重建不丢）。完整部署文档见 [`docs/docker-deploy.md`](docs/docker-deploy.md)。
+
 ---
 
 ## 用起来的样子
