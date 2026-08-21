@@ -39,22 +39,19 @@ status / logs / sync / config-ui）。下面只记 help 里没有的语义：
 `services/config_server` 同一实现）。compose 已映射
 `127.0.0.1:9528:9528`。
 
-**访问**：浏览器打开 `http://127.0.0.1:9528/`，首次需带 Bearer token
-（页面 401 时用任意能发自定义 header 的方式，或 `curl`）：
+本节的 **token** = 本地客户端 token（`docker/data/magic-proxy.json` 的
+`local_client_token`）——跨容器重建稳定，与 `sync` 写入
+`~/.claude/settings.json` 的 `ANTHROPIC_AUTH_TOKEN` 同源同值。
+
+**访问**：取 token → 带 Bearer header 打开 `http://127.0.0.1:9528/`：
 
 ```bash
-# 取 token（复用本地客户端 token，与 sync 写入 Claude Code 的同源同值）
+# 取 token（同时打印 URL）
 bash docker/suanpan.sh config-ui
-# 或
-docker compose -f docker/compose.yml exec suanpan python3 /app/docker/entry.py config-token
 
 # 带 token 访问
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:9528/
 ```
-
-token 存于 `docker/data/magic-proxy.json` 的 `local_client_token`——跨
-容器重建稳定，与 `sync` 写入 `~/.claude/settings.json` 的
-`ANTHROPIC_AUTH_TOKEN` 是同一个值。
 
 **能配什么**：供应商（模型路由）的全部字段、Claude Code 同步、运行
 统计、余额速览——与 macOS 版同一 `config_ui.html`。macOS 专属的视图
@@ -116,6 +113,9 @@ Docker 版把它放在两处宿主机侧控制上，容器内不做访问控制�
    自托管共享服务器上，能操作该容器的人就能改你的 Claude Code 配置。
    谨慎场景先 `sync --dry-run` 看逐键 diff 再实跑；首次写入会自动备份
    `settings.json.bak`。
+
+调试时可绕过脚本直接操作容器：`docker compose -f docker/compose.yml exec
+suanpan python3 /app/docker/entry.py <serve|sync-claude-code|config-ui|config-token>`。
 
 ## Linux 兼容（Security stub）
 
