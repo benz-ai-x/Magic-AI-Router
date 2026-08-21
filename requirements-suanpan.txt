@@ -1,0 +1,10 @@
+# Suanpan 网关独立依赖清单（issue #22 Docker 版）。
+# 与 requirements-dev.txt 的 Suanpan 块同源；macOS 专属依赖
+# （rumps/pyobjc/mitmproxy/pyinstaller/Pillow）一律不装。
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx[http2]>=0.27
+pyyaml>=6.0
+pydantic>=2.7
+structlog>=24.1
+h2>=4.0
