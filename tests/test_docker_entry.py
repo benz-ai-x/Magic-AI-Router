@@ -383,3 +383,158 @@ class TestMainConfigUi:
                             lambda: calls.append("config-ui") or 0)
         assert entry.main(["config-ui"]) == 0
         assert calls == ["config-ui"]
+
+
+# ── 配置热重载：DockerConfigServer 传递 on_sp_saved ─────────────────
+
+class TestConfigHotReload:
+    def test_on_sp_saved_passed_to_server(self, entry, tmp_path):
+        """PUT /api/state 保存 SP 成功后触发 on_sp_saved——Docker 版此前
+        没传回调，网关内存配置不随保存更新（热重载缺口）。"""
+        mp = str(tmp_path / "magic-proxy.json")
+        sp = str(tmp_path / "suanpan.yaml")
+        entry.bootstrap_default_config(sp, str(tmp_path))
+        fired = []
+        srv = entry.DockerConfigServer(
+            port=0, mp_path=mp, sp_path=sp,
+            on_sp_saved=lambda: fired.append(1))
+        ok, _ = srv.start()
+        assert ok
+        port = srv._server.server_address[1]
+        try:
+            import urllib.request
+            body = (b'{"sp":{"listen_port":9527,"providers":{},'
+                    b'"router":{},"rules":[]}}')
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/state", data=body,
+                headers={"Authorization": f"Bearer {srv.token}",
+                         "Content-Type": "application/json"},
+                method="PUT")
+            resp = urllib.request.urlopen(req)
+            assert resp.status == 200
+            assert fired == [1]  # 保存成功 → 回调触发
+        finally:
+            srv.stop()
+
+    def test_on_sp_saved_not_fired_on_validation_failure(self, entry, tmp_path):
+        """校验失败（422）不触发 on_sp_saved——只在完整提交后。"""
+        mp = str(tmp_path / "magic-proxy.json")
+        sp = str(tmp_path / "suanpan.yaml")
+        entry.bootstrap_default_config(sp, str(tmp_path))
+        fired = []
+        srv = entry.DockerConfigServer(
+            port=0, mp_path=mp, sp_path=sp,
+            on_sp_saved=lambda: fired.append(1))
+        ok, _ = srv.start()
+        assert ok
+        port = srv._server.server_address[1]
+        try:
+            import urllib.request
+            import urllib.error
+            body = b'{"sp":{"listen_port":"not-a-port"}}'
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/state", data=body,
+                headers={"Authorization": f"Bearer {srv.token}",
+                         "Content-Type": "application/json"},
+                method="PUT")
+            with pytest.raises(urllib.error.HTTPError) as ei:
+                urllib.request.urlopen(req)
+            assert ei.value.code == 422
+            assert fired == []  # 校验失败 → 不触发
+        finally:
+            srv.stop()
+
+
+# ── 配置热重载：GatewayRunner（uvicorn 线程化 reload）────────────────
+
+class TestGatewayRunner:
+    def test_reload_picks_up_new_config(self, entry, tmp_path):
+        """reload() 停旧起新、重读配置——新 Provider 无需重启容器生效。"""
+        import time
+        sp = str(tmp_path / "suanpan.yaml")
+        entry.bootstrap_default_config(sp, str(tmp_path))
+        runner = entry.GatewayRunner(sp)
+        runner.start()
+        try:
+            # _serve_once 在线程里异步 load_config——等它就绪
+            for _ in range(50):
+                if runner.port is not None:
+                    break
+                time.sleep(0.05)
+            assert runner.running
+            assert runner.port == 9527
+            # 改配置（加 provider 模拟热更新场景）
+            import yaml as _y
+            cfg = _y.safe_load(open(sp))
+            cfg["providers"]["glm"] = {
+                "base_url": "https://example.invalid", "api_key": "k"}
+            open(sp, "w").write(_y.safe_dump(cfg, allow_unicode=True))
+            runner.reload()
+            for _ in range(50):
+                if "glm" in runner.providers:
+                    break
+                time.sleep(0.05)
+            assert runner.running
+            # 重读后 providers 非空（配置已换入内存）
+            assert "glm" in runner.providers
+        finally:
+            runner.stop()
+        assert not runner.running
+
+    def test_reload_noop_when_stopped(self, entry, tmp_path):
+        sp = str(tmp_path / "suanpan.yaml")
+        entry.bootstrap_default_config(sp, str(tmp_path))
+        runner = entry.GatewayRunner(sp)
+        assert runner.reload() is True  # 未启动 → no-op 不炸
+        assert not runner.running
+
+
+# ── 配置热重载：run_serve 集成 ─────────────────────────────────────
+
+class TestRunServeIntegration:
+    def test_serve_wires_config_save_to_gateway_reload(self, entry, tmp_path,
+                                                       monkeypatch):
+        """run_serve：DockerConfigServer 的 on_sp_saved 指向 GatewayRunner.reload——
+        配置页保存 → 网关热重载，无需重启容器。"""
+        monkeypatch.setenv("SUANPAN_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "s.json"))
+        captured = {}
+
+        class FakeRunner:
+            def __init__(self, sp):
+                captured["sp"] = sp
+                self.reload_called = 0
+
+            def start(self):
+                return True
+
+            def reload(self):
+                self.reload_called += 1
+                return True
+
+            def stop(self):
+                pass
+
+        class FakeCfgSrv:
+            def __init__(self, mp_path=None, sp_path=None, on_sp_saved=None):
+                captured["on_sp_saved"] = on_sp_saved
+                self.token = "t"
+
+            def start(self):
+                return True, "http://x/"
+
+            def stop(self):
+                pass
+
+        monkeypatch.setattr(entry, "GatewayRunner", FakeRunner)
+        monkeypatch.setattr(entry, "DockerConfigServer", FakeCfgSrv)
+        # 主线程保活循环会永跑——sleep 第一次就 KeyboardInterrupt 跳出
+        import time as _time
+        monkeypatch.setattr(_time, "sleep",
+                            lambda s: (_ for _ in ()).throw(KeyboardInterrupt))
+
+        entry.run_serve()
+        # on_sp_saved 已接线且指向 runner.reload
+        assert callable(captured["on_sp_saved"])
+        captured["on_sp_saved"]()  # 模拟保存回调
+        assert captured["sp"] == str(tmp_path / "suanpan.yaml")
