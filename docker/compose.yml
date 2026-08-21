@@ -1,0 +1,21 @@
+# Suanpan 网关容器编排（issue #22）。
+#
+# 信任边界：宿主机端口映射固定 127.0.0.1 绑定——容器内绑 0.0.0.0 是
+# Docker 标准姿势，宿主机侧仅回环可达，不经宿主网卡暴露。
+#
+# 卷：
+#   ./data:/data       配置 + 用量日志（容器重建不丢）
+#   ~/.claude:/host-claude  sync 模式直接读写宿主机 Claude Code 配置
+#      （读写挂载的信任边界见 docs/docker-deploy.md）
+services:
+  suanpan:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: suanpan-gateway
+    ports:
+      - "127.0.0.1:9527:9527"
+    volumes:
+      - ./data:/data
+      - ~/.claude:/host-claude
+    restart: unless-stopped
