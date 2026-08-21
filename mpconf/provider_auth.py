@@ -77,12 +77,12 @@ def build_outbound_headers(incoming, api_key, auth_header=None, gateway_key=None
         else:
             out["Authorization"] = f"Bearer {api_key}"
     else:
-        lower_incoming = {k.lower(): v for k, v in incoming.items()}
-        auth = lower_incoming.get("authorization")
-        if auth and not _is_gateway_credential(auth, gateway_key):
-            out["authorization"] = auth
-        x_key = lower_incoming.get("x-api-key")
-        if x_key and not _is_gateway_credential(x_key, gateway_key):
-            out["x-api-key"] = x_key
+        # issue #9：keyless Provider 出站**无条件**剥除一切入站凭证——
+        # `mage-router` 占位、本地客户端 token、用户真实 token 都绝不
+        # 透传到上游。网关自己的凭证不得成为后端凭证。
+        out.pop("Authorization", None)
+        out.pop("authorization", None)
+        out.pop("x-api-key", None)
+        out.pop("X-Api-Key", None)
 
     return out

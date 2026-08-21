@@ -54,10 +54,11 @@ class TestBuildOutboundHeaders(unittest.TestCase):
         self.assertEqual(h, {"anthropic-version": "2023-06-01", "x-api-key": "sk-new"})
 
     def test_no_key_passes_through_incoming_auth(self):
+        """issue #9 契约反转：keyless 出站剥除一切入站凭证。"""
         incoming = {"authorization": "Bearer oauth-token", "x-api-key": "k"}
         h = build_outbound_headers(incoming, None)
-        self.assertEqual(h["authorization"], "Bearer oauth-token")
-        self.assertEqual(h["x-api-key"], "k")
+        self.assertNotIn("authorization", h)
+        self.assertNotIn("x-api-key", h)
 
     def test_no_key_no_incoming_auth(self):
         self.assertEqual(build_outbound_headers({}, None), {})
@@ -97,10 +98,11 @@ class TestGatewayKeyPassthrough(unittest.TestCase):
         self.assertEqual(h, {})
 
     def test_other_auth_still_passed_through(self):
+        """issue #9 契约反转：keyless 出站剥除一切入站凭证。"""
         incoming = {"authorization": "Bearer oauth-token", "x-api-key": "k"}
         h = build_outbound_headers(incoming, None, gateway_key="gate-key")
-        self.assertEqual(h, {"authorization": "Bearer oauth-token",
-                             "x-api-key": "k"})
+        self.assertNotIn("authorization", h)
+        self.assertNotIn("x-api-key", h)
 
     def test_gateway_key_moot_when_provider_key_set(self):
         # With a provider key, outbound auth is provider's own; the gateway
@@ -111,9 +113,11 @@ class TestGatewayKeyPassthrough(unittest.TestCase):
         self.assertEqual(h, {"x-api-key": "sk-x"})
 
     def test_no_gateway_key_keeps_passthrough(self):
+        """issue #9 契约反转：keyless 出站剥除一切入站凭证。"""
         incoming = {"authorization": "Bearer whatever", "x-api-key": "k"}
         h = build_outbound_headers(incoming, None)
-        self.assertEqual(h, incoming)
+        self.assertNotIn("authorization", h)
+        self.assertNotIn("x-api-key", h)
 
 
 if __name__ == "__main__":

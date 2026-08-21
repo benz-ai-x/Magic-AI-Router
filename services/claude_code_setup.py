@@ -211,7 +211,10 @@ def _plan(roles=None):
 
     new_env = dict(env)
     new_env["ANTHROPIC_BASE_URL"] = gateway_url
-    new_env["ANTHROPIC_AUTH_TOKEN"] = "mage-router"
+    # issue #9：写入当前有效本地 token（替换 mage-router 占位）
+    from mpconf.local_token import get_local_token
+    new_env["ANTHROPIC_AUTH_TOKEN"] = get_local_token(
+        str(config_store.get_path("mp")))
     new_env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1"
     for key in list(new_env.keys()):
         if key in model_keys:
@@ -272,10 +275,15 @@ def preview(roles=None):
         else:
             backup = {"will": False, "path": plan["settings_path"] + ".bak",
                       "note": "已指向本网关；保留首次同步前创建的 .bak 备份不变"}
+        # preview() 对外掩码 token（_plan 保留实值供防漂移守卫；UI/diff
+        # 永不回显明文——决策 A×4 的掩码契约）
+        masked = [({**c, "new": _mask_old(c["key"], c["new"])}
+                   if c["key"] == "ANTHROPIC_AUTH_TOKEN" else c)
+                  for c in plan["changes"]]
         return {"ok": True, "already": False,
                 "target": plan["settings_path"], "exists": plan["exists"],
                 "gateway_url": plan["gateway_url"],
-                "changes": plan["changes"], "backup": backup}
+                "changes": masked, "backup": backup}
     except (OSError, json.JSONDecodeError, ValueError) as e:
         return {"ok": False, "msg": str(e)}
 

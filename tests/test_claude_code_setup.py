@@ -42,7 +42,9 @@ class TestSetupClaudeCode(unittest.TestCase):
         self.assertEqual(result["action"], "added")
         env = settings["env"]
         self.assertEqual(env["ANTHROPIC_BASE_URL"], "http://127.0.0.1:9527")
-        self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "mage-router")
+        tok = env["ANTHROPIC_AUTH_TOKEN"]
+        self.assertEqual(len(tok), 32, "写当前有效本地 token（issue #9）")
+        self.assertNotEqual(tok, "mage-router")
         self.assertEqual(env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1")
 
     def test_reports_replaced_auth_without_echoing_token(self):
@@ -667,6 +669,11 @@ class TestPreview(unittest.TestCase):
         for row in pv["changes"]:
             if row["action"] == "remove":
                 self.assertNotIn(row["key"], written_env)
+            elif row["key"] == "ANTHROPIC_AUTH_TOKEN":
+                # 掩码契约：preview 报告掩码，实写为真 token——drift 守卫
+                # 对此键验「报告掩码 + 实写为有效本地 token（32 hex）」
+                self.assertEqual(row["new"], "（已设置，不回显）")
+                self.assertEqual(len(written_env[row["key"]]), 32)
             else:
                 self.assertEqual(written_env[row["key"]], row["new"],
                                  f"{row['key']} written value != preview")
