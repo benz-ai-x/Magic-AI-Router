@@ -1,4 +1,7 @@
 """keychain 在 Security 框架缺失时仍可导入（Linux 容器形态）。"""
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_keychain_importable_without_security_framework():
@@ -16,5 +19,5 @@ def test_keychain_importable_without_security_framework():
     )
     r = subprocess.run([sys.executable, "-c", code],
                        capture_output=True, text=True,
-                       cwd="/Users/pc2026/WorkSpace/DevTools/Magic-AI-Router")
+                       cwd=str(REPO_ROOT))
     assert r.returncode == 0 and "ok" in r.stdout, r.stderr

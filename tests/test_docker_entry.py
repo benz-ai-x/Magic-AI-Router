@@ -219,7 +219,7 @@ class TestMain:
         assert "serve" in capsys.readouterr().err
 
 
-# ── config-ui：DockerConfigServer ─────────────────────────────────
+# ── config-ui：装配工厂 make_config_server ───────────────────────
 
 class TestMakeConfigServer:
     """装配工厂：Docker 差异 = 纯构造参数，无私有符号接触。"""
@@ -372,7 +372,7 @@ class TestMainConfigUi:
         assert calls == ["config-ui"]
 
 
-# ── 配置热重载：DockerConfigServer 传递 on_sp_saved ─────────────────
+# ── 配置热重载：on_sp_saved 传递 ─────────────────────────────────
 
 class TestConfigHotReload:
     def test_on_sp_saved_passed_to_server(self, entry, tmp_path):
@@ -428,7 +428,7 @@ class TestConfigHotReload:
             srv.stop()
 
 
-# ── 配置热重载：GatewayRunner（uvicorn 线程化 reload）────────────────
+# ── 配置热重载：SuanpanRuntime 端到端 ──────────────────────────────
 
 class TestGatewayRuntimeIntegration:
     """SuanpanRuntime(bind_host=...) 端到端：reload 把新配置换入运行中的

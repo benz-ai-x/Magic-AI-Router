@@ -200,8 +200,13 @@ class TestStartConfigCreateError(unittest.TestCase):
         self.assertIn("无法创建配置文件", rt.error)
 
 
-def _capture_factory(rt, listen):
-    """Run start() with mocked deps, capturing the coroutine factory."""
+def _capture_factory(rt, listen, invoke=False):
+    """Run start() with mocked deps, capturing the coroutine factory.
+
+    invoke=True 时在 patch 上下文内调用 factory 并返回其结果（
+    uvicorn.Config/Server 的 mock 只在上下文内有效——上下文外调用
+    factory 会落真实构造）。
+    """
     captured = {}
 
     def capture(factory):
@@ -216,29 +221,33 @@ def _capture_factory(rt, listen):
     with patch.object(rt._rt, "start", side_effect=capture), \
          patch("suanpan.config.load_config", return_value=mock_config), \
          patch("suanpan.main.create_app", return_value=MagicMock()), \
-         patch.object(uvicorn, "Config"), \
+         patch.object(uvicorn, "Config") as mock_config_cls, \
          patch.object(uvicorn, "Server") as mock_server_cls, \
          patch.object(rt, "_ensure_config"):
         rt.start()
-    return captured["f"], mock_server_cls
+        if invoke:
+            captured["result"] = captured["f"](MagicMock())
+    if invoke:
+        return captured["result"], mock_config_cls, mock_server_cls
+    return captured["f"], mock_server_cls, mock_config_cls
 
 
 class TestFactoryListenValidation(unittest.TestCase):
     def test_factory_rejects_invalid_listen_format(self):
         rt = SuanpanRuntime()
-        factory, _ = _capture_factory(rt, "1.2.3.4:not-a-port")
+        factory, _, _ = _capture_factory(rt, "1.2.3.4:not-a-port")
         with self.assertRaisesRegex(ValueError, "invalid listen port"):
             factory(MagicMock())
 
     def test_factory_rejects_non_loopback_listen(self):
         rt = SuanpanRuntime()
-        factory, _ = _capture_factory(rt, "0.0.0.0:9527")
+        factory, _, _ = _capture_factory(rt, "0.0.0.0:9527")
         with self.assertRaisesRegex(ValueError, "loopback"):
             factory(MagicMock())
 
     def test_factory_builds_uvicorn_server_for_loopback(self):
         rt = SuanpanRuntime()
-        factory, mock_server_cls = _capture_factory(rt, "127.0.0.1:9527")
+        factory, mock_server_cls, _ = _capture_factory(rt, "127.0.0.1:9527")
         mock_server = MagicMock()
         mock_server_cls.return_value = mock_server
         awaitable, stop_fn = factory(MagicMock())
@@ -252,16 +261,10 @@ class TestBindHostOverride(unittest.TestCase):
     uvicorn 并跳过回环守卫；缺省保持 macOS 行为（config 地址 + 强制回环）。"""
 
     def _config_kwargs(self, rt, listen):
-        """跑 start() 并调用捕获的 factory，返回 uvicorn.Config 的关键字参数。"""
-        import uvicorn
-        captured = {}
-        mock_config = MagicMock()
-        mock_config.listen_address.return_value = listen
-        with patch.object(rt._rt, "start",
-                          side_effect=lambda f: captured.setdefault("f", f) or True),              patch("suanpan.config.load_config", return_value=mock_config),              patch("suanpan.main.create_app", return_value=MagicMock()),              patch.object(uvicorn, "Config") as mock_uvicorn_config,              patch.object(uvicorn, "Server", return_value=MagicMock()),              patch.object(rt, "_ensure_config"):
-            rt.start()
-            captured["f"](MagicMock())
-        return mock_uvicorn_config.call_args[1]
+        """跑 start() 并在 patch 上下文内调 factory，取 uvicorn.Config  kwargs。"""
+        _result, mock_config_cls, _srv = _capture_factory(rt, listen,
+                                                          invoke=True)
+        return mock_config_cls.call_args[1]
 
     def test_override_binds_wildcard(self):
         rt = SuanpanRuntime(bind_host="0.0.0.0")
@@ -276,7 +279,7 @@ class TestBindHostOverride(unittest.TestCase):
 
     def test_default_still_guards_loopback(self):
         rt = SuanpanRuntime()
-        factory, _ = _capture_factory(rt, "1.2.3.4:9527")
+        factory, _, _ = _capture_factory(rt, "1.2.3.4:9527")
         with self.assertRaisesRegex(ValueError, "Invalid Suanpan listen"):
             factory(MagicMock())
 

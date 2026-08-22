@@ -115,7 +115,7 @@ def run_serve() -> int:
     """
     paths = default_paths()
     # 先重定向再构造——SuanpanRuntime 经 PATHS["sp"] 取配置路径；
-    # 缺配置文件时 _ensure_config 首启自建（取代 GatewayRunner 的静默死线程）
+    # 缺配置文件时 _ensure_config 首启自建，首跑即有可用网关
     redirect_paths(paths["sp"], paths["mp"], paths["claude_settings"])
     runner = SuanpanRuntime(bind_host="0.0.0.0")
     runner.start()

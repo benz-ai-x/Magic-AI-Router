@@ -117,15 +117,15 @@ Docker 版把它放在两处宿主机侧控制上，容器内不做访问控制�
 调试时可绕过脚本直接操作容器：`docker compose -f docker/compose.yml exec
 suanpan python3 /app/docker/entry.py <serve|sync-claude-code|config-ui|config-token>`。
 
-## Linux 兼容（Security stub）
+## Linux 兼容（Security 可选导入）
 
 `suanpan.config` → `mpconf.config` → `sysctl.keychain` 的模块级 import 链
-最终会 `import Security`（PyObjC，仅 macOS）。容器内没有这个模块——
-`docker/entry.py` 在 import suanpan 前向 `sys.modules` 注入带
-`__docker_stub__` 标记的空模块。Docker 路径永不调用被 stub 的 keychain
-函数（SSH 隧道密码存取是 macOS 菜单栏版的能力，容器版不带）。这也是
-镜像里出现 `sysctl/`、`capture/` 目录的原因：`mpconf.config` 模块级引用
-了它们的名字。
+最终会 `import Security`（PyObjC，仅 macOS）。`sysctl/keychain` 自身
+try/except 可选化：缺失即 `Security = None`，公开函数的全吞异常兜底把
+None 解引用转成 False/""——容器无需任何 stub。Docker 路径本就不调用
+keychain 函数（SSH 隧道密码存取是 macOS 菜单栏版的能力，容器版不带）。
+这也是镜像里出现 `sysctl/`、`capture/` 目录的原因：`mpconf.config`
+模块级引用了它们的名字。
 
 ## 镜像内容
 
