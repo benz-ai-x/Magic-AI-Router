@@ -937,3 +937,42 @@ class TestFmtReset(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBalanceErrorShaping(unittest.TestCase):
+    """#53：余额 API 失败不再只剩异常类型名——按 reason 分类出可行动
+    中文（防泄漏纪律不变：不含凭证的 errno/reason 才进消息）。"""
+
+    def test_urlerror_reason_categorized(self):
+        import urllib.error
+        from services import balance_usage as bu
+        captured = {}
+
+        def fake_open_json(url, headers=None, **kw):
+            raise urllib.error.URLError(
+                __import__("socket").timeout("timed out"))
+
+        with patch.object(bu._BALANCE_CLIENT, "open_json",
+                                        side_effect=fake_open_json):
+            results = bu.fetch_balance({"providers": {
+                "p": {"base_url": "https://api.deepseek.com",
+                      "api_key": "k"}}})
+        err = results[0]["apis"][0]["error"]
+        self.assertIn("超时", err)
+
+    def test_conn_refused_categorized(self):
+        import urllib.error, socket
+        from services import balance_usage as bu
+
+        def fake_open_json(url, headers=None, **kw):
+            raise urllib.error.URLError(
+                ConnectionRefusedError(61, "Connection refused"))
+
+        with patch.object(bu._BALANCE_CLIENT, "open_json",
+                                        side_effect=fake_open_json):
+            results = bu.fetch_balance({"providers": {
+                "p": {"base_url": "https://api.deepseek.com",
+                      "api_key": "k"}}})
+        err = results[0]["apis"][0]["error"]
+        self.assertIn("拒绝", err)
+

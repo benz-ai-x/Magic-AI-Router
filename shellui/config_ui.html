@@ -352,6 +352,9 @@ function numberDefault(value,fallback){
   if(value==null||value==='')return fallback;
   const n=Number(value);return Number.isFinite(n)?n:fallback;
 }
+// #53 声明：__saved_api_key__ / __saved_password__ 是脏检查投影层的
+// 占位哨兵（viewSnapshot/dirtyProjection 专用）——collect() 从表单读到
+// 空值即回写 null，哨兵永不上 PUT 线、永不入 S.sp/S.mp 持久态。
 function viewSnapshot(view,state,roles){
   // Project the shared config into the values owned by one settings page.
   // Defaults match what the form renders, preventing an untouched omitted

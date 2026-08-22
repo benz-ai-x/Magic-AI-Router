@@ -27,7 +27,11 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             auth = request.headers.get("authorization", "")
             if auth.startswith("Bearer "):
                 provided = auth[len("Bearer "):]
-        if provided != self.api_key:
+        import hmac
+        # 常量时间比较（#53）：对齐 config_server/panel 的密钥比较纪律。
+        # provided 为 None（无凭证头）时 compare_digest 不接受混合类型，
+        # 先短路——None 本就是 401。
+        if provided is None or not hmac.compare_digest(provided, self.api_key):
             return JSONResponse(
                 {"error": "missing or invalid api key"}, status_code=401)
         return await call_next(request)

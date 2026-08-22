@@ -321,6 +321,23 @@ def test_provider(sp_raw, name, model=None):
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+def _shape_balance_error(exc) -> str:
+    """#53：余额 API 失败按 reason 分类出可行动中文——防泄漏纪律不变
+    （只有不含凭证的 errno/reason 类别名进消息，响应体永不进）。"""
+    import socket
+    import urllib.error
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    if isinstance(reason, socket.timeout) or isinstance(exc, socket.timeout):
+        return "连接超时"
+    if isinstance(reason, ConnectionRefusedError):
+        return "连接被拒绝"
+    if isinstance(reason, __import__("socket").gaierror):
+        return "域名解析失败"
+    return type(exc).__name__
+
+
 def fetch_balance(sp_raw):
     """Query each enabled provider's balance API. ``sp_raw`` = raw Suanpan config dict.
 
@@ -372,7 +389,8 @@ def fetch_balance(sp_raw):
             except AuthRedirectError as e:
                 api_res.append({"label": label, "error": e.msg[:120]})
             except Exception as e:
-                api_res.append({"label": label, "error": f"{type(e).__name__}"})
+                api_res.append({"label": label,
+                                "error": _shape_balance_error(e)})
         for res in api_res:
             quotas = res.get("quotas")
             if not isinstance(quotas, list):

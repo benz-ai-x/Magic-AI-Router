@@ -112,6 +112,8 @@ def append_json(record, directory):
     if not stat.S_ISDIR(dir_info.st_mode) or dir_info.st_uid != os.getuid():
         os.close(dir_fd)
         raise OSError("抓包目录所有者或类型不安全")
+    # 「今天」按系统本地时区（与 usage 聚合的 CST 钉死口径是刻意的
+    # 分叉：抓包文件按用户直觉的本地日历滚动；跨子系统对照数据时注意）
     name = datetime.now().strftime("%Y-%m-%d") + ".jsonl"
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     try:
