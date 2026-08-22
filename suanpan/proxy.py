@@ -270,7 +270,10 @@ async def forward_count_tokens(
         try:
             await r.aread()
         except httpx.HTTPError:
-            await r.aclose()
+            try:
+                await r.aclose()
+            except Exception:  # noqa: BLE001 — 关闭失败不得掩过原始流错误
+                pass
             raise
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
