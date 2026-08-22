@@ -44,14 +44,14 @@
 ### ~/.suanpan.yaml — AI 路由配置
 
 ```yaml
-listen: 127.0.0.1:9527
+listen_port: 9527        # 整型；旧 "host:port" 字符串 listen 读时兼容
 api_key: null              # null = 不校验客户端 key
 request_timeout_s: 3600
 body_limit_mb: 50
 
 usage_log:
   enabled: true
-  path: ~/.suanpan/usage.jsonl
+  path: ~/.suanpan/logs/usage.jsonl
 
 providers:
   GLM_MAX:
@@ -81,17 +81,17 @@ rules:
 ## REST API（:9528，需 token）
 
 所有端点需要 bearer token（issue #10 后 URL 永不带凭证）：
-- **AI agent / curl**：从 `Authorization: Bearer TOKEN` header 传入（token 从 Magic AI Router 的「复制 AI 助手指令」菜单获取）。
+- **AI agent / curl**：从 `Authorization: Bearer TOKEN` header 传入。token 获取：macOS 菜单栏「复制 AI 助手指令」；Docker 无菜单——`bash docker/suanpan.sh config-ui` 打印。
 - **设置窗（WKWebView）**：首次打开经桥接带 Authorization 头导航，响应种下 `cfgsess` HttpOnly SameSite=Strict 会话 cookie——后续请求由 cookie 承载，JS 从不接触 token。
 
-query-string 认证已删除；无凭证的 `/` 与 `/api/*` 一律返回 401。
+query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `/` 返回登录页（浏览器输入 token 即可进入管理面板）。
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/state` | 读取全部配置（mp + sp），密码/密钥已掩码 |
 | PUT | `/api/state` | 保存全部配置（body: `{"mp": {...}, "sp": {...}}`） |
-| GET | `/api/balance` | 查询各供应商余额/配额 |
-| GET | `/api/usage?range=today\|7d\|all` | 聚合本地用量日志；缺省 `all`，返回总览、供应商、CST 每日与路由来源统计 |
+| GET | `/api/balance` | 查询各供应商余额/配额；套餐类含 5小时/每周/每月 配额窗口，每月行可能是网关本地聚合（`source: "local"`，UI 标注「（网关）」） |
+| GET | `/api/usage?range=today\|7d\|month\|all` | 聚合本地用量日志；缺省 `all`，`month` = CST 自然月；返回总览、供应商、CST 每日与路由来源统计 |
 | POST | `/api/fetch-models` | 拉取供应商模型列表（body: `{"provider": "GLM_MAX"}`） |
 | POST | `/api/test-provider` | 测试供应商连通性（body: `{"provider": "GLM_MAX", "model": "glm-5.2"}`） |
 
@@ -148,7 +148,7 @@ curl -H "Authorization: Bearer TOKEN" http://127.0.0.1:9528/api/state
 菜单栏（从上到下）：
 - 状态行（绿/黄/灰 + 隧道名 + 流量）
 - 代理隧道 ▸（连接/暂停/重新连接 · 系统代理 · 隧道选择 · 经代理启动 App）
-- 抓包 ▸（TLS MITM 抓包，需信任 CA）
 - AI 路由 ▸（启动/停止/重启 · 重新加载 · 复制地址）
+- 抓包 ▸（TLS MITM 抓包，需信任 CA）
 - 偏好设置…（打开 Web 配置面板 :9528）
 - 查看日志 · 防睡眠 · 登录启动 · 关于 · 退出

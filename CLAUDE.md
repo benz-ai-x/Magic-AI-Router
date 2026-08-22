@@ -139,4 +139,4 @@ suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM �
 - 打包后的 .app 设置 LSUIElement=true，不显示 Dock 图标
 - Suanpan 网关依赖为延迟导入——未安装时 app 正常启动，网关功能不可用并提示安装命令
 - Config server（:9528）和 AI 路由网关（:9527）是两个独立端口，不可合并
-- 测试口径：`python3 -m pytest --cov`（omit 清单见 `.coveragerc`）+ `node --test tests/js/`；覆盖率数字以运行为准，不在此缓存
+- 测试口径：`python3 -m pytest --cov`（omit 清单见 `.coveragerc`）+ `node --test tests/js/*.test.mjs`（glob 形式——node ≥26 目录模式报 MODULE_NOT_FOUND）；覆盖率数字以运行为准，不在此缓存
