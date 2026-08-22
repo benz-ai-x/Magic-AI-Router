@@ -946,8 +946,6 @@ class TestBalanceErrorShaping(unittest.TestCase):
     def test_urlerror_reason_categorized(self):
         import urllib.error
         from services import balance_usage as bu
-        captured = {}
-
         def fake_open_json(url, headers=None, **kw):
             raise urllib.error.URLError(
                 __import__("socket").timeout("timed out"))
@@ -961,7 +959,7 @@ class TestBalanceErrorShaping(unittest.TestCase):
         self.assertIn("超时", err)
 
     def test_conn_refused_categorized(self):
-        import urllib.error, socket
+        import urllib.error
         from services import balance_usage as bu
 
         def fake_open_json(url, headers=None, **kw):

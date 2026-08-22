@@ -215,7 +215,8 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
                    side_effect=_http_error(403, b"forbidden")):
             r = balance_usage.fetch_balance({"providers": self.PROVIDERS})
         entry = r[0]
-        self.assertEqual(entry["apis"][0]["error"], "HTTPError")
+        # #53：HTTPError 塑形为状态码（旧契约只剩类型名）
+        self.assertEqual(entry["apis"][0]["error"], "HTTP 403")
 
 
 # ===========================================================================
