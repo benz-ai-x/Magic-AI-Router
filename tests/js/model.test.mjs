@@ -127,6 +127,15 @@ test("quotaNumsText omits the pct segment when pct is null", () => {
   assert.equal(L.quotaNumsText({ pct: 0, used: 0, limit: 100 }), "已用 0% · 0/100");
 });
 
+test("quotaNumsText renders call count on locally aggregated rows", () => {
+  assert.equal(
+    L.quotaNumsText({ pct: null, used: 243311832, limit: null, source: "local", calls: 621 }),
+    "243.3M/— · 621 次");
+  assert.equal(
+    L.quotaNumsText({ pct: null, used: 0, limit: null, source: "local", calls: 0 }),
+    "0/— · 0 次");
+});
+
 test("usageRangeOptions marks the selected statistics range", () => {
   assert.deepEqual(L.usageRangeOptions("7d"), [
     { value: "today", label: "今日", active: false },

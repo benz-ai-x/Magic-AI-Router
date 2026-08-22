@@ -42,8 +42,10 @@ PROVIDER_BALANCE_APIS = [
 ]
 
 _UNIT_NAMES = {3: "5小时", 5: "每月", 6: "每周"}
+_WEEK_HOURS = 24 * 7
+_MONTH_HOURS = 24 * 30
 # Duration in hours for each GLM unit — used for ascending sort of quota windows.
-_UNIT_DURATION_HOURS = {3: 5, 6: 24 * 7, 5: 24 * 30}
+_UNIT_DURATION_HOURS = {3: 5, 6: _WEEK_HOURS, 5: _MONTH_HOURS}
 _LEVEL_MAP = {"LEVEL_ADVANCED": "Advanced", "LEVEL_PRO": "Pro", "LEVEL_ALLEGRO": "Allegro"}
 CST = timezone(timedelta(hours=8))
 USAGE_RANGES = frozenset({"today", "7d", "month", "all"})
@@ -57,25 +59,34 @@ _TOKEN_FIELDS = (
 _USAGE_NUMERIC_FIELDS = (*_TOKEN_FIELDS, "latency_ms", "status")
 
 
+def _fmt_dt(dt):
+    """Short Chinese datetime label — the quota reset-time display format."""
+    return f"{dt.month}月{dt.day}日 {dt:%H:%M}"
+
+
 def _fmt_reset(iso_ts):
     """Format an ISO timestamp as a short Chinese date, converted to CST
     (provider reset times are UTC; the UI's convention is CST)."""
     try:
-        from datetime import datetime
         dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
-        dt = dt.astimezone(CST)
-        return f"{dt.month}月{dt.day}日 {dt:%H:%M}"
+        return _fmt_dt(dt.astimezone(CST))
     except Exception:
         return iso_ts[:16]
 
 
 def _fmt_reset_ms(epoch_ms):
-    """Format an epoch-millis timestamp like _fmt_reset (GLM nextResetTime)."""
+    """Format an epoch-millis timestamp like _fmt_reset (GLM nextResetTime).
+    Returns None on malformed input (display simply omits the reset note)."""
     try:
-        dt = datetime.fromtimestamp(int(epoch_ms) / 1000, tz=CST)
-        return f"{dt.month}月{dt.day}日 {dt:%H:%M}"
+        return _fmt_dt(datetime.fromtimestamp(int(epoch_ms) / 1000, tz=CST))
     except (TypeError, ValueError, OverflowError, OSError):
         return None
+
+
+def _quota_row(period, pct, used, limit, reset, sort_hours):
+    """One quota-window row; ``_sort`` is stripped after the ascending sort."""
+    return {"period": period, "pct": pct, "used": used, "limit": limit,
+            "reset": reset, "_sort": sort_hours}
 
 
 def _window_label(window):
@@ -135,19 +146,21 @@ def normalize_balance(raw, label):
         pcts = []
         for lim in d["limits"]:
             period = _UNIT_NAMES.get(lim.get("unit"), f"unit{lim.get('unit')}")
+            if lim.get("type") == "TIME_LIMIT":
+                # 工具时长配额（usageDetails: search-prime/web-reader/zread），
+                # 不是 token 用量——period 标口径，且不抑制本地月度 token 行
+                period += "·工具"
             p = lim.get("percentage")
             if isinstance(p, (int, float)):
                 pcts.append(int(p))
-            used = lim["currentValue"] if "currentValue" in lim else None
-            qlimit = lim["usage"] if "usage" in lim else None
-            quotas.append({
-                "period": period,
-                "pct": int(p) if isinstance(p, (int, float)) else None,
-                "used": used,
-                "limit": qlimit,
-                "reset": _fmt_reset_ms(lim.get("nextResetTime")),
-                "_sort": _UNIT_DURATION_HOURS.get(lim.get("unit"), 0),
-            })
+            quotas.append(_quota_row(
+                period,
+                int(p) if isinstance(p, (int, float)) else None,
+                lim["currentValue"] if "currentValue" in lim else None,
+                lim["usage"] if "usage" in lim else None,
+                _fmt_reset_ms(lim.get("nextResetTime")),
+                _UNIT_DURATION_HOURS.get(lim.get("unit"), 0),
+            ))
         quotas.sort(key=lambda q: q["_sort"])
         for q in quotas:
             del q["_sort"]
@@ -171,34 +184,27 @@ def normalize_balance(raw, label):
             if wlabel and det.get("limit"):
                 wused, wlim = int(det.get("used", 0)), int(det["limit"])
                 wpct = round(wused / wlim * 100) if wlim > 0 else None
-                quotas.append({
-                    "period": wlabel,
-                    "pct": wpct,
-                    "used": wused,
-                    "limit": wlim,
-                    "reset": _fmt_reset(det["resetTime"]) if det.get("resetTime") else None,
-                    "_sort": _window_duration_hours(w),
-                })
-        quotas.append({
-            "period": "每周",
-            "pct": pct_num,
-            "used": used,
-            "limit": lim,
-            "reset": _fmt_reset(u["resetTime"]) if u.get("resetTime") else None,
-            "_sort": 24 * 7,
-        })
+                quotas.append(_quota_row(
+                    wlabel, wpct, wused, wlim,
+                    _fmt_reset(det["resetTime"]) if det.get("resetTime") else None,
+                    _window_duration_hours(w),
+                ))
+        quotas.append(_quota_row(
+            "每周", pct_num, used, lim,
+            _fmt_reset(u["resetTime"]) if u.get("resetTime") else None,
+            _WEEK_HOURS,
+        ))
         # totalQuota = 月度会员池，按套餐填充（我们 Advanced 账号返回 {}）
         tq = raw.get("totalQuota") or {}
         if tq.get("limit"):
             tused, tlim = int(tq.get("used", 0)), int(tq["limit"])
-            quotas.append({
-                "period": "每月",
-                "pct": round(tused / tlim * 100) if tlim > 0 else None,
-                "used": tused,
-                "limit": tlim,
-                "reset": _fmt_reset(tq["resetTime"]) if tq.get("resetTime") else None,
-                "_sort": 24 * 30,
-            })
+            quotas.append(_quota_row(
+                "每月",
+                round(tused / tlim * 100) if tlim > 0 else None,
+                tused, tlim,
+                _fmt_reset(tq["resetTime"]) if tq.get("resetTime") else None,
+                _MONTH_HOURS,
+            ))
         quotas.sort(key=lambda q: q["_sort"])
         for q in quotas:
             del q["_sort"]
@@ -319,9 +325,11 @@ def test_provider(sp_raw, name, model=None):
 def fetch_balance(sp_raw):
     """Query each enabled provider's balance API. ``sp_raw`` = raw Suanpan config dict.
 
-    Plan providers (quota windows) whose API reports no 每月 row get a local
-    fallback row aggregated from the gateway usage log (source="local",
-    limit/pct None) — the local row never overrides an API-reported month.
+    Plan providers (quota windows) without an API-reported monthly TOKEN row
+    get a local row aggregated from the gateway usage log (source="local",
+    limit/pct None, zero-filled when the log has nothing — 三行永远齐).
+    An API monthly token pool (Kimi totalQuota, period exactly 每月) wins;
+    GLM's 每月·工具 (TIME_LIMIT) is a different unit and does not suppress it.
     """
     results = []
     monthly_providers = None  # lazy: only read the log when a plan lacks API monthly
@@ -331,16 +339,14 @@ def fetch_balance(sp_raw):
         if monthly_providers is None:
             monthly_providers = fetch_usage(sp_raw, "month")["providers"]
         bucket = monthly_providers.get(name)
-        if bucket is None:
-            return None
         return {
             "period": "每月",
             "pct": None,
-            "used": sum(bucket[f] for f in _TOKEN_FIELDS),
+            "used": sum(bucket[f] for f in _TOKEN_FIELDS) if bucket else 0,
             "limit": None,
             "reset": None,
             "source": "local",
-            "calls": bucket["calls"],
+            "calls": bucket["calls"] if bucket else 0,
         }
 
     for name, p in sp_raw.get("providers", {}).items():
@@ -374,9 +380,7 @@ def fetch_balance(sp_raw):
                 continue
             if any(q.get("period") == "每月" for q in quotas):
                 continue
-            row = local_monthly_row(name)
-            if row is not None:
-                quotas.append(row)
+            quotas.append(local_monthly_row(name))
         results.append({"provider": name, "supported": True, "apis": api_res})
     return results
 

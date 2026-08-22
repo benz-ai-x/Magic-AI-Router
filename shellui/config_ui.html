@@ -567,7 +567,8 @@ function quotaPeriodLabel(q){return q.source==='local'?q.period+'（网关）':q
 function quotaNumsText(q){
   const used=q.used!=null?fmtNum(q.used):'—';
   const lim=q.limit!=null?fmtNum(q.limit):'—';
-  return (q.pct!=null?`已用 ${q.pct}% · `:'')+`${used}/${lim}`;
+  const base=(q.pct!=null?`已用 ${q.pct}% · `:'')+`${used}/${lim}`;
+  return q.source==='local'&&q.calls!=null?`${base} · ${q.calls} 次`:base;
 }
 // Context-window labels for well-known model ids (official docs/API data,
 // 2026-08). Display-only annotation — option values stay "provider/model";
