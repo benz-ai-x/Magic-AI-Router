@@ -37,6 +37,43 @@ class TestInlineOverride(unittest.TestCase):
         self.assertEqual(d.scenario, "default")
 
 
+
+
+class TestFallbackObservable(unittest.TestCase):
+    """#50：显式路由意图（内联/SUBAGENT）遇未知或停用 provider 时仍
+    fall-through（容错刻意），但决策必须携带原意图——响应头/日志可
+    感知，绝不静默误投。"""
+
+    def test_inline_unknown_provider_marks_fallback(self):
+        cfg = _config()
+        d = decide_route({"model": "ghost/model-x"}, config=cfg)
+        self.assertEqual(d.scenario, "default")
+        self.assertEqual(d.fallback_from, "ghost/model-x")
+
+    def test_inline_disabled_provider_marks_fallback(self):
+        cfg = _config(
+            providers={"p": ProviderConfig(base_url="http://x", enabled=False),
+                       "q": ProviderConfig(base_url="http://y")},
+            router=RouterConfig(default="q/model-a"))
+        d = decide_route({"model": "p/model-x"}, config=cfg)
+        self.assertEqual(d.scenario, "default")
+        self.assertEqual(d.fallback_from, "p/model-x")
+
+    def test_subagent_disabled_provider_marks_fallback(self):
+        cfg = _config(
+            providers={"p": ProviderConfig(base_url="http://x", enabled=False),
+                       "q": ProviderConfig(base_url="http://y")},
+            router=RouterConfig(default="q/model-a"))
+        body = {"model": "x", "system": "<SUBAGENT-MODEL>p/model-b</SUBAGENT-MODEL>"}
+        d = decide_route(body, config=cfg)
+        self.assertEqual(d.fallback_from, "p/model-b")
+
+    def test_normal_routes_carry_no_fallback(self):
+        cfg = _config()
+        self.assertIsNone(decide_route({"model": "p/m"}, config=cfg).fallback_from)
+        self.assertIsNone(decide_route({"model": "x"}, config=cfg).fallback_from)
+
+
 class TestSubagentModel(unittest.TestCase):
     def test_subagent_tag_routes(self):
         cfg = _config()

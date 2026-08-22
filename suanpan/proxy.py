@@ -216,6 +216,11 @@ async def forward_request(
     # Success (2xx or 4xx) — stream response to client
     out_headers = filter_response_headers(upstream_resp.headers)
     out_headers["x-suanpan-provider"] = provider_name
+    if getattr(decision, "fallback_from", None):
+        # #50：显式意图 fall-through 可感知——响应头 + 日志宣告，绝不静默误投
+        out_headers["x-suanpan-fallback"] = decision.fallback_from
+        _log.warning("route_fallback", intent=decision.fallback_from,
+                     provider=provider_name, scenario=decision.scenario)
 
     # Non-streaming upstreams answer application/json with usage at the
     # top level — the SSE scanner would read zeros (DeepSeek stream:false
@@ -287,6 +292,11 @@ async def forward_count_tokens(
 
     out_headers = filter_response_headers(r.headers)
     out_headers["x-suanpan-provider"] = provider_name
+    if getattr(decision, "fallback_from", None):
+        # #50：显式意图 fall-through 可感知——响应头 + 日志宣告，绝不静默误投
+        out_headers["x-suanpan-fallback"] = decision.fallback_from
+        _log.warning("route_fallback", intent=decision.fallback_from,
+                     provider=provider_name, scenario=decision.scenario)
     return JSONResponse(
         content=r.json() if r.headers.get("content-type", "").startswith("application/json") else {"raw": r.text},
         status_code=r.status_code,
