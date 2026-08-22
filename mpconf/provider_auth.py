@@ -24,6 +24,8 @@ HOP_HEADERS = frozenset({
 
 # ── 供应商知识注册表（#51）───────────────────────────────────────────
 # 「新增一家供应商要改哪里」的单一答案（余额 API 与 UI 模板共消费）。
+# balance_apis 的 auth-style："bearer" → `Authorization: Bearer <key>`；
+# "raw" → 裸 key 直接作 Authorization 值。
 # 字段：label（UI 显示名）/ hosts（base_url 子串匹配片段，余额侧用）/
 # base_url + anthropic_native（UI 模板种子，兼容 Anthropic 原生 body
 # 的后端才置 True）/ balance_apis（[(url, auth-style, label)]，无则空）。
