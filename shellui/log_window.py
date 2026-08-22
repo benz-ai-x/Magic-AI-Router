@@ -13,8 +13,9 @@ Two pieces:
   newest line unless the user has scrolled up to read history.
 
 The SSH subprocess verbose stderr is mirrored into the root logger by
-``app.py`` (see ``MagicProxyApp._mirror_ssh_stderr``) so a single LogBuffer
-holds the unified stream — this module never reaches into ``proxy.py``.
+``app.py``（经 ConnectionCoordinator 的 ``ssh_log_sink``）so a single
+LogBuffer holds the unified stream — this module never reaches into
+``proxy.py``.
 """
 import logging
 import threading

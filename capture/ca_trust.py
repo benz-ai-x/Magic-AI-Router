@@ -56,15 +56,13 @@ GUIDE_TEXT = (
     "或直接删除该证书。"
 )
 
-# Strong refs to live guide-window instances -- mirrors prefs.py's
-# _active_prefs: NSWindow delegates/targets are weak, so without this the
-# Python wrapper is GC'd as soon as show_ca_trust_guide() returns.
+# Strong refs to live guide-window instances——NSWindow 的 delegate/
+# target 是弱引用，不持强引用则 show_ca_trust_guide() 返回即被 GC。
 _active_guides = set()
 
 
 def _button(parent, title, x, y, w, h, target, action, default=False):
-    """Mirrors prefs.py's _push_button exactly (same helper shape, kept
-    local to avoid reaching into another module's "private" function)."""
+    """本模块自持的按钮构造 helper（历史形制沿自已删的原生配置窗）。"""
     b = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
     b.setTitle_(title)
     b.setBezelStyle_(1)
@@ -138,7 +136,8 @@ def attempt_trust():
 
 
 class CATrustGuideWindow(NSObject):
-    """First-run CA trust guidance window (mirrors prefs.py's PrefsWindow
+    """First-run CA trust guidance window（历史形制沿自 v0.4.0 前的
+    原生配置窗，现已无对应模块）(原 mirrors prefs.py's PrefsWindow
     NSObject-subclass pattern)."""
 
     def init(self):
@@ -208,7 +207,7 @@ class CATrustGuideWindow(NSObject):
     # confirmed empirically: a leading-underscore, zero-trailing-underscore
     # helper taking 1 extra arg raised objc.BadPrototypeError at class
     # definition time). finish_ takes one arg -> exactly one trailing `_`,
-    # no leading `_`, mirroring prefs.py's doSave_/onAuthChange_ pattern.
+    # 无前导下划线：ObjC selector 不能以单下划线开头（会被当私有 selector）。
 
     def doTrust_(self, sender):
         ok, err = attempt_trust()

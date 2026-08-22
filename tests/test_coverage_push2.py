@@ -9,17 +9,19 @@ from services.config_server import ConfigServer
 
 
 class TestConfigServerLifecycle(unittest.TestCase):
+    """#53：固定端口（19876/19877）改 OS 分配（port 0）——并行/残留
+    不再误伤。真实端口经内部 _server.server_address 读回。"""
+
     def test_start_and_stop(self):
-        ConfigServer(port=0)  # port 0 = OS picks free port
-        # Can't easily bind port 0 with current API; test start on real port
-        cs2 = ConfigServer(port=19876)
+        cs2 = ConfigServer(port=0)
         self.assertTrue(cs2.start())
         self.assertTrue(cs2.running)
+        self.assertNotEqual(cs2._server.server_address[1], 0)
         cs2.stop()
         self.assertFalse(cs2.running)
 
     def test_start_when_already_running(self):
-        cs = ConfigServer(port=19877)
+        cs = ConfigServer(port=0)
         cs.start()
         self.assertTrue(cs.start())  # idempotent
         cs.stop()

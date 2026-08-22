@@ -1,8 +1,9 @@
 """PyInstaller entry point for the bundled mitmdump helper (ADR-001).
 
-Not invoked by app.py yet -- that wiring is ADR-001 Task 2/4. This module
-exists solely so `PyInstaller` has a concrete script to analyze; it just
-delegates straight into mitmproxy's own CLI entry point.
+frozen 构建的 mitmdump 入口：build.sh 先以 onedir 打出独立 mitmdump，
+再作为 Resources/mitmdump/ 嵌入主 .app——capture/resources.py 的三级
+解析链（env → frozen bundled → PATH）在 frozen 态落到它。仅委托
+mitmproxy 自身 CLI；addon 由 resources 契约以 --scripts 挂载。
 """
 import sys
 

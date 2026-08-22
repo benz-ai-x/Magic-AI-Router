@@ -83,8 +83,7 @@ def _read_mp():
     except Exception:
         # 迁移可行动错误等：降级为带 _load_error 的空态供 UI 提示，
         # /api/state 不 500（UI 保存被 validateConfig/prepare 双带阻断）
-        import logging as _lg
-        _lg.getLogger("magic-proxy.config_server").exception("_read_mp degraded")
+        logger.exception("_read_mp degraded")
         return {"_load_error": "Magic Proxy 配置装载失败，已阻止保存以防覆盖"}
     if not cfg:
         return {}
