@@ -11,6 +11,7 @@
 import asyncio
 import gc
 import threading
+import time
 import unittest
 import warnings
 
@@ -133,6 +134,90 @@ class TestStressStartStop(unittest.TestCase):
         ok = rt.stop(timeout=5)
         self.assertTrue(ok)
         self.assertFalse(rt.running)
+
+
+class _WideWindowLock:
+    """#45 回归装置：把 start() 内「_shutdown_previous 释放锁 → :64 临界区
+    再获取」的微秒级抢占窗口人为拉宽（每线程第二次 acquire 前让出 50ms）。
+    生产里该窗口依赖 GIL 恰好在两 with 块之间切换——概率极低但静态必然
+    （非可重入锁二次获取），故测试须确定性制造交错而非碰运气压测。
+    本套件对 rt._thread 的白盒断言已有先例。"""
+
+    def __init__(self):
+        self._inner = threading.Lock()
+        self._counts = threading.local()
+
+    def acquire(self, blocking=True, timeout=-1):
+        n = getattr(self._counts, "n", 0) + 1
+        self._counts.n = n
+        if n == 2:
+            time.sleep(0.05)
+        return self._inner.acquire(blocking, timeout)
+
+    def release(self):
+        self._inner.release()
+
+    def __enter__(self):
+        self.acquire()
+
+    def __exit__(self, *a):
+        self.release()
+
+
+class TestConcurrentStartNoDeadlock(unittest.TestCase):
+    def test_simultaneous_first_start_wide_window(self):
+        """#45：两线程同时首启且交错拉宽——败者必须快速返回 False，
+        不得在非可重入锁上二次获取自死锁。死锁会连带冻结 running/error
+        属性读（菜单 tick 每秒在读）→ 整个菜单栏挂死。"""
+        factory, started, released = _factory_forever()
+        rt = AsyncRuntime("t", stop_timeout=1.0)
+        rt._lock = _WideWindowLock()
+        barrier = threading.Barrier(2)
+        results = []
+
+        def racer():
+            barrier.wait()
+            results.append(rt.start(factory))
+
+        t1 = threading.Thread(target=racer, daemon=True)
+        t2 = threading.Thread(target=racer, daemon=True)
+        t1.start()
+        t2.start()
+        t1.join(3)
+        t2.join(3)
+        hung = t1.is_alive() or t2.is_alive()
+        if not hung:
+            # 属性读在同一把锁上——死锁时连读都挂，故先判活再清理
+            self.assertIsNotNone(rt.running)
+            released.set()
+            rt.stop(timeout=5)
+        self.assertFalse(hung, "并发 start() 死锁（#45 自死锁回归）")
+        self.assertEqual(sorted(results), [False, True])
+        self.assertIn("不可启动", rt.error)
+
+    def test_simultaneous_first_start_stress(self):
+        """纯公开接口压力哨兵（无窗口拉宽）：并发首启永不挂死、后续可用。"""
+        for _round in range(20):
+            factory, started, released = _factory_forever()
+            rt = AsyncRuntime("t", stop_timeout=0.2)
+            barrier = threading.Barrier(2)
+
+            def racer():
+                barrier.wait()
+                rt.start(factory)
+
+            t1 = threading.Thread(target=racer, daemon=True)
+            t2 = threading.Thread(target=racer, daemon=True)
+            t1.start()
+            t2.start()
+            t1.join(2)
+            t2.join(2)
+            hung = t1.is_alive() or t2.is_alive()
+            if not hung:
+                released.set()
+                rt.stop(timeout=5)
+            self.assertFalse(
+                hung, f"第 {_round} 轮并发 start() 死锁（#45 自死锁回归）")
 
 
 if __name__ == "__main__":

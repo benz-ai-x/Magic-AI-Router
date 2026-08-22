@@ -63,15 +63,15 @@ class AsyncRuntime:
         stop_event = threading.Event()
         with self._lock:
             if self._state not in (_STOPPED, _FAILED):
-                with self._lock:
-                    pass
+                # threading.Lock 非可重入：此处绝不能再 acquire（#45 曾因
+                # 残留的嵌套 with 自死锁，冻结全部属性读）。
                 self._error = f"状态 {self._state} 不可启动"
                 return False
             self._generation += 1
             generation = self._generation
             self._stop_event = stop_event
             self._state = _STARTING
-            self._error = "" if self._state == _STARTING else self._error
+            self._error = ""
 
         def worker():
             loop = asyncio.new_event_loop()
