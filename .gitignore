@@ -32,6 +32,9 @@ tools/codemap/.venv/
 .claude/hooks/tests/test-scan-secrets.sh
 .claude/hooks/tests/test-secret-pattern-parity.sh
 logs/
+# Docker 卷实时数据（suanpan.yaml 可能含 API key、magic-proxy.json 含本地
+# token）——本机调试产物，泄密风险，永不入库
+docker/data/
 .coverage
 .playwright-mcp/
 .pytest_cache/
