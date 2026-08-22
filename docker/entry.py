@@ -136,8 +136,13 @@ def run_serve() -> int:
         # web 修复后经 on_sp_saved 热重载拉起。
         print(f"网关启动失败：{runner.error[:200]}", file=sys.stderr)
     # 配置页面与网关同容器、同 token——config-ui 失败不阻塞网关（best-effort）
+    # 保存回调须能拉起已停网关：reload() 对 stopped 是 no-op（真实现
+    # 语义），网关首启失败后 web 修复的闭环靠这里补 start()
+    def _on_sp_saved():
+        runner.reload() if runner.running else runner.start()
+
     cfg = make_config_server(paths["mp"], paths["sp"],
-                             on_sp_saved=runner.reload)
+                             on_sp_saved=_on_sp_saved)
     ok = cfg.start()
     if ok:
         print(f"配置页面: {cfg.url}  Bearer token: {cfg.token}", flush=True)

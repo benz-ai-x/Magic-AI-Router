@@ -674,16 +674,18 @@ class TestServeGatewayStartFailure:
         容器保活——配置页正是修复坏配置的路径。"""
         monkeypatch.setenv("SUANPAN_DATA_DIR", str(tmp_path))
         monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "s.json"))
-        started = {"cfg": 0}
+        started = {"cfg": 0, "gw": 0}
+        captured = {}
 
         class FakeRunner:
             error = "ValidationError: rules must be a list"
             def __init__(self, bind_host=None):
                 pass
             def start(self):
-                return False
+                started["gw"] += 1
+                return started["gw"] > 1  # 首启失败；修复配置后再启成功
             def reload(self):
-                return True
+                return True  # reload 对已停网关是 no-op（真实现语义）
             def stop(self):
                 pass
 
@@ -695,9 +697,12 @@ class TestServeGatewayStartFailure:
             def stop(self):
                 pass
 
+        def fake_make(mp, sp, on_sp_saved=None, port=9528):
+            captured["on_sp_saved"] = on_sp_saved
+            return FakeCfgSrv()
+
         monkeypatch.setattr(entry, "SuanpanRuntime", FakeRunner)
-        monkeypatch.setattr(entry, "make_config_server",
-                            lambda *a, **kw: FakeCfgSrv())
+        monkeypatch.setattr(entry, "make_config_server", fake_make)
         import time as _time
         monkeypatch.setattr(_time, "sleep",
                             lambda s: (_ for _ in ()).throw(KeyboardInterrupt))
@@ -707,4 +712,9 @@ class TestServeGatewayStartFailure:
         assert "网关启动失败" in err
         assert "rules must be a list" in err
         assert started["cfg"] == 1, "配置页必须照常启动（修复路径）"
+        # 修复闭环：web 保存后 on_sp_saved 必须能把已停网关拉起
+        # （reload() 对 stopped 是 no-op——见 SuanpanRuntime.reload）
+        assert callable(captured["on_sp_saved"])
+        captured["on_sp_saved"]()
+        assert started["gw"] == 2, "on_sp_saved 须对未运行网关走 start()"
 
