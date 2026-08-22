@@ -514,8 +514,10 @@ class TestRunServeIntegration:
             def __init__(self, bind_host=None):
                 captured["bind_host"] = bind_host
                 self.reload_called = 0
+                self.running = False
 
             def start(self):
+                self.running = True
                 return True
 
             def reload(self):
@@ -680,10 +682,11 @@ class TestServeGatewayStartFailure:
         class FakeRunner:
             error = "ValidationError: rules must be a list"
             def __init__(self, bind_host=None):
-                pass
+                self.running = False
             def start(self):
                 started["gw"] += 1
-                return started["gw"] > 1  # 首启失败；修复配置后再启成功
+                self.running = started["gw"] > 1  # 首启失败；修复后再启成功
+                return self.running
             def reload(self):
                 return True  # reload 对已停网关是 no-op（真实现语义）
             def stop(self):
