@@ -373,13 +373,20 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class ConfigServer:
-    """Background HTTP server for the config UI."""
+    """Background HTTP server for the config UI.
 
-    def __init__(self, on_sp_saved=None, port=CONFIG_PORT, capture_state=None):
+    bind_host / token 是构造参数（Docker 适配的 seam）：默认绑
+    127.0.0.1 + 自造随机 token（macOS 行为）；容器形态传
+    bind_host="0.0.0.0" + 配置卷里的固定 token。
+    """
+
+    def __init__(self, on_sp_saved=None, port=CONFIG_PORT, capture_state=None,
+                 bind_host="127.0.0.1", token=None):
         self._port = port
+        self._bind_host = bind_host
         self._server = None
         self._thread = None
-        self._token = secrets.token_hex(16)
+        self._token = token if token is not None else secrets.token_hex(16)
         self._on_sp_saved = on_sp_saved
         # Optional getter → bool ("capture mode actually running now");
         # injected by app.py, stubbed in tests. None ⇒ /api/state reports False.
@@ -403,7 +410,7 @@ class ConfigServer:
             return True
         try:
             self._server = _ThreadingHTTPServer(
-                ("127.0.0.1", self._port), _Handler,
+                (self._bind_host, self._port), _Handler,
                 expected_token=self._token,
                 on_sp_saved=self._on_sp_saved,
                 capture_state_fn=self._capture_state)

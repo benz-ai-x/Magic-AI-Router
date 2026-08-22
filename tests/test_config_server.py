@@ -800,3 +800,42 @@ class TestHeaderOnlyAuth(unittest.TestCase):
         resp.read()
         conn.close()
         self.assertEqual(resp.status, 401)
+
+
+class TestConfigServerParameterization(unittest.TestCase):
+    """ConfigServer 的 bind_host / token 构造参数（Docker 适配的 seam）。
+
+    默认值保持 macOS 行为：绑 127.0.0.1 + 自造随机 token。
+    """
+
+    def tearDown(self):
+        srv = getattr(self, "srv", None)
+        if srv is not None:
+            srv.stop()
+
+    def _start(self, **kwargs):
+        self.srv = config_server.ConfigServer(port=0, **kwargs)
+        self.assertTrue(self.srv.start())
+        return self.srv._server.server_address[1]
+
+    def test_defaults_bind_loopback_and_generate_token(self):
+        port = self._start()
+        self.assertEqual(self.srv._server.server_address[0], "127.0.0.1")
+        self.assertRegex(self.srv.token, r"^[0-9a-f]{32}$")
+        status, _ = _request(port, "GET", "/api/state", token=self.srv.token)
+        self.assertEqual(status, 200)
+
+    def test_custom_bind_host_honored(self):
+        # 0.0.0.0 即 Docker 实取值：绑定后 loopback 仍可达。
+        port = self._start(bind_host="0.0.0.0")
+        self.assertEqual(self.srv._server.server_address[0], "0.0.0.0")
+        status, _ = _request(port, "GET", "/api/state", token=self.srv.token)
+        self.assertEqual(status, 200)
+
+    def test_custom_token_used_for_auth(self):
+        port = self._start(token="fixed-token")
+        self.assertEqual(self.srv.token, "fixed-token")
+        status, _ = _request(port, "GET", "/api/state", token="fixed-token")
+        self.assertEqual(status, 200)
+        status, _ = _request(port, "GET", "/api/state")
+        self.assertEqual(status, 401)
