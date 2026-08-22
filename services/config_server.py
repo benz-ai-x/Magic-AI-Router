@@ -273,6 +273,16 @@ class _Handler(BaseHTTPRequestHandler):
                 config_store.sp_load_raw(), usage_range))
         elif path == "/api/cc-default-roles":
             self._json(200, claude_code_setup.default_roles())
+        elif path == "/api/provider-templates":
+            # #51：UI 供应商模板单一真源 = PROVIDER_REGISTRY（Python 侧）
+            from mpconf.provider_auth import PROVIDER_REGISTRY
+            templates = [
+                {"id": name, "label": entry["label"],
+                 "base_url": entry["base_url"],
+                 "anthropic_native": entry["anthropic_native"]}
+                for name, entry in PROVIDER_REGISTRY.items()]
+            templates.append({"id": "custom", "label": "自定义"})
+            self._json(200, templates)
         else:
             self._json(404, {"error": "not found"})
 

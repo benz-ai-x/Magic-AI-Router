@@ -107,3 +107,35 @@ class TestGatewayKeyPassthrough(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProviderRegistry(unittest.TestCase):
+    """#51：供应商知识单一注册表——余额端点与 UI 模板共消费。新增一家
+    供应商只改此处（+ 抓包 addon 自持表，见注册表 docstring 的隔离
+    rationale）。"""
+
+    def test_registry_covers_balance_providers(self):
+        from mpconf.provider_auth import PROVIDER_REGISTRY
+        for name in ("deepseek", "glm", "kimi"):
+            self.assertIn(name, PROVIDER_REGISTRY)
+            entry = PROVIDER_REGISTRY[name]
+            self.assertTrue(entry["hosts"], f"{name} 缺 host 片段")
+            self.assertTrue(entry["balance_apis"], f"{name} 缺余额端点")
+            for url, style, label in entry["balance_apis"]:
+                self.assertIn(style, ("bearer", "raw"))
+                self.assertTrue(url.startswith("https://"))
+
+    def test_registry_drives_ui_template_fields(self):
+        from mpconf.provider_auth import PROVIDER_REGISTRY
+        for name, entry in PROVIDER_REGISTRY.items():
+            self.assertIn("label", entry)
+            self.assertIn("base_url", entry)
+            self.assertIsInstance(entry["anthropic_native"], bool)
+
+    def test_balance_matching_uses_registry_hosts(self):
+        from mpconf.provider_auth import PROVIDER_REGISTRY
+        # 注册表 host 片段能在 base_url 里命中（与旧 PROVIDER_BALANCE_APIS
+        # 同语义：子串匹配）
+        for name, entry in PROVIDER_REGISTRY.items():
+            self.assertIn(entry["hosts"][0], entry["base_url"])
+
