@@ -3,7 +3,7 @@
 All notable changes to Magic-AI-Router are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [v0.6.1] — 2026-08-22 — 套餐三窗口配额 + 文档整固
 
 ### Added
 - **余额速览三窗口配额（#41）**：GLM/Kimi 等套餐类供应商统一展示 5小时/每周/每月。月度「两者结合」——API 有月度（Kimi totalQuota）用供应商口径，否则聚合本网关 usage.jsonl（UI 标注「每月（网关）· N 次」，无本地数据补 0 行）；GLM Max 的 TIME_LIMIT 工具时长配额标注「每月·工具」，不抑制本地 token 行。GLM 配额显示 nextResetTime 重置时间，所有 reset 统一转 CST。`fetch_usage` 新增 `month` 范围（CST 自然月），`/api/usage?range=month` 随之可用。
