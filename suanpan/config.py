@@ -146,17 +146,6 @@ def dump_config(config: AppConfig) -> str:
 # 保存端据此保留旧 key。掩码字符（•）不再是任何一层的判断依据。
 
 
-def _restore_key(new_val, old_val, keep):
-    """Resolve the key to persist.
-
-    ``keep`` (the UI's ``api_key_set`` flag) true + no new value → keep the
-    existing key. Otherwise use the new value (empty/None clears it).
-    """
-    if keep and not new_val:
-        return old_val
-    return new_val or None
-
-
 from mpconf.config import IdentityMigrationError  # noqa: E402
 
 
@@ -220,38 +209,3 @@ def load_config_masked(path: Path | str) -> dict:
     return cfg
 
 
-def save_config_dict(data: dict, path: Path | str) -> tuple[bool, str | None]:
-    """Validate and write a config dict to YAML.
-
-    Restores masked API keys from the existing file before writing.
-    Returns (ok, error_msg).
-    """
-    old = load_config_raw(path)
-    old_by_id = {p.get("id"): p
-                 for p in old.get("providers", {}).values()
-                 if isinstance(p, dict) and p.get("id")}
-    old_by_name = old.get("providers", {})
-    for name, p in data.get("providers", {}).items():
-        # id 命中 → 同一实体（重命名后 key 仍恢复）。id 未命中时仅当旧档
-        # 无 id（legacy）才按名回退——有 id 而不同 ≠ 同一实体，绝不串接。
-        old_p = old_by_id.get(p.get("id"))
-        if old_p is None:
-            legacy = old_by_name.get(name, {})
-            if isinstance(legacy, dict) and not legacy.get("id"):
-                old_p = legacy
-        p["api_key"] = _restore_key(
-            p.get("api_key"),
-            (old_p or {}).get("api_key"),
-            bool(p.pop("api_key_set", False)))
-    data["api_key"] = _restore_key(
-        data.get("api_key"), old.get("api_key"),
-        bool(data.pop("api_key_set", False)))
-    try:
-        config = AppConfig.model_validate(data)
-    except Exception as e:
-        return False, f"Suanpan 配置校验失败: {e}"
-    # Atomic write (0600 — the file holds API keys) with pre-write .bak backup.
-    from mpconf.config_store import atomic_write
-    if not atomic_write(str(path), dump_config(config), backup=True):
-        return False, "配置文件写入失败（详见日志）"
-    return True, None

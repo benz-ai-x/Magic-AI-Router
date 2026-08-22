@@ -248,7 +248,7 @@ class TestPutForbidden(unittest.TestCase):
         self.assertEqual(status, 401)
 
 
-# ── config_server: sp_save failure + on_sp_saved (lines 192, 194-197) ─
+# ── config_server: PUT 校验失败 + on_sp_saved 回调次序 ─
 
 class TestPutSpSaveAndCallback(unittest.TestCase):
     def setUp(self):
@@ -259,7 +259,7 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
         self.server.stop()
 
     def test_prepare_failure_appends_error(self):
-        """issue #6：prepare 校验失败 → 422（不再走 sp_save 旧缝）。"""
+        """issue #6：prepare 校验失败 → 422。"""
         from mpconf.config_state import CommitPlan
         with patch.object(config_server, "ConfigStateStore") as store_cls:
             store_cls.return_value.prepare.return_value = CommitPlan(
@@ -292,9 +292,7 @@ class TestPutSpSaveAndCallback(unittest.TestCase):
     def test_on_sp_saved_exception_swallowed(self):
         """Lines 196-197: a raising on_sp_saved callback must not bubble up."""
         callback = MagicMock(side_effect=RuntimeError("boom"))
-        with patch.object(config_server, "ConfigStateStore"), \
-             patch.object(config_server.config_store, "sp_save",
-                          return_value=(True, None)):
+        with patch.object(config_server, "ConfigStateStore"):
             self.server._server.on_sp_saved = callback
             try:
                 status, data = _request(

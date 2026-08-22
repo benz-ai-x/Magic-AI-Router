@@ -397,18 +397,18 @@ class TestFetchModelsEndpoint(unittest.TestCase):
 class TestRestoreKey(unittest.TestCase):
     def test_untouched_key_restored(self):
         # api_key_set=True + no new value → keep the existing key.
-        from suanpan.config import _restore_key
+        from mpconf.provider_auth import restore_masked_key as _restore_key
         result = _restore_key(None, "original-key", keep=True)
         self.assertEqual(result, "original-key")
 
     def test_new_key_kept(self):
-        from suanpan.config import _restore_key
+        from mpconf.provider_auth import restore_masked_key as _restore_key
         result = _restore_key("sk-newkey123", "old-key", keep=True)
         self.assertEqual(result, "sk-newkey123")
 
     def test_cleared_when_not_flagged(self):
         # api_key_set=False + no new value → the key is cleared.
-        from suanpan.config import _restore_key
+        from mpconf.provider_auth import restore_masked_key as _restore_key
         result = _restore_key(None, "old-key", keep=False)
         self.assertIsNone(result)
 

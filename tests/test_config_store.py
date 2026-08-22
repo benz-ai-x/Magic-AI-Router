@@ -3,7 +3,8 @@
 Seams under test:
 - PATHS registry: read at call time, single redirect point for tests
 - atomic_write: mkstemp + chmod + os.replace, optional pre-write backup
-- sp_load/sp_save/sp_load_raw/sp_load_masked: orchestration over suanpan.config
+- sp_load/sp_load_raw/sp_load_masked: orchestration over suanpan.config
+- （#46 后 sp 写径唯一归宿 ConfigStateStore——save 测试随 sp_save 删除）
 - suanpan_listen: validated listen with schema-default fallback chain
 """
 import os
@@ -73,58 +74,56 @@ class TestAtomicWrite(unittest.TestCase):
 
 
 class TestSpOrchestration(unittest.TestCase):
-    def test_save_and_load_round_trip(self):
+    """sp 写径经 ConfigStateStore（#46 后 sp_save 删除）；此处钉
+    store 落盘 → sp_load/sp_load_raw/sp_load_masked 的读取编排。"""
+
+    def _commit(self, path, sp):
+        from mpconf.config_state import ConfigStateStore
+        store = ConfigStateStore(sp_path=path)
+        plan = store.prepare(sp=sp)
+        assert plan.ok, plan.errors
+        result = store.commit(plan)
+        assert result.ok, result.errors
+
+    def test_commit_and_load_round_trip(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "sp.yaml")
-            ok, err = config_store.sp_save(
-                {"providers": {"A": {"base_url": "http://a.example"}},
-                 "router": {}, "rules": []}, path=p)
-            self.assertTrue(ok, err)
+            self._commit(p, {"providers": {"A": {
+                "base_url": "http://a.example"}}})
             cfg = config_store.sp_load(path=p)
             self.assertIn("A", cfg.providers)
             # 0600 — the YAML holds API keys
             self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600)
 
-    def test_save_validation_error(self):
+    def test_prepare_rejects_ghost_route_writes_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "sp.yaml")
-            ok, err = config_store.sp_save(
-                {"providers": {}, "router": {"default": "ghost/m"}, "rules": []},
-                path=p)
-            self.assertFalse(ok)
-            self.assertIn("ghost", err)
+            from mpconf.config_state import ConfigStateStore
+            plan = ConfigStateStore(sp_path=p).prepare(
+                sp={"providers": {}, "router": {"default": "ghost/m"}})
+            self.assertFalse(plan.ok)
+            self.assertTrue(any("ghost" in e for e in plan.errors))
             self.assertFalse(os.path.exists(p))
 
     def test_load_raw_and_masked(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "sp.yaml")
-            config_store.sp_save(
-                {"providers": {"A": {"base_url": "http://a.example",
-                                      "api_key": "sk-1234567890"}},
-                 "router": {}, "rules": []}, path=p)
+            self._commit(p, {"providers": {"A": {
+                "base_url": "http://a.example", "api_key": "sk-1234567890"}}})
             raw = config_store.sp_load_raw(path=p)
             self.assertEqual(raw["providers"]["A"]["api_key"], "sk-1234567890")
             masked = config_store.sp_load_masked(path=p)
             self.assertIsNone(masked["providers"]["A"]["api_key"])
             self.assertTrue(masked["providers"]["A"]["api_key_set"])
 
-    def test_sp_save_defaults_to_registry_path(self):
-        with tempfile.TemporaryDirectory() as d:
-            p = os.path.join(d, "sp.yaml")
-            with patch.dict(config_store.PATHS, {"sp": p}):
-                ok, _ = config_store.sp_save(
-                    {"providers": {}, "router": {}, "rules": []})
-            self.assertTrue(ok)
-            self.assertTrue(os.path.exists(p))
-
 
 class TestSuanpanListen(unittest.TestCase):
     def test_reads_validated_listen(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "sp.yaml")
-            config_store.sp_save(
-                {"listen": "127.0.0.1:9999", "providers": {}, "router": {},
-                 "rules": []}, path=p)
+            # 直接落盘（读侧兼容旧 listen 字符串才是本测的对象）
+            with open(p, "w") as f:
+                f.write('listen: "127.0.0.1:9999"\nproviders: {}\n')
             self.assertEqual(config_store.suanpan_listen(path=p), "127.0.0.1:9999")
 
     def test_missing_file_falls_back_to_schema_default(self):
@@ -154,11 +153,8 @@ class TestSpImportErrorTolerance(unittest.TestCase):
         with patch.dict(sys.modules, {"suanpan.config": None}):
             self.assertEqual(config_store.sp_load_masked(), {})
 
-    def test_save_returns_error(self):
-        with patch.dict(sys.modules, {"suanpan.config": None}):
-            ok, err = config_store.sp_save({})
-        self.assertFalse(ok)
-        self.assertIn("pydantic", err)
+    # sp_save 的 ImportError 容错随函数删除（#46）：写径唯一归宿
+    # ConfigStateStore，其 pydantic 缺席行为在 test_config_state 钉住
 
 
 if __name__ == "__main__":

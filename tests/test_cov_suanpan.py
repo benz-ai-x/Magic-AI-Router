@@ -17,7 +17,6 @@ from suanpan.config import (
     AppConfig,
     ProviderConfig,
     load_config_raw,
-    save_config_dict,
 )
 from suanpan.middleware import BodyLimitMiddleware
 from suanpan.router import strip_marker
@@ -148,29 +147,6 @@ class TestLoadConfigRawCorruptYaml(unittest.TestCase):
             self.assertEqual(result, {})
         finally:
             Path(path).unlink(missing_ok=True)
-
-
-class TestSaveConfigDictWriteFailure(unittest.TestCase):
-    """Line 198: atomic_write returning False yields a failure result."""
-
-    def test_atomic_write_failure_returns_error(self):
-        valid = {
-            "providers": {
-                "p": {
-                    "base_url": "http://x",
-                    "api_key": "k",
-                    "auth_header": "x-api-key",
-                },
-            },
-            "router": {"default": "p/m"},
-        }
-        with patch("mpconf.config_store.atomic_write", return_value=False):
-            ok, err = save_config_dict(valid, "/tmp/nonexistent_path/test_sp.yaml")
-        self.assertFalse(ok)
-        self.assertIn("写入失败", err)
-
-
-# ── suanpan/router.py: 103-106 ──────────────────────────────────────
 
 
 class TestStripMarkerListSystem(unittest.TestCase):

@@ -83,8 +83,7 @@ class TestConfigServerRoutes(unittest.TestCase):
         import urllib.request
         url = f"http://127.0.0.1:{self._port}/api/state"
         from mpconf.config_state import CommitPlan, SaveResult
-        with patch("services.config_server.ConfigStateStore") as store_cls, \
-             patch("mpconf.config_store.sp_save", return_value=(True, None)):
+        with patch("services.config_server.ConfigStateStore") as store_cls:
             store_cls.return_value.prepare.return_value = CommitPlan(
                 True, [], {"tunnels": []}, {"providers": {}})
             store_cls.return_value.commit.return_value = SaveResult(True, None, [])

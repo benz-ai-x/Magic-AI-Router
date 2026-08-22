@@ -74,7 +74,7 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 ### 配置事务（ConfigStateStore）
 
-配置持久化的唯一事务边界（`mpconf/config_state.py`）：`load()` 区分 missing/valid/invalid/io_error（损坏不再折叠成空）；`prepare()` 在首次 mutation 前完成数值/URL/跨引用全量校验并派生 Keychain 变更计划（密码剥离出候选）；`commit()` 按序执行 journal（载荷内嵌）→ MP → SP → Keychain → 清 journal → 回调（`on_sp_saved` 只在完整提交后）；`recover()` 在启动时幂等重放 journal 补齐跨文件崩溃。invalid 主文件不覆盖最后已知良好的 `.bak`；首创建与保存同一 0600/0700 路径。
+配置持久化的唯一事务边界（`mpconf/config_state.py`）：`load()` 区分 missing/valid/invalid/io_error（损坏不再折叠成空）；`prepare()` 在首次 mutation 前完成数值/URL/跨引用全量校验并派生 Keychain 变更计划（密码剥离出候选）；`commit()` 按序执行 journal（载荷内嵌）→ MP → SP → Keychain → 清 journal → 回调（`on_sp_saved` 只在完整提交后）；`recover()` 在启动时幂等重放 journal 补齐跨文件崩溃；`update_mp(mutate)` 是菜单开关的唯一写径——写前读新（磁盘真相）→ 单字段变更 → 同一事务管线，内存副本永不整文件覆写磁盘。invalid 主文件不覆盖最后已知良好的 `.bak`；首创建与保存同一 0600/0700 路径。
 
 ### 配置存储（ConfigStore）
 

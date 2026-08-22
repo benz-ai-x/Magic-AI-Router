@@ -13,6 +13,8 @@ from typing import NamedTuple
 
 import yaml
 
+from mpconf.provider_auth import restore_masked_key
+
 logger = logging.getLogger("magic-proxy.config_state")
 
 
@@ -65,6 +67,17 @@ _BODY_LIMIT_MAX = 512        # MB
 _REQUEST_TIMEOUT_MAX = 86400
 
 
+def _schema_error_lines(exc) -> list:
+    """pydantic ValidationError → 中文可读行（字段路径: 消息）。"""
+    lines = []
+    for item in getattr(exc, "errors", lambda: [])():
+        loc = ".".join(str(x) for x in item.get("loc", ()))
+        lines.append(f"schema 校验失败 {loc or '配置'}: {item.get('msg', exc)}")
+    if not lines:
+        lines.append(f"schema 校验失败: {exc}")
+    return lines
+
+
 def _valid_http_origin(url) -> bool:
     if not isinstance(url, str):
         return False
@@ -112,24 +125,46 @@ class ConfigStateStore:
             if lp is not None and (not isinstance(lp, int)
                                    or not 1 <= lp <= _SP_PORT_MAX):
                 errors.append("listen_port 端口无效（须 1..65535）")
-            server = sp_c.get("server") or {}
-            timeout = server.get("request_timeout_s")
+            # 顶层字段（#46 T1b：旧代码查不存在的 server 键——死校验分支，
+            # 顶层非法值静默落盘）。schema 见 suanpan/config.py AppConfig。
+            timeout = sp_c.get("request_timeout_s")
             if timeout is not None and (not isinstance(timeout, int)
                                         or not 0 < timeout <= _REQUEST_TIMEOUT_MAX):
                 errors.append(f"request_timeout_s 无效（须 >0 且 ≤{_REQUEST_TIMEOUT_MAX}）")
-            body_limit = server.get("body_limit_mb")
+            body_limit = sp_c.get("body_limit_mb")
             if body_limit is not None and (not isinstance(body_limit, int)
                                            or not 0 < body_limit <= _BODY_LIMIT_MAX):
                 errors.append(f"body_limit_mb 无效（须 >0 且 ≤{_BODY_LIMIT_MAX}）")
+            # pydantic schema 校验并入事务路径（#46 T1b）：旧径 commit 只有
+            # yaml.safe_dump，schema 非法但手检放行的配置会直写磁盘、
+            # 下次启动 load_config 才炸。deps 缺席时跳过（ADR-000
+            # lazy-import：无网关依赖的宿主仍可保存 mp）。
+            try:
+                from suanpan.config import AppConfig as _SpSchema
+            except ImportError:
+                _SpSchema = None
+            if _SpSchema is not None:
+                try:
+                    _SpSchema.model_validate(sp_c)
+                except Exception as _exc:
+                    errors.extend(_schema_error_lines(_exc))
             providers = sp_c.get("providers") or {}
             for name, p in providers.items():
                 if not _valid_http_origin((p or {}).get("base_url", "")):
                     errors.append(f"供应商 {name} 的 base_url 必须是合法 http(s) origin")
             routes = set()
-            for r in sp_c.get("rules") or []:
+            rules = sp_c.get("rules")
+            if rules is not None and not isinstance(rules, list):
+                errors.append("rules 必须是列表")
+                rules = []
+            for r in rules or []:
                 target = (r or {}).get("route_to", "")
                 routes.add(str(target).split("/", 1)[0])
-            routes.add(str((sp_c.get("router") or {}).get("default") or "")
+            router = sp_c.get("router")
+            if router is not None and not isinstance(router, dict):
+                errors.append("router 必须是映射")
+                router = {}
+            routes.add(str((router or {}).get("default") or "")
                        .split("/", 1)[0])
             routes.discard("")
             for prov in sorted(routes):
@@ -150,8 +185,9 @@ class ConfigStateStore:
             if sp_c.get("_load_error"):
                 return CommitPlan(False, [
                     f"配置装载失败，已阻止保存以防覆盖：{sp_c['_load_error']}"])
-            # 掩码 key 恢复（原 save_config_dict 语义——live PUT 唯一保存
-            # 路径在此）：按 id 匹配旧档恢复真实 key；legacy 无 id 档按名
+            # 掩码 key 恢复（keep 语义单一归宿 provider_auth
+            # .restore_masked_key）：按 id 匹配旧档恢复真实 key；legacy 无
+            # id 档按名
             sp_c = self._restore_masked_sp_keys(sp_c)
         kc_sets, kc_dels = [], []
         if mp_c is not None:
@@ -235,12 +271,12 @@ class ConfigStateStore:
                     old_p = legacy
             keep = bool(p.pop("api_key_set", False))
             new_key = p.get("api_key")
-            p["api_key"] = (old_p or {}).get("api_key") if (keep and not new_key) \
-                else (new_key or None)
+            p["api_key"] = restore_masked_key(
+                new_key, (old_p or {}).get("api_key"), keep)
         top_keep = bool(sp_c.pop("api_key_set", False))
         top_new = sp_c.get("api_key")
-        sp_c["api_key"] = old.get("api_key") if (top_keep and not top_new) \
-            else (top_new or None)
+        sp_c["api_key"] = restore_masked_key(
+            top_new, old.get("api_key"), top_keep)
         return sp_c
 
     def _read_mp_current(self) -> dict | None:
@@ -376,5 +412,25 @@ class ConfigStateStore:
         except OSError:
             return False
         return True
+
+    def update_mp(self, mutate) -> SaveResult:
+        """菜单开关的唯一写径（#46 T1a/d）：写前读新 → mutate → 事务写。
+
+        内存副本永不整文件覆写磁盘——stale 副本丢更新的根因即此。读新
+        经 load_config（含迁移；IdentityMigrationError 原样上抛，由调用
+        方决定弹窗），缺文件时从 merge 默认起步；随后走与 UI 保存完全
+        相同的 prepare/commit 管线（校验 + journal + 0600 原子写）。
+        """
+        from mpconf.config import load_config, merge_config
+        cfg = load_config(self.mp_path)
+        if cfg is None:
+            cfg = merge_config(None)
+        mutated = mutate(cfg)
+        if mutated is None:
+            mutated = cfg
+        plan = self.prepare(mp=mutated)
+        if not plan.ok:
+            return SaveResult(False, "validate", plan.errors)
+        return self.commit(plan)
 
 
