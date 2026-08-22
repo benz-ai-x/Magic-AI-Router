@@ -22,6 +22,51 @@ HOP_HEADERS = frozenset({
     "x-api-key",
 })
 
+# ── 供应商知识注册表（#51）───────────────────────────────────────────
+# 「新增一家供应商要改哪里」的单一答案（余额 API 与 UI 模板共消费）。
+# 字段：label（UI 显示名）/ hosts（base_url 子串匹配片段，余额侧用）/
+# base_url + anthropic_native（UI 模板种子，兼容 Anthropic 原生 body
+# 的后端才置 True）/ balance_apis（[(url, auth-style, label)]，无则空）。
+#
+# 刻意不在注册表的消费方：
+# - capture/ai_capture_addon.identify()——在 mitmdump 子进程内独立运行
+#   （零仓内 import 是资源契约的一部分），且其知识是抓包专属的端点
+#   变体（chat/completions vs responses 等），与账户/路由知识不同域。
+# - suanpan/compat.normalize_body——已由 anthropic_native 旗标驱动
+#   （配置态数据，非供应商名硬编码）。
+PROVIDER_REGISTRY = {
+    "deepseek": {
+        "label": "DeepSeek",
+        "hosts": ["api.deepseek.com"],
+        "base_url": "https://api.deepseek.com",
+        "anthropic_native": False,
+        "balance_apis": [
+            ("https://api.deepseek.com/user/balance", "bearer", "余额"),
+        ],
+    },
+    "glm": {
+        "label": "GLM",
+        "hosts": ["bigmodel.cn"],
+        "base_url": "https://open.bigmodel.cn/api/anthropic",
+        "anthropic_native": True,
+        "balance_apis": [
+            ("https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+             "raw", "Coding Plan"),
+            ("https://www.bigmodel.cn/api/biz/account/query-customer-account-report",
+             "raw", "账户余额"),
+        ],
+    },
+    "kimi": {
+        "label": "KIMI",
+        "hosts": ["api.kimi.com"],
+        "base_url": "https://api.kimi.com/coding",
+        "anthropic_native": True,
+        "balance_apis": [
+            ("https://api.kimi.com/coding/v1/usages", "bearer", "Coding Plan"),
+        ],
+    },
+}
+
 def restore_masked_key(new_val, old_val, keep):
     """掩码保存契约的 key 解析（#46 自 suanpan/config._restore_key 收编；
     唯一消费方 ConfigStateStore._restore_masked_sp_keys，suanpan 侧只掩

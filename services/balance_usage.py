@@ -17,28 +17,26 @@ from services.authenticated_http import (
     AuthRedirectError,
     AuthenticatedHttpClient,
 )
-
 from datetime import datetime, timedelta, timezone
 
-from mpconf.provider_auth import build_outbound_headers, resolve_api_key
+from mpconf.provider_auth import (
+    PROVIDER_REGISTRY as _REGISTRY,
+    build_outbound_headers,
+    resolve_api_key,
+)
 
 _BALANCE_CLIENT = AuthenticatedHttpClient(timeout=10)
 
 logger = logging.getLogger("magic-proxy.balance_usage")
 
-# Provider → balance-API table: (host fragment, [(url, auth-style, label), ...]).
-# auth-style "bearer" → `Authorization: Bearer <key>`; "raw" → bare key.
+# 供应商 → 余额 API 的单一真源是 mpconf.provider_auth.PROVIDER_REGISTRY
+# （#51：与 UI 模板共消费——新增供应商只改注册表一处）。
+# (host 片段, [(url, auth-style, label), ...]) ——注册表视图
 PROVIDER_BALANCE_APIS = [
-    ("api.deepseek.com", [
-        ("https://api.deepseek.com/user/balance", "bearer", "余额"),
-    ]),
-    ("bigmodel.cn", [
-        ("https://open.bigmodel.cn/api/monitor/usage/quota/limit", "raw", "Coding Plan"),
-        ("https://www.bigmodel.cn/api/biz/account/query-customer-account-report", "raw", "账户余额"),
-    ]),
-    ("api.kimi.com", [
-        ("https://api.kimi.com/coding/v1/usages", "bearer", "Coding Plan"),
-    ]),
+    (frag, entry["balance_apis"])
+    for entry in _REGISTRY.values()
+    for frag in entry["hosts"]
+    if entry["balance_apis"]
 ]
 
 _MONTHLY_PERIOD = "每月"  # canonical label; fetch_balance suppression matches it exactly

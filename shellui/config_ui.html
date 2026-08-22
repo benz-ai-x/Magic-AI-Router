@@ -494,12 +494,13 @@ function providerCacheHint(provider,usage){
   return'检查该供应商是否开启 Anthropic 原生模式';
 }
 // #3 供应商快速模板：只填 base_url 与协议模式，凭证/模型不动。
-const PROVIDER_TEMPLATES=[
-  {id:'glm',label:'GLM',base_url:'https://open.bigmodel.cn/api/anthropic',anthropic_native:true},
-  {id:'kimi',label:'KIMI',base_url:'https://api.kimi.com/coding',anthropic_native:true},
-  {id:'deepseek',label:'DeepSeek',base_url:'https://api.deepseek.com',anthropic_native:false},
-  {id:'custom',label:'自定义'},
-];
+// #51：模板单一真源在 Python（mpconf.provider_auth.PROVIDER_REGISTRY，
+// 经 /api/provider-templates 提供）——JS 不再平行编码 base_url/
+// anthropic_native；custom 恒在（注册表之外的自由输入）。
+let PROVIDER_TEMPLATES=[{id:'custom',label:'自定义'}];
+function setProviderTemplates(tpl){
+  if(Array.isArray(tpl)&&tpl.length)PROVIDER_TEMPLATES=tpl;
+}
 function applyProviderTemplate(p,templateId){
   const t=PROVIDER_TEMPLATES.find(x=>x.id===templateId);
   if(!t||!t.base_url)return p;  // 自定义/未知模板 = 保持现状
@@ -900,6 +901,11 @@ function scheduleViewRefresh(view,refresh){
 async function load(){
   try{const r=await fetch(API,{headers:apiHeaders(null)});S=normalizeState(await r.json());}
   catch(e){document.getElementById('viewport').innerHTML='<div class="view is-active" style="padding:40px;color:var(--muted)">加载失败：'+esc(e.message)+'</div>';return;}
+  // #51：模板装填 best-effort，不阻塞主状态（fetch 属 L2）
+  fetch('/api/provider-templates',{headers:apiHeaders(null)})
+    .then(r=>r.ok?r.json():null)
+    .then(tpl=>{if(tpl)setProviderTemplates(tpl);})
+    .catch(()=>{});
   try{const lv=localStorage.getItem('mar.lastView');if(lv&&VIEWS[lv])activeView=lv;}catch(e){}
   activeTunnel=Math.min(S.mp.current_tunnel||0,Math.max(0,S.mp.tunnels.length-1));
   activeProvider=Object.keys(S.sp.providers)[0]||'';credModeOverride='';

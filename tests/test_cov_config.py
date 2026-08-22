@@ -424,3 +424,30 @@ class TestCaptureControllerProperties(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProviderTemplatesEndpoint(unittest.TestCase):
+    """#51：UI 供应商模板单一真源 = PROVIDER_REGISTRY——JS 侧不再平行
+    编码 base_url/anthropic_native。"""
+
+    def test_templates_served_from_registry(self):
+        self.server, self.port = _start_server()
+        try:
+            status, data = _request(
+                self.port, "GET", "/api/provider-templates",
+                token=self.server._token)
+            self.assertEqual(status, 200)
+            import json as _json
+            tpl = _json.loads(data)
+            ids = [t["id"] for t in tpl]
+            self.assertIn("deepseek", ids)
+            self.assertIn("glm", ids)
+            self.assertIn("kimi", ids)
+            self.assertIn("custom", ids)
+            glm = next(t for t in tpl if t["id"] == "glm")
+            self.assertEqual(glm["base_url"],
+                             "https://open.bigmodel.cn/api/anthropic")
+            self.assertTrue(glm["anthropic_native"])
+        finally:
+            self.server.stop()
+

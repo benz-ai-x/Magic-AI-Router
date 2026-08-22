@@ -453,23 +453,36 @@ test("validateConfig range-checks every service port, not just three", () => {
   void base;
 });
 
-// ── PROVIDER_TEMPLATES / applyProviderTemplate（#3 供应商模板）──
-test("供应商模板应用 GLM：原生端点并开启 Anthropic 原生协议", () => {
+// ── PROVIDER_TEMPLATES / applyProviderTemplate（#3 模板应用语义）──
+// #51：模板数据单一真源已移 Python（PROVIDER_REGISTRY，经
+// /api/provider-templates；端点测试在 tests/test_cov_config.py）。
+// 此处 seed 注册表形状的夹具，钉「应用」语义。
+test("供应商模板应用：原生端点并开启 Anthropic 原生协议", () => {
+  L.setProviderTemplates([
+    {id: "glm", label: "GLM", base_url: "https://open.bigmodel.cn/api/anthropic", anthropic_native: true},
+    {id: "kimi", label: "KIMI", base_url: "https://api.kimi.com/coding", anthropic_native: true},
+    {id: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com", anthropic_native: false},
+    {id: "custom", label: "自定义"},
+  ]);
   const p = L.applyProviderTemplate({}, "glm");
   assert.equal(p.base_url, "https://open.bigmodel.cn/api/anthropic");
   assert.equal(p.anthropic_native, true);
+  const k = L.applyProviderTemplate({}, "kimi");
+  assert.equal(k.base_url, "https://api.kimi.com/coding");
+  assert.equal(k.anthropic_native, true);
+  const d = L.applyProviderTemplate({}, "deepseek");
+  assert.equal(d.base_url, "https://api.deepseek.com");
+  assert.equal(d.anthropic_native, false);
 });
 
-test("供应商模板应用 KIMI：coding 端点并开启原生协议", () => {
-  const p = L.applyProviderTemplate({}, "kimi");
-  assert.equal(p.base_url, "https://api.kimi.com/coding");
-  assert.equal(p.anthropic_native, true);
-});
-
-test("供应商模板应用 DeepSeek：兼容端点并保持兼容模式", () => {
-  const p = L.applyProviderTemplate({}, "deepseek");
-  assert.equal(p.base_url, "https://api.deepseek.com");
-  assert.equal(p.anthropic_native, false);
+test("setProviderTemplates 拒绝空数组（不清空既有模板）", () => {
+  L.setProviderTemplates([]);
+  const p = L.applyProviderTemplate({}, "glm");
+  assert.equal(p.base_url, "https://open.bigmodel.cn/api/anthropic",
+               "空 seed 不得清空现有模板");
+  L.setProviderTemplates("not-an-array");
+  assert.equal(L.applyProviderTemplate({}, "glm").base_url,
+               "https://open.bigmodel.cn/api/anthropic");
 });
 
 test("自定义与未知模板不改动任何现有字段", () => {
