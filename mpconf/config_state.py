@@ -68,10 +68,10 @@ _REQUEST_TIMEOUT_MAX = 86400
 
 
 def _schema_error_lines(exc) -> list:
-    """schema 校验错误行——格式化单一归宿 suanpan.friendly_config_error。"""
-    from suanpan.config import friendly_config_error
+    """schema 校验错误行——格式化单一归宿 suanpan.friendly_config_error_lines。"""
+    from suanpan.config import friendly_config_error_lines
     return [f"schema 校验失败 {seg}"
-            for seg in friendly_config_error(exc).split("；")]
+            for seg in friendly_config_error_lines(exc)]
 
 
 def _valid_http_origin(url) -> bool:

@@ -148,22 +148,28 @@ def load_config(path: Path | str) -> AppConfig:
     return AppConfig.model_validate(raw)
 
 
-def friendly_config_error(exc: Exception) -> str:
-    """#47：配置装载错误 → 单行可定位文案（字段路径 + 消息）。
+def friendly_config_error_lines(exc: Exception) -> list:
+    """#47：配置装载错误 → 可定位行列表（字段路径 + 消息）。
 
-    pydantic ValidationError 取逐字段 ``loc: msg``；其余异常取
-    ``类型: 消息``。消费方（网关 factory 塑形 / ConfigStateStore 事务
-    校验）共用此一格式化，错误文本永不携带 secret（字段值不进消息）。
+    pydantic ValidationError 取逐字段 ``loc: msg``（pydantic v2 的 msg
+    不含字段值，无 secret 泄漏面）；其余异常取 ``类型: 消息``。返回
+    列表——消费方（网关 factory 塑形 / ConfigStateStore 事务校验）
+    各自决定 join 形态，不以分隔符做隐式协议。
     """
     items = getattr(exc, "errors", None)
     if callable(items):
         parts = []
         for it in items():
             loc = ".".join(str(x) for x in it.get("loc", ()))
-            parts.append(f"{loc or '配置'}: {it.get('msg', exc)}")
+            parts.append(f"{loc or '配置'}: {it.get('msg', '')}".rstrip(": "))
         if parts:
-            return "；".join(parts)
-    return f"{type(exc).__name__}: {exc}"
+            return parts
+    return [f"{type(exc).__name__}: {exc}"]
+
+
+def friendly_config_error(exc: Exception) -> str:
+    """单行形态（菜单栏/通知的展示契约：一行可截断）。"""
+    return "；".join(friendly_config_error_lines(exc))
 
 
 def dump_config(config: AppConfig) -> str:
