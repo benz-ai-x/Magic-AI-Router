@@ -41,7 +41,8 @@ PROVIDER_BALANCE_APIS = [
     ]),
 ]
 
-_UNIT_NAMES = {3: "5小时", 5: "每月", 6: "每周"}
+_MONTHLY_PERIOD = "每月"  # canonical label; fetch_balance suppression matches it exactly
+_UNIT_NAMES = {3: "5小时", 5: _MONTHLY_PERIOD, 6: "每周"}
 _WEEK_HOURS = 24 * 7
 _MONTH_HOURS = 24 * 30
 # Duration in hours for each GLM unit — used for ascending sort of quota windows.
@@ -199,7 +200,7 @@ def normalize_balance(raw, label):
         if tq.get("limit"):
             tused, tlim = int(tq.get("used", 0)), int(tq["limit"])
             quotas.append(_quota_row(
-                "每月",
+                _MONTHLY_PERIOD,
                 round(tused / tlim * 100) if tlim > 0 else None,
                 tused, tlim,
                 _fmt_reset(tq["resetTime"]) if tq.get("resetTime") else None,
@@ -340,7 +341,7 @@ def fetch_balance(sp_raw):
             monthly_providers = fetch_usage(sp_raw, "month")["providers"]
         bucket = monthly_providers.get(name)
         return {
-            "period": "每月",
+            "period": _MONTHLY_PERIOD,
             "pct": None,
             "used": sum(bucket[f] for f in _TOKEN_FIELDS) if bucket else 0,
             "limit": None,
@@ -378,7 +379,7 @@ def fetch_balance(sp_raw):
             quotas = res.get("quotas")
             if not isinstance(quotas, list):
                 continue
-            if any(q.get("period") == "每月" for q in quotas):
+            if any(q.get("period") == _MONTHLY_PERIOD for q in quotas):
                 continue
             quotas.append(local_monthly_row(name))
         results.append({"provider": name, "supported": True, "apis": api_res})

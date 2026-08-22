@@ -672,12 +672,6 @@ class TestFetchUsage(unittest.TestCase):
         self.assertEqual(result["scenarios"]["inline"]["calls"], 1)
 
     def test_today_and_seven_day_ranges_use_cst_calendar_boundaries(self):
-        class FrozenDateTime(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                value = cls(2026, 8, 19, 12, 0, tzinfo=balance_usage.CST)
-                return value.astimezone(tz) if tz else value.replace(tzinfo=None)
-
         timestamps = [
             "2026-08-19T00:00:00+08:00",  # today, exact lower boundary
             "2026-08-18T16:30:00Z",       # today after conversion to CST
@@ -695,7 +689,7 @@ class TestFetchUsage(unittest.TestCase):
                 }) + "\n")
             path = f.name
         try:
-            with patch.object(balance_usage, "datetime", FrozenDateTime):
+            with patch.object(balance_usage, "datetime", _frozen_datetime()):
                 today = balance_usage.fetch_usage(
                     {"usage_log": {"path": path}}, "today")
                 seven_days = balance_usage.fetch_usage(
