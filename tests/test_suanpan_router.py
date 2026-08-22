@@ -78,6 +78,11 @@ class TestFallbackObservable(unittest.TestCase):
         self.assertNotIn("\r", d.fallback_from)
         self.assertNotIn("\n", d.fallback_from)
         self.assertTrue(d.fallback_from.startswith("ghost/x"))
+        # 非 latin-1（如中文）意图同样不得进入响应头——UnicodeEncodeError
+        # 会在误投之后 500（SUBAGENT 标签在中文 system 文本里真实常见）
+        d2 = decide_route({"model": "ghost/深度思考"}, config=cfg)
+        d2.fallback_from.encode("latin-1")  # 不得抛
+        self.assertIn("ghost/", d2.fallback_from)
 
     def test_normal_routes_carry_no_fallback(self):
         cfg = _config()

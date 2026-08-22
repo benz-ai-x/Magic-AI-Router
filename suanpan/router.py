@@ -43,9 +43,11 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 def _sanitize_intent(raw: str) -> str:
     """#50：显式意图串进入 fallback_from 前消毒——剥离 CR/LF/控制
-    字符（model 来自客户端请求体，带 CRLF 会让响应头构造在误投之后
-    500，可感知性反被摧毁）。"""
-    return _CONTROL_CHARS.sub(" ", raw).strip()
+    字符并收敛到 latin-1 可编码（model 来自客户端请求体：CRLF 会被
+    h11 拒、非 latin-1（如中文 SUBAGENT 标签）会 UnicodeEncodeError，
+    两者都在误投之后 500，可感知性反被摧毁）。"""
+    cleaned = _CONTROL_CHARS.sub(" ", raw).strip()
+    return cleaned.encode("latin-1", "replace").decode("latin-1")
 
 
 def _parse_target(target: str) -> tuple[str, str]:
