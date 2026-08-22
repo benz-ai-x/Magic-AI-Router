@@ -262,6 +262,19 @@ async def forward_count_tokens(
     try:
         upstream_req = http_client.build_request("POST", url, json=body, headers=headers)
         r = await _send_with_retry(http_client, upstream_req)
+        # _send_with_retry 恒以 stream=True 发送（forward_request 的流式
+        # 转发需要）；count_tokens 是非流式语义，读全响应体后再消费——
+        # 未读即 .json()/.text 会抛 httpx.ResponseNotRead（它不是
+        # HTTPError 子类，会直穿成 500）。读取放在同一 try 内：读体中途
+        # 的传输错误（ReadError 等）与发送失败同样走 502 塑形，失败即关流。
+        try:
+            await r.aread()
+        except httpx.HTTPError:
+            try:
+                await r.aclose()
+            except Exception:  # noqa: BLE001 — 关闭失败不得掩过原始流错误
+                pass
+            raise
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
         _log.error("upstream_error", provider=provider_name, error=error)
