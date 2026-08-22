@@ -2,8 +2,8 @@
 #
 # 只含网关：不带 Magic Proxy 隧道/抓包/macOS GUI 依赖（rumps/pyobjc/
 # mitmproxy 均不装）。sysctl/ 与 capture/ 仅因 mpconf.config 的模块级
-# import 链被带入（keychain 的 Security 由 entry.py 注入 stub，见
-# docs/docker-deploy.md「Linux 兼容」）。
+# import 链被带入（keychain 的 Security 为可选导入，Linux 下为 None，
+# 见 docs/docker-deploy.md「Linux 兼容」）。
 FROM python:3.12-slim
 
 WORKDIR /app

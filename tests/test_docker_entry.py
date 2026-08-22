@@ -554,3 +554,47 @@ class TestRunServeIntegration:
         assert captured["sp_cfg"] == str(tmp_path / "suanpan.yaml")
         assert callable(captured["on_sp_saved"])
         captured["on_sp_saved"]()  # 模拟保存回调
+
+    def test_serve_bootstraps_default_config_with_volume_usage_log(
+            self, entry, tmp_path, monkeypatch):
+        """serve 首启缺配置时经 bootstrap 自建——usage_log 指到数据卷
+        （容器重建不丢），而非 _ensure_config 的无 usage_log 默认。"""
+        monkeypatch.setenv("SUANPAN_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "s.json"))
+
+        class FakeRunner:
+            def __init__(self, bind_host=None):
+                pass
+
+            def start(self):
+                return True
+
+            def reload(self):
+                return True
+
+            def stop(self):
+                pass
+
+        class FakeCfgSrv:
+            token = "t"
+            url = "http://x/"
+
+            def start(self):
+                return True
+
+            def stop(self):
+                pass
+
+        monkeypatch.setattr(entry, "SuanpanRuntime", FakeRunner)
+        monkeypatch.setattr(entry, "make_config_server",
+                            lambda mp, sp, on_sp_saved=None: FakeCfgSrv())
+        import time as _time
+        monkeypatch.setattr(_time, "sleep",
+                            lambda s: (_ for _ in ()).throw(KeyboardInterrupt))
+
+        entry.run_serve()
+        sp_file = tmp_path / "suanpan.yaml"
+        assert sp_file.exists()
+        content = sp_file.read_text()
+        assert "usage_log:" in content
+        assert f"path: {tmp_path}/logs/usage.jsonl" in content

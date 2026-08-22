@@ -7,7 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 
 ### Changed
 - **SSH 调用策略单一归宿（#42）**：新模块 `tunnel/ssh_launch.py` 独占 argv 构建（host-key 三件套 / sshpass-via-fd / -i 传参）、一次性探针 `probe()` 与 stderr→中文失败分类；`SSHMonitor.start` 与 `config_server.test_tunnel` 退化为调用方——探针与真实隧道行为恒等。顺带修复 `_start_process` 抛异常时密码 fd 泄漏。
-- **ConfigServer / SuanpanRuntime 参数化（#43）**：`bind_host`/`token` 构造参数取代 Docker adapter 的私有符号接触与管线抄写；`install_macos_stubs` 机制删除（`sysctl/keychain` 的 Security 可选导入）；Docker 网关首启缺配置时自建默认配置（原为静默死线程）。
+- **ConfigServer / SuanpanRuntime 参数化（#43）**：`bind_host`/`token` 构造参数取代 Docker adapter 的私有符号接触与管线抄写；`install_macos_stubs` 机制删除（`sysctl/keychain` 的 Security 可选导入）；Docker 网关首启缺配置时自建默认配置（原为静默死线程；默认配置含 usage_log → 数据卷，重建不丢）。
 
 ## [v0.6.1] — 2026-08-22 — 套餐三窗口配额 + 文档整固
 

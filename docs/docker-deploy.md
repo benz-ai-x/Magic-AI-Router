@@ -2,7 +2,7 @@
 
 issue #22：把 Suanpan AI 路由网关以 Docker 容器形态部署到 Linux 服务器。
 只含网关——不带 Magic Proxy 隧道、TLS 抓包或任何 macOS GUI 能力；macOS
-侧行为零变化（本特性不修改任何既有文件）。
+侧行为零变化。
 
 ## 快速开始
 
