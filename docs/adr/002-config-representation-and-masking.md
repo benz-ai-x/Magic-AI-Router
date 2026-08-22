@@ -28,7 +28,7 @@
 Suanpan provider 的 `api_key` 发给设置窗（WKWebView）时，不再发掩码字符串（`•••••XXXX`），改为 `api_key: null` + `api_key_set: bool`。
 
 - **理由**：真实 key 从不离开 Python 进程是更强的安全边界；且旧的 `•` 掩码字符曾是**四层链路**（存储 / `save_config_dict` 保存判断 / `provider_auth.resolve_api_key` 运行时判断 / JS `startsWith('•')`）的关键判断依据，却有两个独立常量（`suanpan/config.py:_MASK`、`provider_auth.py:_MASK_PREFIX`）加一个硬编码 JS 字面量——改字符会静默破坏四层。
-- **保存契约**：UI 未修改 key 时输入框留空，`collectProvider` 不写 `api_key`、`api_key_set` 随 state 回传为 true → `save_config_dict` 的 `_restore_key(keep=api_key_set)` 据此保留旧 key；用户输入新值则 `api_key_set` 置 true 并用新值。
+- **保存契约**：UI 未修改 key 时输入框留空，`collectProvider` 不写 `api_key`、`api_key_set` 随 state 回传为 true → `ConfigStateStore` 提交路径的 `_restore_masked_sp_keys`（keep 语义单一归宿 `provider_auth.restore_masked_key`）据此保留旧 key；用户输入新值则 `api_key_set` 置 true 并用新值。（#46 起旧 `save_config_dict` 死链删除，sp 写径唯一归宿 ConfigStateStore。）
 - **删除**：`_MASK`、`_mask_key`、`provider_auth._MASK_PREFIX`、所有 `startswith("•")` / `startsWith('•')` 判断。`resolve_api_key` 不再判掩码（掩码串已不存在）。
 
 ## 否决方案（未来审查勿重提）

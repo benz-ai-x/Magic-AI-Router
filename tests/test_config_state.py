@@ -81,7 +81,7 @@ class TestPrepareValidation(unittest.TestCase):
         self.assertTrue(any("端口" in e for e in plan.errors))
 
     def test_port_zero_rejected(self):
-        plan = self._prepare(sp={"listen_port": 0})
+        plan = self._prepare(sp={"listen_port": 0, "providers": {}})
         self.assertFalse(plan.ok)
         self.assertTrue(any("端口" in e for e in plan.errors))
 
@@ -109,7 +109,7 @@ class TestPrepareValidation(unittest.TestCase):
 
     def test_valid_candidate_produces_plan(self):
         plan = self._prepare(mp={"http_listen_port": 8888},
-                             sp={"listen_port": 9527})
+                             sp={"listen_port": 9527, "providers": {}})
         self.assertTrue(plan.ok, plan.errors)
         self.assertEqual(plan.errors, [])
 
@@ -130,7 +130,7 @@ class TestCommitTransaction(unittest.TestCase):
         store = self._store()
         order = []
         plan = store.prepare(mp={"http_listen_port": 8888},
-                             sp={"listen_port": 9527})
+                             sp={"listen_port": 9527, "providers": {}})
         self.assertTrue(plan.ok)
         result = store.commit(plan, on_committed=lambda: order.append("cb"))
         self.assertTrue(result.ok, result.errors)
@@ -146,7 +146,7 @@ class TestCommitTransaction(unittest.TestCase):
         """模拟两文件提交之间崩溃：journal 残留 → recover() 补齐到一致。"""
         store = self._store()
         plan = store.prepare(mp={"http_listen_port": 8888},
-                             sp={"listen_port": 9527})
+                             sp={"listen_port": 9527, "providers": {}})
         # 故障注入 A：SP 安装失败但回滚成功——不暴露部分新状态
         calls = {"n": 0}
         real_replace = os.replace
@@ -171,14 +171,15 @@ class TestCommitTransaction(unittest.TestCase):
         # 故障注入 B：真崩溃——安装与回滚都失败，journal 保留待启动恢复
         # 先成功提交一轮建立旧文件（旧内容非空，回滚才有会失败的写）
         pre = store.prepare(mp={"http_listen_port": 1000},
-                            sp={"listen_port": 1000})
+                            sp={"listen_port": 1000, "providers": {}})
         self.assertTrue(store.commit(pre).ok)
         plan_b = store.prepare(mp={"http_listen_port": 8889},
-                               sp={"listen_port": 9528})
+                               sp={"listen_port": 9528, "providers": {}})
         calls["n"] = 99  # 之后所有 replace 都失败（进程崩溃等价）
         def crash_replace(src, dst, *a, **kw):
-            # journal 落盘放行；此后安装与回滚全崩（进程崩溃等价）
-            if str(src).endswith(".txn.json.tmp"):
+            # journal 落盘放行（mkstemp 随机中段，认后缀+标记即可）；
+            # 此后安装与回滚全崩（进程崩溃等价）
+            if str(src).endswith(".tmp") and "txn.json" in str(src):
                 return real_replace(src, dst, *a, **kw)
             raise OSError("simulated crash, rollback also dead")
         with mock.patch.object(cs.os, "replace", side_effect=crash_replace):
@@ -292,14 +293,14 @@ class TestBackupProtectionAndCreation(unittest.TestCase):
     def test_invalid_main_file_does_not_clobber_good_backup(self):
         store = self._store()
         # 先正常提交一轮（建立良好状态），此时 .bak 尚不存在
-        plan = store.prepare(sp={"listen_port": 9527})
+        plan = store.prepare(sp={"listen_port": 9527, "providers": {}})
         self.assertTrue(store.commit(plan).ok)
         bak = store.sp_path + ".bak"
         # 手工放一个「最后已知良好」备份（模拟历史备份存在）
         Path(bak).write_text("listen_port: 9000\n")
         # 主文件损坏后再提交新配置：.bak 不得被损坏内容覆盖
         Path(store.sp_path).write_text("{corrupt: [")
-        plan2 = store.prepare(sp={"listen_port": 9528})
+        plan2 = store.prepare(sp={"listen_port": 9528, "providers": {}})
         self.assertTrue(store.commit(plan2).ok)
         self.assertEqual(Path(bak).read_text(), "listen_port: 9000\n",
                          "损坏主文件的存在不得让 .bak 被覆盖")
@@ -308,7 +309,7 @@ class TestBackupProtectionAndCreation(unittest.TestCase):
         import stat
         store = self._store()
         plan = store.prepare(mp={"http_listen_port": 8888},
-                             sp={"listen_port": 9527})
+                             sp={"listen_port": 9527, "providers": {}})
         self.assertTrue(store.commit(plan).ok)
         self.assertEqual(stat.S_IMODE(os.stat(store.mp_path).st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(os.stat(store.sp_path).st_mode), 0o600)
@@ -348,7 +349,7 @@ class TestFaultInjectionCompletions(unittest.TestCase):
         store = self._store()
         # 先有旧文件
         self.assertTrue(store.commit(store.prepare(
-            mp={"http_listen_port": 1000}, sp={"listen_port": 1000})).ok)
+            mp={"http_listen_port": 1000}, sp={"listen_port": 1000, "providers": {}})).ok)
         plan = store.prepare(mp={"http_listen_port": 8888})
         calls = {"n": 0}
         real_replace = os.replace
@@ -468,6 +469,134 @@ class TestFaultInjectionCompletions(unittest.TestCase):
         self.assertNotIn("_load_error", cleaned)
 
 
+
+class TestUpdateMp(unittest.TestCase):
+    """#46 T1a/d：菜单开关的唯一写径——写前读新 + 事务写。
+
+    回归剧本（丢更新时序）：UI 事务保存字段 X → 菜单开关写字段 Y →
+    磁盘必须同时保有 X 和 Y（旧径整文件覆写内存副本会抹掉 X）。
+    """
+
+    def _store(self, d):
+        return ConfigStateStore(
+            mp_path=str(Path(d) / "magic-proxy.json"),
+            sp_path=str(Path(d) / "suanpan.yaml"))
+
+    def test_update_preserves_concurrent_ui_save(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = self._store(d)
+            # UI 保存：完整事务写入两条隧道 + retention 调整
+            plan = store.prepare(mp={"tunnels": [
+                {"name": "t1", "ssh_user": "u", "ssh_host": "h1",
+                 "ssh_port": 22, "auth_type": "key"},
+                {"name": "t2", "ssh_user": "u", "ssh_host": "h2",
+                 "ssh_port": 22, "auth_type": "key"}], "retention_days": 3})
+            self.assertTrue(plan.ok, plan.errors)
+            self.assertTrue(store.commit(plan).ok)
+            # 菜单开关：写前读新，只动 prevent_sleep
+            result = store.update_mp(
+                lambda c: {**c, "prevent_sleep": True})
+            self.assertTrue(result.ok, result.errors)
+            disk = json.loads(
+                (Path(d) / "magic-proxy.json").read_text())
+            self.assertEqual(disk.get("retention_days"), 3,
+                             "菜单开关抹掉了 UI 并发保存的字段（#46 丢更新）")
+            self.assertIs(disk.get("prevent_sleep"), True)
+            self.assertEqual(
+                len(disk.get("tunnels", [])), 2,
+                "菜单开关抹掉了 UI 并发保存的隧道（#46 丢更新）")
+
+
+    def test_update_refuses_when_disk_config_corrupt(self):
+        """#46 复核：主文件损坏（已隔离 .bak）时菜单写径必须拒绝——
+        否则 load_config 折叠 None → merge 默认整文件覆写，静默清空
+        用户配置（与「invalid 不覆盖最后已知良好 .bak」立场冲突）。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = self._store(d)
+            (Path(d) / "magic-proxy.json").write_text("{corrupt json")
+            result = store.update_mp(
+                lambda c: {**c, "prevent_sleep": True})
+            self.assertFalse(result.ok)
+            self.assertTrue(any("损坏" in e or "invalid" in e
+                                for e in result.errors), result.errors)
+            self.assertEqual(
+                (Path(d) / "magic-proxy.json").read_text(), "{corrupt json",
+                "拒绝时不得触碰损坏的主文件")
+
+    def test_update_missing_file_starts_from_defaults(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = self._store(d)
+            result = store.update_mp(
+                lambda c: {**c, "prevent_sleep": True})
+            self.assertTrue(result.ok, result.errors)
+            disk = json.loads(
+                (Path(d) / "magic-proxy.json").read_text())
+            self.assertIs(disk.get("prevent_sleep"), True)
+            # merge 默认齐备（写径与 UI 同一 prepare/commit 管线）
+            self.assertIn("http_listen_port", disk)
+
+    def test_update_rejects_invalid_mutation(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = self._store(d)
+            result = store.update_mp(
+                lambda c: {**c, "http_listen_port": 70000})
+            self.assertFalse(result.ok)
+            self.assertTrue(any("http_listen_port" in e for e in result.errors))
+
+
+
+class TestPrepareSpSchemaValidation(unittest.TestCase):
+    """#46 T1b：sp 校验收口——顶层字段（死分支修正）+ pydantic schema。"""
+
+    def _store(self, d):
+        return ConfigStateStore(
+            mp_path=str(Path(d) / "magic-proxy.json"),
+            sp_path=str(Path(d) / "suanpan.yaml"))
+
+    def test_top_level_timeout_rejected(self):
+        """request_timeout_s 在 schema 顶层；旧代码查不存在的 server 键
+        （死校验分支），顶层非法值静默落盘。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = self._store(d)
+            plan = store.prepare(sp={
+                "providers": {"p": {"base_url": "https://x.example",
+                                    "api_key": "k"}},
+                "request_timeout_s": 10 ** 9})
+            self.assertFalse(plan.ok)
+            self.assertTrue(any("request_timeout_s" in e for e in plan.errors),
+                            plan.errors)
+
+    def test_schema_invalid_rules_rejected(self):
+        """schema 校验并入事务路径：rules 非列表不得直写磁盘（旧 commit
+        只有 yaml.safe_dump，写入时点的保证变成下次启动时的崩溃）。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = self._store(d)
+            plan = store.prepare(sp={
+                "providers": {"p": {"base_url": "https://x.example",
+                                    "api_key": "k"}},
+                "rules": "not-a-list"})
+            self.assertFalse(plan.ok)
+            self.assertTrue(any("rules" in e for e in plan.errors),
+                            plan.errors)
+
+    def test_schema_invalid_provider_field_rejected(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = self._store(d)
+            plan = store.prepare(sp={
+                "providers": {"p": {"base_url": "https://x.example",
+                                    "api_key": "k", "enabled": "yes?"}}})
+            self.assertFalse(plan.ok)
+            self.assertTrue(any("enabled" in e for e in plan.errors),
+                            plan.errors)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -575,18 +704,21 @@ class TestProviderIdSemantics(unittest.TestCase):
     """issue #8 S3：rename 后 keep/replace/clear 三态按 id 正确。"""
 
     def _roundtrip(self, old_providers, new_providers):
+        """经活写径（prepare/commit——掩码恢复在 _restore_masked_sp_keys）。"""
         import tempfile
         from pathlib import Path
-        from suanpan.config import save_config_dict, load_config_raw
+        from suanpan.config import load_config_raw
         with tempfile.TemporaryDirectory() as d:
             path = str(Path(d) / "s.yaml")
             Path(path).write_text(yaml.dump(
                 {"providers": old_providers, "listen_port": 9527},
                 allow_unicode=True))
-            ok, err = save_config_dict(
-                {"providers": new_providers, "listen_port": 9527,
-                 "api_key_set": False}, path)
-            self.assertTrue(ok, err)
+            store = ConfigStateStore(sp_path=path)
+            plan = store.prepare(sp={"providers": new_providers,
+                                     "listen_port": 9527,
+                                     "api_key_set": False})
+            self.assertTrue(plan.ok, plan.errors)
+            self.assertTrue(store.commit(plan).ok)
             return load_config_raw(path)["providers"]
 
     def test_rename_keeps_key_via_id(self):

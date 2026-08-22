@@ -23,6 +23,19 @@ HOP_HEADERS = frozenset({
     "x-api-key",
 })
 
+def restore_masked_key(new_val, old_val, keep):
+    """掩码保存契约的 key 解析（#46 自 suanpan/config._restore_key 收编；
+    唯一消费方 ConfigStateStore._restore_masked_sp_keys，suanpan 侧只掩
+    码不恢复）。
+
+    ``keep``（UI 的 api_key_set 布尔）真且无新值 → 保留旧 key；否则用
+    新值（空/None 即清除）。
+    """
+    if keep and not new_val:
+        return old_val
+    return new_val or None
+
+
 def resolve_api_key(provider):
     """Resolve a provider's API key from a plain dict.
 

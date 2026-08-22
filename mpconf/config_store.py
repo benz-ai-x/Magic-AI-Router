@@ -94,15 +94,6 @@ def sp_load_masked(path=None):
         return {}
 
 
-def sp_save(data, path=None):
-    """Validate and persist a Suanpan config dict. Returns (ok, error_msg)."""
-    try:
-        from suanpan.config import save_config_dict
-    except ImportError:
-        return False, "Suanpan 依赖未安装（pydantic），无法校验配置"
-    return save_config_dict(data, path or get_path("sp"))
-
-
 def suanpan_listen(path=None):
     """Validated gateway listen address; schema default on any failure."""
     try:

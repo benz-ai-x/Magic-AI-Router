@@ -36,6 +36,10 @@ def _make_app(config=None):
     a.VERSION_DISPLAY = "0.4.2"
     a._log_path = "/tmp/log.txt"
     a._log_buffer = MagicMock()
+    # #46：菜单开关写径走真事务 store（conftest 会话沙箱重定向 PATHS，
+    # 不会触碰真实配置文件）
+    from mpconf.config_state import ConfigStateStore
+    a._config_store = ConfigStateStore(keychain=None)
     return a
 
 
@@ -79,19 +83,31 @@ class TestConnectionActions(unittest.TestCase):
         a = _make_app()
         a._conn.ssh.status = "connected"
         switch = a.make_switch_tunnel(0)  # already current (current_tunnel=0)
-        with patch.object(app, "save_config") as save:
+        with patch.object(a, "_update_mp_config") as upd:
             switch(None)
-        save.assert_not_called()
+        upd.assert_not_called()
 
-    def test_switch_tunnel_saves_and_reconnects(self):
-        a = _make_app()
+    def test_switch_tunnel_persists_and_reconnects(self):
+        # #46：切换隧道经事务写径落盘（磁盘可见），再重连。写径写前
+        # 读新——种子须先落沙箱磁盘，内存 _config 会被磁盘真相刷新
+        tunnels = [
+            {"name": "t1", "ssh_user": "u", "ssh_host": "h1",
+             "ssh_port": 22, "auth_type": "key"},
+            {"name": "t2", "ssh_user": "u", "ssh_host": "h2",
+             "ssh_port": 22, "auth_type": "key"}]
+        import json as _json_seed
+        from mpconf import config_store as _cs
+        with open(_cs.PATHS["mp"], "w") as f:
+            _json_seed.dump({"current_tunnel": 0, "tunnels": tunnels}, f)
+        a = _make_app({"current_tunnel": 0, "tunnels": tunnels})
         a._conn.ssh.status = "stopped"
         switch = a.make_switch_tunnel(1)
-        with patch.object(app, "save_config") as save, \
-             patch.object(app, "load_config", return_value=None):
-            switch(None)
-        save.assert_called_once()
+        switch(None)
         self.assertEqual(a._config["current_tunnel"], 1)
+        import json as _json
+        from mpconf import config_store
+        disk = _json.loads(open(config_store.PATHS["mp"]).read())
+        self.assertEqual(disk.get("current_tunnel"), 1)
         a._conn.restart.assert_called_once()
 
 
@@ -194,35 +210,40 @@ class TestSuanpanActions(unittest.TestCase):
 
 
 class TestSleepLoginActions(unittest.TestCase):
-    def test_toggle_prevent_sleep_flips_and_saves(self):
+    def test_toggle_prevent_sleep_flips_and_persists(self):
         a = _make_app({"prevent_sleep": False})
-        with patch.object(app, "save_config") as save:
-            a.toggle_prevent_sleep(None)
+        a.toggle_prevent_sleep(None)
         self.assertTrue(a._config["prevent_sleep"])
-        save.assert_called_once()
+        import json as _json
+        from mpconf import config_store
+        disk = _json.loads(open(config_store.PATHS["mp"]).read())
+        self.assertIs(disk.get("prevent_sleep"), True)
         a._lifecycle.sync_sleep.assert_called_once()
 
     def test_toggle_launch_at_login_success(self):
         a = _make_app({"launch_at_login": False})
         with patch.object(app.login_item, "set_launch_at_login",
                           return_value=(True, "")), \
-             patch.object(app, "save_config"), \
              patch.object(app.rumps, "notification") as notif:
             a.toggle_launch_at_login(None)
         self.assertTrue(a._config["launch_at_login"])
+        import json as _json
+        from mpconf import config_store
+        disk = _json.loads(open(config_store.PATHS["mp"]).read())
+        self.assertIs(disk.get("launch_at_login"), True)
         self.assertIn("登录启动：开", notif.call_args[0][1])
 
     def test_toggle_launch_at_login_failure_alerts(self):
         a = _make_app({"launch_at_login": False})
         with patch.object(app.login_item, "set_launch_at_login",
                           return_value=(False, "denied")), \
-             patch.object(app, "save_config") as save, \
+             patch.object(a, "_update_mp_config") as upd, \
              patch.object(app.rumps, "alert") as alert:
             a.toggle_launch_at_login(None)
         alert.assert_called_once()
         # On failure the flag is left unchanged and config not saved
         self.assertFalse(a._config["launch_at_login"])
-        save.assert_not_called()
+        upd.assert_not_called()
 
 
 class TestCaptureActions(unittest.TestCase):

@@ -456,26 +456,6 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
 
 # ── config_server.py / config_store.py: _write_mp + sp save ────────
 
-from mpconf import config_store
-
-class TestWriteSp(unittest.TestCase):
-    def test_write_validates_and_dumps(self):
-        with patch("suanpan.config.dump_config", return_value="yaml: content"):
-            ok, err = config_store.sp_save(
-                {"providers": {}, "router": {"default": None}, "rules": [],
-                 "listen": "127.0.0.1:9527"})
-        self.assertTrue(ok)
-        self.assertIsNone(err)
-
-    def test_write_validation_failure(self):
-        # Reference unknown provider in router.default to trigger validation failure
-        ok, err = config_store.sp_save(
-            {"providers": {}, "router": {"default": "unknown/m"},
-             "rules": [], "listen": "127.0.0.1:9527"})
-        self.assertFalse(ok)
-        self.assertIn("unknown", err.lower())
-
-
 # ── suanpan/main.py: BodyLimitMiddleware + handlers ───────────────
 
 class TestBodyLimitMiddleware(unittest.TestCase):

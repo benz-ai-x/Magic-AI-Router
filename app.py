@@ -20,11 +20,11 @@ from sysctl import port_check
 from shellui.bridge_protocol import ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY
 from capture.capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
-    DEFAULT_CONFIG, IdentityMigrationError, load_config, merge_config,
-    save_config)
+    DEFAULT_CONFIG, IdentityMigrationError, load_config, merge_config)
 from shellui.log_window import LogBuffer, show_log_window
 from shellui.webview_window import show_config_window
 from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
+from mpconf.config_state import ConfigStateStore
 from services.stats import Stats
 from tunnel.connection_coordinator import ConnectionCoordinator
 from services.lifecycle_runtime import LifecycleRuntime
@@ -80,6 +80,8 @@ class MagicProxyApp(rumps.App):
             raise SystemExit(1)
         self._config = merge_config(cfg)
         self._stats = Stats()
+        # 菜单开关的唯一写径持有者（#46）：与 UI 保存同一事务管线
+        self._config_store = ConfigStateStore(keychain=keychain)
         self.VERSION = VERSION
         self.VERSION_DISPLAY = VERSION_DISPLAY
         self._log_path = LOG_PATH
@@ -256,6 +258,32 @@ class MagicProxyApp(rumps.App):
     def _dirty(self):
         self._menu_builder.last_struct_key = None
 
+    def _update_mp_config(self, mutate):
+        """菜单开关唯一写径（#46）：写前读新 + 事务写，成功后刷新内存副本。
+
+        旧径 save_config(self._config) 用启动时的内存副本整文件覆写——
+        UI 保存后不重连就点开关，磁盘上 UI 的改动被静默抹掉。现全部经
+        ConfigStateStore.update_mp（与 UI 保存同一校验 + journal + 0600
+        原子写管线），成功后重读磁盘刷新副本。
+        """
+        try:
+            result = self._config_store.update_mp(mutate)
+        except IdentityMigrationError as exc:
+            rumps.alert(
+                "Magic AI Router",
+                f"配置包含重复的隧道 id，无法保存本次更改。\n\n{exc}\n\n"
+                "请打开配置文件修正重复 id 后重试。")
+            return False
+        if not result.ok:
+            logger.warning("menu config update rejected: %s", result.errors)
+            self._notify("配置保存失败", "; ".join(result.errors)[:160])
+            return False
+        cfg = load_config()
+        if cfg:
+            self._config = merge_config(cfg)
+        self._dirty()
+        return True
+
     def _notify(self, subtitle, message=""):
         rumps.notification("Magic AI Router", subtitle, message)
 
@@ -266,7 +294,16 @@ class MagicProxyApp(rumps.App):
 
     def reconnect(self, _):
         def reload_cfg():
-            cfg = load_config()
+            try:
+                cfg = load_config()
+            except IdentityMigrationError as exc:
+                # 与 __init__ 的处置一致：迁移可行动错误不得在菜单回调里
+                # 裸抛——保持现有连接并给出指引
+                rumps.alert(
+                    "Magic AI Router",
+                    f"配置包含重复的隧道 id，已保持现有连接。\n\n{exc}\n\n"
+                    "请打开配置文件修正重复 id 后重试。")
+                return
             if cfg:
                 self._config = merge_config(cfg)
         self._conn.restart(reload_cfg)
@@ -285,8 +322,9 @@ class MagicProxyApp(rumps.App):
         def switch(_):
             if idx == self._config.get("current_tunnel", 0) and self._conn.ssh.status == "connected":
                 return
-            self._config["current_tunnel"] = idx
-            save_config(self._config)
+            if not self._update_mp_config(
+                    lambda c: {**c, "current_tunnel": idx}):
+                return
             self.reconnect(None)
         return switch
 
@@ -345,22 +383,26 @@ class MagicProxyApp(rumps.App):
     # ── sleep / login ────────────────────────────────────
 
     def toggle_prevent_sleep(self, _):
-        self._config["prevent_sleep"] = not self._config.get("prevent_sleep", False)
-        save_config(self._config)
+        if not self._update_mp_config(
+                lambda c: {**c,
+                           "prevent_sleep": not c.get("prevent_sleep", False)}):
+            return
         self._lifecycle.sync_sleep(self._conn.ssh.status, self._conn.paused,
                              self._config.get("prevent_sleep", False))
-        self._dirty()
 
     def toggle_launch_at_login(self, _):
-        enabled = not self._config.get("launch_at_login", False)
+        # 目标态从磁盘真相推导（#46 复核：内存副本可能滞后于 UI 保存，
+        # 与 prevent_sleep 同一口径）
+        cfg = load_config()
+        enabled = not (cfg or {}).get("launch_at_login", False)
         ok, err = login_item.set_launch_at_login(enabled)
         if not ok:
             rumps.alert(title="Magic AI Router", message=f"无法设置登录启动：\n\n{err}")
             self._dirty()
             return
-        self._config["launch_at_login"] = enabled
-        save_config(self._config)
-        self._dirty()
+        if not self._update_mp_config(
+                lambda c: {**c, "launch_at_login": enabled}):
+            return
         self._notify(
             "登录启动：开" if enabled else "登录启动：关",
             "将在下次登录时自动启动。" if enabled else "下次登录不再自动启动。",
