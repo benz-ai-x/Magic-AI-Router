@@ -119,8 +119,9 @@ def run_serve() -> int:
     """serve 模式：网关绑 0.0.0.0 + 配置页面 :9528（共用同一 token）。
 
     SuanpanRuntime(bind_host="0.0.0.0") 跑网关；config server 的
-    on_sp_saved 指向 runner.reload——配置页保存 → 网关热重载，无需重启
-    容器（与 macOS 版同一运行时，仅绑定地址形态不同）。
+    on_sp_saved = 运行中 reload / 已停 start——配置页保存 → 网关热重载，
+    网关首启失败后 web 修复也能拉起（与 macOS 版同一运行时，仅绑定
+    地址形态不同）。
     """
     paths = default_paths()
     # 先重定向再构造——SuanpanRuntime 经 PATHS["sp"] 取配置路径；
