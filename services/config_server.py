@@ -89,6 +89,7 @@ def _read_mp():
     if not cfg:
         return {}
     for t in cfg.get("tunnels", []):
+        # has_password 属 READONLY_DECORATED_FIELDS（prepare 剥除侧单点声明）
         t["has_password"] = bool(
             t.get("auth_type") == "password" and keychain.get_password(t))
     return cfg
@@ -251,8 +252,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/api/state":
             mp = _read_mp()
             sp = config_store.sp_load_masked()
-            # Read-only runtime status injected for the config UI; ConfigStateStore
-            # strips it again so it can never round-trip into the file.
+            # Read-only runtime status injected for the config UI;
+            # READONLY_DECORATED_FIELDS（config_state 单点声明）的剥除
+            # 保证它永不回写文件。
             try:
                 fn = self.server.capture_state_fn
                 mp["capture_active"] = bool(fn and fn())

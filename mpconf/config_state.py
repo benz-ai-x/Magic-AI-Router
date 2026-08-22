@@ -74,6 +74,12 @@ def _schema_error_lines(exc) -> list:
             for seg in friendly_config_error_lines(exc)]
 
 
+# 服务端注入的只读装饰字段（#52 单点声明）：config_server 读取时注入
+# 供 UI 展示，prepare 剥除保证持久化配置永不携带——两侧共用此名单，
+# 新增装饰字段不再靠注释对齐。
+READONLY_DECORATED_FIELDS = frozenset({"has_password", "capture_active"})
+
+
 def _valid_http_origin(url) -> bool:
     if not isinstance(url, str):
         return False
@@ -197,8 +203,8 @@ class ConfigStateStore:
                 if isinstance(t, dict) and t.get("id") and t["id"] not in new_ids:
                     kc_dels.append(("all", t))
             for t in mp_c.get("tunnels") or []:
-                t.pop("has_password", None)      # 服务端注入的只读字段
-                t.pop("capture_active", None)
+                for deco in READONLY_DECORATED_FIELDS:
+                    t.pop(deco, None)
                 pw = t.pop("password", None)
                 if pw:
                     kc_sets.append((dict(t), pw))
