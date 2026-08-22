@@ -256,6 +256,35 @@ class TestProbe(unittest.TestCase):
         sc = ssh_launch.build_tunnel_command(t, 1080)
         self.assertEqual(sc.cmd[sc.cmd.index("-i") + 1], "")
 
+    def test_pipe_exhaustion_returns_oserror_phrase(self):
+        """fd 耗尽（os.pipe OSError）不破「绝不抛异常」契约。"""
+        with patch.object(ssh_launch.os, "pipe",
+                          side_effect=OSError("too many open files")):
+            result = ssh_launch.probe(self._PW, password="sekrit")
+        self.assertFalse(result["ok"])
+        self.assertIn("无法启动 ssh", result["error"])
+
+    def test_write_failure_closes_read_fd_before_raise(self):
+        """os.write 失败时 r_fd 不泄漏（异常仍按 OSError 分类）。"""
+        real_pipe = os.pipe
+        created = []
+
+        def tracking_pipe():
+            fds = real_pipe()
+            created.extend(fds)
+            return fds
+
+        with patch.object(ssh_launch.os, "pipe", side_effect=tracking_pipe), \
+             patch.object(ssh_launch.os, "write",
+                          side_effect=OSError("disk full")):
+            result = ssh_launch.probe(self._PW, password="sekrit")
+        self.assertFalse(result["ok"])
+        self.assertIn("无法启动 ssh", result["error"])
+        r_fd, w_fd = created
+        for fd in (r_fd, w_fd):
+            with self.assertRaises(OSError):
+                os.fstat(fd)  # 两端都已关闭
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -662,6 +662,19 @@ class TestTunnelProbeLogic(unittest.TestCase):
         self.assertEqual(result, {"ok": False, "error": "连接超时"})
         probe.assert_called_once_with(self._PW_TUNNEL, password="sekrit")
 
+    def test_probe_receives_normalized_tunnel_fields(self):
+        """手改配置的空白/非规范端口经校验归一后才进探针。"""
+        raw = {"ssh_host": "  example.com ", "ssh_user": " u ",
+               "ssh_port": "2222", "auth_type": "key", "ssh_key": "k"}
+        with patch.object(config_server.ssh_launch, "probe",
+                          return_value={"ok": True}) as probe:
+            result = config_server.test_tunnel(raw)
+        self.assertEqual(result, {"ok": True})
+        target = probe.call_args[0][0]
+        self.assertEqual(target["ssh_host"], "example.com")
+        self.assertEqual(target["ssh_user"], "u")
+        self.assertEqual(target["ssh_port"], 2222)
+
 
 class TestCaptureCleanEndpoint(unittest.TestCase):
     def setUp(self):

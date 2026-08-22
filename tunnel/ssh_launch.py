@@ -108,6 +108,13 @@ def _with_auth(tunnel, ssh_args, password, extra_auth_args=()):
         r_fd, w_fd = os.pipe()
         try:
             os.write(w_fd, (password + "\n").encode())
+        except OSError:
+            # 写端已废：读端一并关闭再抛出，fd 不泄漏
+            try:
+                os.close(r_fd)
+            except OSError:
+                pass
+            raise
         finally:
             os.close(w_fd)
         cmd = (["sshpass", "-d", str(r_fd), "ssh"] + list(extra_auth_args)
@@ -153,8 +160,11 @@ def probe(tunnel, password=""):
         extra = ("-o", "NumberOfPasswordPrompts=1")
     else:
         extra = ("-o", "BatchMode=yes")
-    sc = _with_auth(tunnel, ssh_args, password, extra)
+    sc = None
     try:
+        # argv 构建（含 os.pipe/write）也在 try 内：fd 耗尽等 OSError
+        # 同样归「无法启动 ssh」，契约「绝不抛异常」无条件成立。
+        sc = _with_auth(tunnel, ssh_args, password, extra)
         proc = subprocess.run(
             sc.cmd, capture_output=True, timeout=PROBE_TIMEOUT,
             pass_fds=sc.pass_fds)
@@ -164,7 +174,8 @@ def probe(tunnel, password=""):
         hint = "（密码认证需要 sshpass）" if password else ""
         return {"ok": False, "error": f"无法启动 ssh{hint}"}
     finally:
-        sc.close_password_fd()
+        if sc is not None:
+            sc.close_password_fd()
     if proc.returncode == 0:
         return {"ok": True}
     # bytes + replace decode (not text=True)：SSH stderr 可能携带原始字节，

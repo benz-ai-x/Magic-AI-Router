@@ -120,7 +120,10 @@ def test_tunnel(tunnel):
         if not password:
             return {"ok": False, "error": "钥匙串中没有该隧道的密码，请先保存"}
 
-    return ssh_launch.probe(tunnel, password=password)
+    # 探针消费校验归一后的值（strip/int），与历史行为一致——手改配置的
+    # 空白 host 或 "022" 端口不进 ssh argv。
+    normalized = dict(tunnel, ssh_host=host, ssh_user=user, ssh_port=port)
+    return ssh_launch.probe(normalized, password=password)
 
 
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
