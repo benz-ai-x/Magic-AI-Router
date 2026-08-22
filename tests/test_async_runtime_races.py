@@ -137,11 +137,11 @@ class TestStressStartStop(unittest.TestCase):
 
 
 class _WideWindowLock:
-    """#45 回归装置：把 start() 内「_shutdown_previous 释放锁 → :64 临界区
-    再获取」的微秒级抢占窗口人为拉宽（每线程第二次 acquire 前让出 50ms）。
-    生产里该窗口依赖 GIL 恰好在两 with 块之间切换——概率极低但静态必然
-    （非可重入锁二次获取），故测试须确定性制造交错而非碰运气压测。
-    本套件对 rt._thread 的白盒断言已有先例。"""
+    """#45 回归装置：把 start() 内「_shutdown_previous 释放锁 → start 的
+    状态临界区再获取」的微秒级抢占窗口人为拉宽（每线程第二次 acquire 前
+    让出 50ms）。生产里该窗口依赖 GIL 恰好在两 with 块之间切换——概率
+    极低但静态必然（非可重入锁二次获取），故测试须确定性制造交错而非
+    碰运气压测。本套件对 rt._thread 的白盒断言已有先例。"""
 
     def __init__(self):
         self._inner = threading.Lock()
@@ -187,8 +187,9 @@ class TestConcurrentStartNoDeadlock(unittest.TestCase):
         t2.join(3)
         hung = t1.is_alive() or t2.is_alive()
         if not hung:
-            # 属性读在同一把锁上——死锁时连读都挂，故先判活再清理
-            self.assertIsNotNone(rt.running)
+            # 属性读在同一把锁上——死锁时连读都挂，故先判活再清理；
+            # 断言类型（而非非 None）以表明本意是「读不挂」
+            self.assertIsInstance(rt.running, bool)
             released.set()
             rt.stop(timeout=5)
         self.assertFalse(hung, "并发 start() 死锁（#45 自死锁回归）")
@@ -196,15 +197,22 @@ class TestConcurrentStartNoDeadlock(unittest.TestCase):
         self.assertIn("不可启动", rt.error)
 
     def test_simultaneous_first_start_stress(self):
-        """纯公开接口压力哨兵（无窗口拉宽）：并发首启永不挂死、后续可用。"""
+        """纯公开接口压力哨兵（无窗口拉宽）：并发首启永不挂死、败者以
+        返回值表达失败（不抛异常——stop 撞上未启动线程的 join 曾以
+        RuntimeError 逃出公开 API）、后续可用。"""
         for _round in range(20):
             factory, started, released = _factory_forever()
             rt = AsyncRuntime("t", stop_timeout=0.2)
             barrier = threading.Barrier(2)
+            results = []
+            errors = []
 
             def racer():
                 barrier.wait()
-                rt.start(factory)
+                try:
+                    results.append(rt.start(factory))
+                except Exception as exc:  # 哨兵必须看见崩溃而非吞掉
+                    errors.append(exc)
 
             t1 = threading.Thread(target=racer, daemon=True)
             t2 = threading.Thread(target=racer, daemon=True)
@@ -218,6 +226,8 @@ class TestConcurrentStartNoDeadlock(unittest.TestCase):
                 rt.stop(timeout=5)
             self.assertFalse(
                 hung, f"第 {_round} 轮并发 start() 死锁（#45 自死锁回归）")
+            self.assertEqual(
+                errors, [], f"第 {_round} 轮 racer 异常逃出公开 API：{errors}")
 
 
 if __name__ == "__main__":

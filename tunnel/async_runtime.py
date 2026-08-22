@@ -6,7 +6,7 @@ new generation." This module factors that lifecycle into a single deep module.
 
 状态机（锁下判定）：STOPPED → STARTING → RUNNING → STOPPING → STOPPED；
 异常路径 RUNNING → FAILED（根因保留到下次成功 start）。start 只在上一代
-完整终止后发布新代；stop 超时 → start 拒绝（RuntimeError）且不建新线程。
+完整终止后发布新代；stop 超时 → start 拒绝（返回 False）且不建新线程。
 每个 awaitable 恰好被 await 或 close 一次。
 """
 from __future__ import annotations
@@ -132,9 +132,12 @@ class AsyncRuntime:
 
         thread = threading.Thread(
             target=worker, name=f"{self._name}-{generation}", daemon=True)
+        # 锁内发布并启动：_thread 绝不以「已赋值未 start」形态可见——
+        # 否则并发 stop() 会 join 未启动线程（RuntimeError 逃出公开 API）。
+        # worker 首个锁获取会等我们释放，无嵌套风险。
         with self._lock:
             self._thread = thread
-        thread.start()
+            thread.start()
         return True
 
     def _shutdown_previous(self) -> bool:
