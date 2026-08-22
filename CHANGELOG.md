@@ -3,6 +3,67 @@
 All notable changes to Magic-AI-Router are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **余额速览三窗口配额（#41）**：GLM/Kimi 等套餐类供应商统一展示 5小时/每周/每月。月度「两者结合」——API 有月度（Kimi totalQuota）用供应商口径，否则聚合本网关 usage.jsonl（UI 标注「每月（网关）· N 次」，无本地数据补 0 行）；GLM Max 的 TIME_LIMIT 工具时长配额标注「每月·工具」，不抑制本地 token 行。GLM 配额显示 nextResetTime 重置时间，所有 reset 统一转 CST。`fetch_usage` 新增 `month` 范围（CST 自然月），`/api/usage?range=month` 随之可用。
+
+### Fixed
+- **agent.md 六处陈旧**：`listen_port` 整型示例（旧 `listen` 读时兼容）、usage 日志真实路径、Docker 取 token 路径（`suanpan.sh config-ui`）、登录页行为、`range=month`、菜单顺序对齐代码装配序；CLAUDE.md 测试口径改 `node --test tests/js/*.test.mjs`（node ≥26 目录模式失效）。
+
+### Development
+- README 补「方式四：Linux / 无 GUI（Docker）」部署说明。
+
+## [v0.6.0] — 2026-08-21 — Docker 版：Linux 无 GUI 部署 + Web 管理
+
+### Added
+- **Suanpan 网关 Docker 版（#22 / PR #35）**：python:3.12-slim 镜像 + compose + `docker/suanpan.sh` 管理脚本（up/down/status/logs/sync/config-ui）；Linux 无 GUI 跑网关（:9527），`sync-claude-code` 一键写入 Claude Code 配置；PyObjC Security stub 让 macOS 专属 import 链在 Linux 容器零修改通过；首启引导默认配置落 /data 卷。
+- **Docker 配置页面 :9528（PR #37）**：复用 config_server 的完整 Web 管理界面（供应商/路由/统计/余额），token 与 sync 同源零新 secret；Linux 无 Keychain 经守卫走 SP-only 保存。
+- **登录页（PR #39）**：裸 GET `/` 无凭证返回自包含登录页——浏览器打开 :9528 输 token 即入；`/api/*` 的 401 保持纯 JSON，macOS 桥接带 Bearer 零回归。
+
+### Fixed
+- **配置页保存后网关热重载（PR #40）**：GatewayRunner 线程化 uvicorn + `on_sp_saved` 回调接线——Docker 版保存配置即时生效，无需重启容器。
+
+### Development
+- 新增 docker-deploy.md 部署文档，两轮 writing-for-agents 收紧（PR #36/#38）。
+
+## [v0.5.0] — 2026-08-21 — 安全·事务·韧性：16 issue 加固收口
+
+### Added
+- **实例所有权 InstanceOwnership（#3 / PR #18）**：pid+启动时间双匹配抗 PID 复用，取代 basename 误杀；O_EXCL 原子创建/陈旧接管/release。
+- **AuthenticatedHttpClient（#4 / PR #21）**：认证出站统一 adapter——跨 origin 重定向一律拒绝、HTTPS→HTTP 降级必拒、1MB 响应上限；凭证不出原始 origin。
+- **ConfigStateStore（#6 / PR #23）**：配置持久化事务边界——load 四态 / prepare 全量校验 / commit（journal+MP+SP+Keychain 次序）/ recover 幂等重放，收编 PUT/首创建/启动恢复全部路径。
+- **RetryPolicy（#7 / PR #24）**：流式代理有界重试——pre-send 证明或幂等才重试；非幂等 POST 送达后不明即不重放。
+- **Provider/Tunnel 稳定持久 id（#8 / PR #26）**：凭证与可编辑字段解耦；live PUT 掩码恢复 + re-pin 串线守卫。
+- **本地客户端 token（#9 / PR #34）**：sync 与 config-ui 同源同值，落配置卷跨容器重建稳定。
+- **header-only token（#10 / PR #25）**：token 只进 Authorization 头与 `cfgsess` HttpOnly SameSite=Strict 会话 cookie；query-string 认证删除。
+- **UsageExtractor 有界线性增量 scanner（#13 / PR #30）**；**UsageSink 吞错韧性 + ProviderPrewarmer 有界预热（#15 / PR #31）**。
+- **发布工程单一契约（#14）**：资源清单 + requirements-lock 锁定依赖 + CI 门禁（lock 漂移校验）。
+
+### Fixed
+- **抓包资源契约（#2 / PR #17）**：`resolve_capture_resources` 收编 mitmdump 三级链 + addon 校验 + 目录 preflight；frozen/dev 双态冒烟判据单一归宿。
+- **明文 HTTP 逐请求归属（#5 / PR #19）**：跨 origin 安全重连状态机——keep-alive 连接绝不静默误投他站；1xx 接续、拒绝先于转发。
+- **AsyncRuntime 锁下状态机（#12 / PR #28）**：竞争窗口与 coroutine 泄漏封死；start() 保 bool 契约（拒绝返回 False 不抛异常）。
+- **抓包默认流式 + 单一聚合预算 + store 收敛（#11 / PR #27）**。
+- **HTTP framing 加固收尾（#20 / PR #32）**。
+
+### Changed
+- **文档收口（#16 / PR #33）**：漂移修正 + 历史标记 + 高风险守卫；CLAUDE.md 按 writing-for-agents 杠杆修整。
+
+### Development
+- lifecycle_runtime 测试覆盖率 86%→100%。
+
+## [v0.4.11] — 2026-08-19 — 仓库重建 + 全域包架构
+
+> 仓库历史自 2026-08-19 重建起算（初始提交 VERSION=0.4.9，bundle ID 更换为 `com.benzai.magic-ai-router`，remote 迁往 benz-ai-x）；此前条目中的 issue 编号指向重建前仓库。
+
+### Changed
+- **根目录全域包整理**：38 个模块归入 6 个域包（mpconf/tunnel/shellui/capture/sysctl/services），根目录 54→14→9 项，可重建产物清除。
+- **架构候选落地**：saveAll 状态机下沉为 LAYER 1 深模块 saveFlow；ConfigServer 回调改 server 实例注入（并行测试不再串话）；ServiceCoordinator 升格 LifecycleRuntime（start_all/quit 顺序契约）。
+
+### Development
+- ADR 重编号为连续序列（022-025 → 001-004），全量引用同步；CI 路径同步 scripts/ 迁移，sit 用例 import 补域包迁移。
+
 ## [v0.4.8] — 2026-08-14 — Claude Code 同步 + 安全与文档整固
 
 ### Added
