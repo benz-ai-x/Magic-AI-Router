@@ -605,9 +605,9 @@ class TestReadonlyDecoratedFields(unittest.TestCase):
 
     def test_declaration_covers_both_sides(self):
         from mpconf.config_state import READONLY_DECORATED_FIELDS
-        self.assertIsInstance(READONLY_DECORATED_FIELDS, frozenset)
-        self.assertIn("has_password", READONLY_DECORATED_FIELDS)
-        self.assertIn("capture_active", READONLY_DECORATED_FIELDS)
+        # 精确集（非成员性）：注入侧字段恰为此二，多列少列都漂移
+        self.assertEqual(READONLY_DECORATED_FIELDS,
+                         frozenset({"has_password", "capture_active"}))
 
     def test_prepare_strips_exactly_the_declared_fields(self):
         """注入字段全被剥除（持久化配置永不携带），未声明字段不受累。"""
@@ -625,6 +625,8 @@ class TestReadonlyDecoratedFields(unittest.TestCase):
                              plan.mp_candidate["tunnels"][0])
             self.assertNotIn("capture_active",
                              plan.mp_candidate["tunnels"][0])
+            # 未声明字段不受累（剥除恰为声明集）
+            self.assertEqual(plan.mp_candidate["tunnels"][0]["name"], "t")
 
 
 if __name__ == "__main__":
