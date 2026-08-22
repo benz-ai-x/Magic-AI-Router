@@ -486,10 +486,18 @@ class TestBalanceUsageEndpoints(unittest.TestCase):
     def test_usage_endpoint_rejects_invalid_range(self):
         status, data = _request(
             self.port, "GET",
-            "/api/usage?range=month", token=self.token,
+            "/api/usage?range=bogus", token=self.token,
         )
         self.assertEqual(status, 400)
         self.assertIn("range", json.loads(data)["error"])
+
+    def test_usage_endpoint_accepts_month_range(self):
+        status, data = _request(
+            self.port, "GET",
+            "/api/usage?range=month", token=self.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("total", json.loads(data))
 
 
 class TestPutStateWrongPath(unittest.TestCase):

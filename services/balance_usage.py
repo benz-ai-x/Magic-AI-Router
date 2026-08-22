@@ -41,12 +41,15 @@ PROVIDER_BALANCE_APIS = [
     ]),
 ]
 
-_UNIT_NAMES = {3: "5小时", 5: "每月", 6: "每周"}
+_MONTHLY_PERIOD = "每月"  # canonical label; fetch_balance suppression matches it exactly
+_UNIT_NAMES = {3: "5小时", 5: _MONTHLY_PERIOD, 6: "每周"}
+_WEEK_HOURS = 24 * 7
+_MONTH_HOURS = 24 * 30
 # Duration in hours for each GLM unit — used for ascending sort of quota windows.
-_UNIT_DURATION_HOURS = {3: 5, 6: 24 * 7, 5: 24 * 30}
+_UNIT_DURATION_HOURS = {3: 5, 6: _WEEK_HOURS, 5: _MONTH_HOURS}
 _LEVEL_MAP = {"LEVEL_ADVANCED": "Advanced", "LEVEL_PRO": "Pro", "LEVEL_ALLEGRO": "Allegro"}
 CST = timezone(timedelta(hours=8))
-USAGE_RANGES = frozenset({"today", "7d", "all"})
+USAGE_RANGES = frozenset({"today", "7d", "month", "all"})
 DEFAULT_USAGE_LOG_PATH = "~/.suanpan/logs/usage.jsonl"
 _TOKEN_FIELDS = (
     "input_tokens",
@@ -57,14 +60,34 @@ _TOKEN_FIELDS = (
 _USAGE_NUMERIC_FIELDS = (*_TOKEN_FIELDS, "latency_ms", "status")
 
 
+def _fmt_dt(dt):
+    """Short Chinese datetime label — the quota reset-time display format."""
+    return f"{dt.month}月{dt.day}日 {dt:%H:%M}"
+
+
 def _fmt_reset(iso_ts):
-    """Format an ISO timestamp as a short Chinese date (Kimi reset-time display)."""
+    """Format an ISO timestamp as a short Chinese date, converted to CST
+    (provider reset times are UTC; the UI's convention is CST)."""
     try:
-        from datetime import datetime
         dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
-        return f"{dt.month}月{dt.day}日 {dt:%H:%M}"
+        return _fmt_dt(dt.astimezone(CST))
     except Exception:
         return iso_ts[:16]
+
+
+def _fmt_reset_ms(epoch_ms):
+    """Format an epoch-millis timestamp like _fmt_reset (GLM nextResetTime).
+    Returns None on malformed input (display simply omits the reset note)."""
+    try:
+        return _fmt_dt(datetime.fromtimestamp(int(epoch_ms) / 1000, tz=CST))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _quota_row(period, pct, used, limit, reset, sort_hours):
+    """One quota-window row; ``_sort`` is stripped after the ascending sort."""
+    return {"period": period, "pct": pct, "used": used, "limit": limit,
+            "reset": reset, "_sort": sort_hours}
 
 
 def _window_label(window):
@@ -124,41 +147,37 @@ def normalize_balance(raw, label):
         pcts = []
         for lim in d["limits"]:
             period = _UNIT_NAMES.get(lim.get("unit"), f"unit{lim.get('unit')}")
+            if lim.get("type") == "TIME_LIMIT":
+                # 工具时长配额（usageDetails: search-prime/web-reader/zread），
+                # 不是 token 用量——period 标口径，且不抑制本地月度 token 行
+                period += "·工具"
             p = lim.get("percentage")
             if isinstance(p, (int, float)):
                 pcts.append(int(p))
-            used = lim["currentValue"] if "currentValue" in lim else None
-            qlimit = lim["usage"] if "usage" in lim else None
-            quotas.append({
-                "period": period,
-                "pct": int(p) if isinstance(p, (int, float)) else None,
-                "used": used,
-                "limit": qlimit,
-                "reset": None,
-                "_sort": _UNIT_DURATION_HOURS.get(lim.get("unit"), 0),
-            })
+            quotas.append(_quota_row(
+                period,
+                int(p) if isinstance(p, (int, float)) else None,
+                lim["currentValue"] if "currentValue" in lim else None,
+                lim["usage"] if "usage" in lim else None,
+                _fmt_reset_ms(lim.get("nextResetTime")),
+                _UNIT_DURATION_HOURS.get(lim.get("unit"), 0),
+            ))
         quotas.sort(key=lambda q: q["_sort"])
         for q in quotas:
             del q["_sort"]
         return {"label": label, "primary": level,
                 "pct": max(pcts) if pcts else None,
                 "quotas": quotas}
-    # Kimi Coding Plan: {"usage": {周额度}, "limits": [{window: 5小时窗口}], "user": {...}}
+    # Kimi Coding Plan: {"usage": {周额度}, "limits": [{window: 5小时窗口}],
+    # "totalQuota": {月度会员池, 按套餐填充, 可能为 {}}, "user": {...}}
     if isinstance(raw.get("usage"), dict) and "limit" in raw["usage"]:
         u = raw["usage"]
         used, lim = int(u.get("used", 0)), int(u.get("limit", 0))
         pct_num = round(used / lim * 100) if lim > 0 else None
         level_raw = raw.get("user", {}).get("membership", {}).get("level", "")
         level = _LEVEL_MAP.get(level_raw, level_raw or "套餐")
-        quotas = [{
-            "period": "主配额",
-            "pct": pct_num,
-            "used": used,
-            "limit": lim,
-            "reset": _fmt_reset(u["resetTime"]) if u.get("resetTime") else None,
-        }]
+        quotas = []
         # limits[] holds windowed quotas (e.g. 300-minute = 5小时)
-        window_quotas = []
         for entry in raw.get("limits") or []:
             w = entry.get("window") or {}
             det = entry.get("detail") or {}
@@ -166,18 +185,30 @@ def normalize_balance(raw, label):
             if wlabel and det.get("limit"):
                 wused, wlim = int(det.get("used", 0)), int(det["limit"])
                 wpct = round(wused / wlim * 100) if wlim > 0 else None
-                window_quotas.append({
-                    "period": wlabel,
-                    "pct": wpct,
-                    "used": wused,
-                    "limit": wlim,
-                    "reset": _fmt_reset(det["resetTime"]) if det.get("resetTime") else None,
-                    "_sort": _window_duration_hours(w),
-                })
-        window_quotas.sort(key=lambda q: q["_sort"])
-        for q in window_quotas:
+                quotas.append(_quota_row(
+                    wlabel, wpct, wused, wlim,
+                    _fmt_reset(det["resetTime"]) if det.get("resetTime") else None,
+                    _window_duration_hours(w),
+                ))
+        quotas.append(_quota_row(
+            "每周", pct_num, used, lim,
+            _fmt_reset(u["resetTime"]) if u.get("resetTime") else None,
+            _WEEK_HOURS,
+        ))
+        # totalQuota = 月度会员池，按套餐填充（我们 Advanced 账号返回 {}）
+        tq = raw.get("totalQuota") or {}
+        if tq.get("limit"):
+            tused, tlim = int(tq.get("used", 0)), int(tq["limit"])
+            quotas.append(_quota_row(
+                _MONTHLY_PERIOD,
+                round(tused / tlim * 100) if tlim > 0 else None,
+                tused, tlim,
+                _fmt_reset(tq["resetTime"]) if tq.get("resetTime") else None,
+                _MONTH_HOURS,
+            ))
+        quotas.sort(key=lambda q: q["_sort"])
+        for q in quotas:
             del q["_sort"]
-        quotas.extend(window_quotas)
         all_pcts = [q["pct"] for q in quotas if q["pct"] is not None]
         return {"label": label, "primary": level,
                 "pct": max(all_pcts) if all_pcts else None,
@@ -293,8 +324,32 @@ def test_provider(sp_raw, name, model=None):
 
 
 def fetch_balance(sp_raw):
-    """Query each enabled provider's balance API. ``sp_raw`` = raw Suanpan config dict."""
+    """Query each enabled provider's balance API. ``sp_raw`` = raw Suanpan config dict.
+
+    Plan providers (quota windows) without an API-reported monthly TOKEN row
+    get a local row aggregated from the gateway usage log (source="local",
+    limit/pct None, zero-filled when the log has nothing — 三行永远齐).
+    An API monthly token pool (Kimi totalQuota, period exactly 每月) wins;
+    GLM's 每月·工具 (TIME_LIMIT) is a different unit and does not suppress it.
+    """
     results = []
+    monthly_providers = None  # lazy: only read the log when a plan lacks API monthly
+
+    def local_monthly_row(name):
+        nonlocal monthly_providers
+        if monthly_providers is None:
+            monthly_providers = fetch_usage(sp_raw, "month")["providers"]
+        bucket = monthly_providers.get(name)
+        return {
+            "period": _MONTHLY_PERIOD,
+            "pct": None,
+            "used": sum(bucket[f] for f in _TOKEN_FIELDS) if bucket else 0,
+            "limit": None,
+            "reset": None,
+            "source": "local",
+            "calls": bucket["calls"] if bucket else 0,
+        }
+
     for name, p in sp_raw.get("providers", {}).items():
         if p.get("enabled") is False:
             results.append({"provider": name, "enabled": False})
@@ -320,6 +375,13 @@ def fetch_balance(sp_raw):
                 api_res.append({"label": label, "error": e.msg[:120]})
             except Exception as e:
                 api_res.append({"label": label, "error": f"{type(e).__name__}"})
+        for res in api_res:
+            quotas = res.get("quotas")
+            if not isinstance(quotas, list):
+                continue
+            if any(q.get("period") == _MONTHLY_PERIOD for q in quotas):
+                continue
+            quotas.append(local_monthly_row(name))
         results.append({"provider": name, "supported": True, "apis": api_res})
     return results
 
@@ -403,8 +465,9 @@ def fetch_usage(sp_raw, usage_range="all"):
     """Aggregate the Suanpan usage log for a CST calendar range.
 
     ``sp_raw`` is the raw Suanpan config dict. ``usage_range`` is one of
-    ``today`` / ``7d`` / ``all``; seven days includes today and the preceding
-    six CST calendar dates.
+    ``today`` / ``7d`` / ``month`` / ``all``; seven days includes today and
+    the preceding six CST calendar dates, month is the current CST calendar
+    month from the 1st through today.
     """
     if usage_range not in USAGE_RANGES:
         raise ValueError(f"invalid usage range: {usage_range!r}")
@@ -412,6 +475,7 @@ def fetch_usage(sp_raw, usage_range="all"):
     first_day = (
         today if usage_range == "today"
         else today - timedelta(days=6) if usage_range == "7d"
+        else today.replace(day=1) if usage_range == "month"
         else None
     )
     path = os.path.expanduser(

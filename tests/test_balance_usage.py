@@ -60,6 +60,16 @@ def _http_error(code):
     return urllib.error.HTTPError("http://x", code, "err", {}, io.BytesIO(b""))
 
 
+def _frozen_datetime():
+    """datetime double pinned at 2026-08-19 12:00 CST (matches _usage_record)."""
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 8, 19, 12, 0, tzinfo=balance_usage.CST)
+            return value.astimezone(tz) if tz else value.replace(tzinfo=None)
+    return FrozenDateTime
+
+
 class TestFetchModels(unittest.TestCase):
     """fetch_models(sp_raw, name) → {"models": [...]} | {"error": ...}."""
 
@@ -237,6 +247,18 @@ class TestNormalizeBalance(unittest.TestCase):
         periods = [q["period"] for q in result["quotas"]]
         self.assertEqual(periods, ["5小时", "每周", "每月"])
 
+    def test_glm_time_limit_entries_labeled_tool_quota(self):
+        """TIME_LIMIT entries are 工具时长 quotas (usageDetails: search-prime /
+        web-reader / zread), not token usage — the period says so."""
+        raw = {"data": {"level": "max", "limits": [
+            {"type": "TIME_LIMIT", "unit": 5, "percentage": 0,
+             "usage": 4000, "currentValue": 7},
+            {"type": "TOKENS_LIMIT", "unit": 3, "percentage": 1},
+        ]}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        periods = [q["period"] for q in result["quotas"]]
+        self.assertEqual(periods, ["5小时", "每月·工具"])
+
     def test_glm_coding_plan_no_detail_fields(self):
         """When a GLM limit has only percentage (no currentValue/usage),
         used/limit are None."""
@@ -246,7 +268,29 @@ class TestNormalizeBalance(unittest.TestCase):
         self.assertIsNone(q["used"])
         self.assertIsNone(q["limit"])
 
-    # ── KIMI Coding Plan (quotas: main + windowed) ──
+    def test_glm_coding_plan_reset_from_next_reset_time(self):
+        """GLM limits[] carry nextResetTime (epoch ms) — surfaced as reset
+        (CST). Entries without it keep reset=None."""
+        raw = {"data": {"level": "pro", "limits": [
+            {"unit": 3, "percentage": 1, "usage": 12000, "currentValue": 12,
+             "nextResetTime": 1788192000000},  # 2026-09-01 00:00 CST
+            {"unit": 6, "percentage": 5, "usage": 60000, "currentValue": 3322},
+        ]}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        qs = result["quotas"]
+        self.assertEqual(qs[0]["reset"], "9月1日 00:00")
+        self.assertIsNone(qs[1]["reset"])
+
+    def test_reset_times_render_in_cst(self):
+        """Provider reset timestamps are UTC — display converts to CST."""
+        raw = {"usage": {"limit": "100", "used": "42",
+                         "resetTime": "2026-08-16T03:00:46Z"},
+               "user": {"membership": {"level": "LEVEL_PRO"}}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        self.assertEqual(result["quotas"][0]["reset"], "8月16日 11:00")
+
+    # ── KIMI Coding Plan (quotas: 5h window + weekly + optional monthly) ──
+    # Windows sort ascending by duration: 5小时 < 每周 < 每月 (same as GLM).
     def test_kimi_format(self):
         raw = {"usage": {"limit": "100", "used": "42"},
                "user": {"membership": {"level": "LEVEL_PRO"}}}
@@ -254,7 +298,7 @@ class TestNormalizeBalance(unittest.TestCase):
         self.assertEqual(result["primary"], "Pro")
         qs = result["quotas"]
         self.assertEqual(len(qs), 1)
-        self.assertEqual(qs[0]["period"], "主配额")
+        self.assertEqual(qs[0]["period"], "每周")
         self.assertEqual(qs[0]["used"], 42)
         self.assertEqual(qs[0]["limit"], 100)
         self.assertEqual(qs[0]["pct"], 42)
@@ -264,7 +308,7 @@ class TestNormalizeBalance(unittest.TestCase):
         raw = {"usage": {"limit": "100", "used": "42", "resetTime": "2026-09-01T00:00:00Z"},
                "user": {"membership": {"level": "LEVEL_PRO"}}}
         result = balance_usage.normalize_balance(raw, "Coding Plan")
-        self.assertEqual(result["quotas"][0]["period"], "主配额")
+        self.assertEqual(result["quotas"][0]["period"], "每周")
         self.assertIn("9月1日", result["quotas"][0]["reset"])
 
     def test_kimi_limits_window_shows_5h_quota(self):
@@ -281,18 +325,47 @@ class TestNormalizeBalance(unittest.TestCase):
         result = balance_usage.normalize_balance(raw, "Coding Plan")
         qs = result["quotas"]
         self.assertEqual(len(qs), 2)
-        # 主配额 first, then 5小时 window
-        self.assertEqual(qs[0]["period"], "主配额")
-        self.assertEqual(qs[0]["used"], 37)
+        # ascending by duration: 5小时 first, then 每周
+        self.assertEqual(qs[0]["period"], "5小时")
+        self.assertEqual(qs[0]["used"], 33)
         self.assertEqual(qs[0]["limit"], 100)
-        self.assertEqual(qs[0]["pct"], 37)
-        self.assertIn("8月16日", qs[0]["reset"])
-        self.assertEqual(qs[1]["period"], "5小时")
-        self.assertEqual(qs[1]["used"], 33)
+        self.assertEqual(qs[0]["pct"], 33)
+        self.assertIn("8月10日", qs[0]["reset"])
+        self.assertEqual(qs[1]["period"], "每周")
+        self.assertEqual(qs[1]["used"], 37)
         self.assertEqual(qs[1]["limit"], 100)
-        self.assertEqual(qs[1]["pct"], 33)
-        self.assertIn("8月10日", qs[1]["reset"])
+        self.assertEqual(qs[1]["pct"], 37)
+        self.assertIn("8月16日", qs[1]["reset"])
         self.assertEqual(result["pct"], 37)  # max across all windows
+
+    def test_kimi_total_quota_shows_monthly(self):
+        """totalQuota is the monthly membership pool (plan-dependent); when
+        populated it becomes the 每月 row, sorted after 每周."""
+        raw = {
+            "user": {"membership": {"level": "LEVEL_ALLEGRO"}},
+            "usage": {"limit": "100", "used": "20",
+                      "resetTime": "2026-08-16T03:00:46Z"},
+            "totalQuota": {"limit": "500", "used": "130",
+                           "resetTime": "2026-09-01T00:00:00Z"},
+        }
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        qs = result["quotas"]
+        self.assertEqual([q["period"] for q in qs], ["每周", "每月"])
+        self.assertEqual(result["primary"], "Allegro")
+        m = qs[1]
+        self.assertEqual(m["used"], 130)
+        self.assertEqual(m["limit"], 500)
+        self.assertEqual(m["pct"], 26)
+        self.assertIn("9月1日", m["reset"])
+        self.assertEqual(result["pct"], 26)  # max(20, 26)
+
+    def test_kimi_empty_total_quota_no_monthly(self):
+        """Our Advanced account returns "totalQuota": {} — no monthly row."""
+        raw = {"usage": {"limit": "100", "used": "42"},
+               "user": {"membership": {"level": "LEVEL_PRO"}},
+               "totalQuota": {}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan")
+        self.assertEqual([q["period"] for q in result["quotas"]], ["每周"])
 
     def test_kimi_pct_field_drives_color(self):
         raw = {"usage": {"limit": "100", "used": "85"},
@@ -328,6 +401,175 @@ class TestFetchBalance(unittest.TestCase):
         sp = {"providers": {"x": {"base_url": "https://api.deepseek.com"}}}
         result = balance_usage.fetch_balance(sp)
         self.assertEqual(result[0]["error"], "未配置 API Key")
+
+
+class TestFetchBalanceLocalMonthly(unittest.TestCase):
+    """Plan providers whose API reports no monthly token window get a local
+    fallback row aggregated from the gateway usage log (source="local";
+    zero-filled when the log has nothing — 三行永远齐). An API-reported
+    monthly token pool (Kimi totalQuota) wins; GLM's 每月·工具 (TIME_LIMIT)
+    is a different unit and does not suppress the local token row."""
+
+    GLM_QUOTA_URL = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
+    GLM_ACCOUNT_URL = ("https://www.bigmodel.cn/api/biz/account/"
+                       "query-customer-account-report")
+    KIMI_URL = "https://api.kimi.com/coding/v1/usages"
+
+    GLM_PRO_QUOTA = {"data": {"level": "pro", "limits": [
+        {"type": "CREDIT_LIMIT", "unit": 3, "percentage": 1,
+         "usage": 12000, "currentValue": 12},
+        {"type": "CREDIT_LIMIT", "unit": 6, "percentage": 5,
+         "usage": 60000, "currentValue": 3322}]}}
+    GLM_MAX_QUOTA = {"data": {"level": "max", "limits": [
+        {"type": "TOKENS_LIMIT", "unit": 3, "percentage": 0},
+        {"type": "TOKENS_LIMIT", "unit": 6, "percentage": 0},
+        {"type": "TIME_LIMIT", "unit": 5, "percentage": 0,
+         "usage": 4000, "currentValue": 7}]}}
+    GLM_ACCOUNT = {"data": {"balance": 1.0, "totalSpendAmount": 9.0}}
+    KIMI_PAYLOAD = {
+        "usage": {"limit": "100", "used": "46"},
+        "user": {"membership": {"level": "LEVEL_ADVANCED"}},
+        "limits": [{"window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                    "detail": {"limit": "100", "used": "1"}}],
+        "totalQuota": {},
+    }
+
+    def _run(self, by_url, sp):
+        def side_effect(url, headers=None, data=None, method=None,
+                        timeout=None):
+            return json.dumps(by_url[url]).encode()
+
+        with patch.object(AuthenticatedHttpClient, "open",
+                          side_effect=side_effect), \
+                patch.object(balance_usage, "datetime", _frozen_datetime()):
+            return balance_usage.fetch_balance(sp)
+
+    def _write_log(self, entries):
+        f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        for e in entries:
+            f.write(json.dumps(e) + "\n")
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def _glm_sp(self, log_path):
+        return {
+            "usage_log": {"path": log_path},
+            "providers": {"glm": {
+                "base_url": "https://open.bigmodel.cn/api/paas/v4",
+                "api_key": "k"}},
+        }
+
+    def test_pro_without_api_monthly_gets_local_row(self):
+        log = self._write_log([
+            _usage_record(provider="glm", input_tokens=10, output_tokens=5,
+                          cache_read_tokens=90),
+            _usage_record(provider="glm", input_tokens=20, output_tokens=15,
+                          cache_read_tokens=30, cache_creation_tokens=50),
+        ])
+        result = self._run(
+            {self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
+             self.GLM_ACCOUNT_URL: self.GLM_ACCOUNT}, self._glm_sp(log))
+        apis = result[0]["apis"]
+        qs = apis[0]["quotas"]
+        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
+        m = qs[2]
+        self.assertEqual(m["used"], 220)  # 10+5+90 + 20+15+30+50
+        self.assertEqual(m["calls"], 2)
+        self.assertIsNone(m["limit"])
+        self.assertIsNone(m["pct"])
+        self.assertEqual(m["source"], "local")
+        # 账户余额 API has no quotas — untouched
+        self.assertNotIn("quotas", apis[1])
+
+    def test_api_monthly_wins_over_local(self):
+        """Kimi-style totalQuota (period exactly 每月) suppresses the local row."""
+        log = self._write_log([_usage_record(provider="kimi", input_tokens=9)])
+        sp = {
+            "usage_log": {"path": log},
+            "providers": {"kimi": {
+                "base_url": "https://api.kimi.com/anthropic", "api_key": "k"}},
+        }
+        payload = dict(self.KIMI_PAYLOAD,
+                       totalQuota={"limit": "500", "used": "130"})
+        result = self._run({self.KIMI_URL: payload}, sp)
+        qs = result[0]["apis"][0]["quotas"]
+        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
+        m = qs[2]
+        self.assertEqual(m["used"], 130)   # API 口径，不是本地聚合
+        self.assertEqual(m["limit"], 500)
+        self.assertNotIn("source", m)
+
+    def test_glm_max_tool_time_monthly_does_not_suppress_local_tokens(self):
+        """GLM Max unit 5 is TIME_LIMIT (工具时长), not token usage: it is
+        labeled 每月·工具 and the local token row is still appended."""
+        log = self._write_log([_usage_record(provider="glm", input_tokens=9,
+                                             output_tokens=1)])
+        result = self._run(
+            {self.GLM_QUOTA_URL: self.GLM_MAX_QUOTA,
+             self.GLM_ACCOUNT_URL: self.GLM_ACCOUNT}, self._glm_sp(log))
+        qs = result[0]["apis"][0]["quotas"]
+        self.assertEqual([q["period"] for q in qs],
+                         ["5小时", "每周", "每月·工具", "每月"])
+        tool = qs[2]
+        self.assertEqual(tool["used"], 7)
+        self.assertEqual(tool["limit"], 4000)
+        self.assertNotIn("source", tool)
+        local = qs[3]
+        self.assertEqual(local["source"], "local")
+        self.assertEqual(local["used"], 10)
+
+    def test_kimi_empty_total_quota_gets_local_row(self):
+        log = self._write_log([_usage_record(
+            provider="kimi", input_tokens=100, output_tokens=50)])
+        sp = {
+            "usage_log": {"path": log},
+            "providers": {"kimi": {
+                "base_url": "https://api.kimi.com/anthropic", "api_key": "k"}},
+        }
+        result = self._run({self.KIMI_URL: self.KIMI_PAYLOAD}, sp)
+        qs = result[0]["apis"][0]["quotas"]
+        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
+        self.assertEqual(qs[2]["source"], "local")
+        self.assertEqual(qs[2]["used"], 150)
+
+    def test_missing_log_still_shows_zero_local_row(self):
+        """「三行永远齐」：本地无数据时显示 0 行而非消失。"""
+        result = self._run(
+            {self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
+             self.GLM_ACCOUNT_URL: self.GLM_ACCOUNT},
+            self._glm_sp("/nonexistent/usage.jsonl"))
+        qs = result[0]["apis"][0]["quotas"]
+        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
+        m = qs[2]
+        self.assertEqual(m["source"], "local")
+        self.assertEqual(m["used"], 0)
+        self.assertEqual(m["calls"], 0)
+
+    def test_no_local_entries_for_provider_still_shows_zero_row(self):
+        log = self._write_log([_usage_record(provider="other", input_tokens=1)])
+        result = self._run(
+            {self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
+             self.GLM_ACCOUNT_URL: self.GLM_ACCOUNT}, self._glm_sp(log))
+        qs = result[0]["apis"][0]["quotas"]
+        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
+        self.assertEqual(qs[2]["used"], 0)
+        self.assertEqual(qs[2]["source"], "local")
+
+    def test_simple_balance_provider_untouched(self):
+        log = self._write_log([
+            _usage_record(provider="deepseek", input_tokens=1)])
+        sp = {
+            "usage_log": {"path": log},
+            "providers": {"deepseek": {
+                "base_url": "https://api.deepseek.com/anthropic",
+                "api_key": "k"}},
+        }
+        result = self._run(
+            {"https://api.deepseek.com/user/balance": {"balance_infos": [
+                {"total_balance": "9.0", "topped_up_balance": "9.0",
+                 "currency": "CNY"}]}}, sp)
+        self.assertNotIn("quotas", result[0]["apis"][0])
 
 
 class TestFetchUsage(unittest.TestCase):
@@ -430,12 +672,6 @@ class TestFetchUsage(unittest.TestCase):
         self.assertEqual(result["scenarios"]["inline"]["calls"], 1)
 
     def test_today_and_seven_day_ranges_use_cst_calendar_boundaries(self):
-        class FrozenDateTime(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                value = cls(2026, 8, 19, 12, 0, tzinfo=balance_usage.CST)
-                return value.astimezone(tz) if tz else value.replace(tzinfo=None)
-
         timestamps = [
             "2026-08-19T00:00:00+08:00",  # today, exact lower boundary
             "2026-08-18T16:30:00Z",       # today after conversion to CST
@@ -453,7 +689,7 @@ class TestFetchUsage(unittest.TestCase):
                 }) + "\n")
             path = f.name
         try:
-            with patch.object(balance_usage, "datetime", FrozenDateTime):
+            with patch.object(balance_usage, "datetime", _frozen_datetime()):
                 today = balance_usage.fetch_usage(
                     {"usage_log": {"path": path}}, "today")
                 seven_days = balance_usage.fetch_usage(
@@ -467,6 +703,28 @@ class TestFetchUsage(unittest.TestCase):
         self.assertEqual([d["date"] for d in today["daily"]], ["2026-08-19"])
         self.assertEqual(seven_days["total"]["calls"], 3)
         self.assertEqual(all_time["total"]["calls"], 5)
+
+    def test_month_range_uses_cst_calendar_month(self):
+        timestamps = [
+            "2026-08-01T00:00:00+08:00",  # month lower boundary, included
+            "2026-08-19T12:00:00+08:00",  # today
+            "2026-07-31T23:59:59+08:00",  # last month, excluded
+            "2026-08-31T00:00:00+08:00",  # future day, same month — excluded
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            for ts in timestamps:
+                f.write(json.dumps(_usage_record(ts=ts)) + "\n")
+            path = f.name
+        try:
+            with patch.object(balance_usage, "datetime", _frozen_datetime()):
+                month = balance_usage.fetch_usage(
+                    {"usage_log": {"path": path}}, "month")
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(month["total"]["calls"], 2)
+        self.assertEqual([d["date"] for d in month["daily"]],
+                         ["2026-08-01", "2026-08-19"])
 
     def test_corrupt_and_non_object_lines_are_skipped(self):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:

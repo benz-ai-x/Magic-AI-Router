@@ -562,6 +562,14 @@ function balanceRowModel(b){
   (b.apis||[]).forEach(a=>{(a.error||Array.isArray(a.quotas)?quotaApis:moneyApis).push(a);});
   return{name:b.provider,state:'ok',quotaApis,moneyApis};
 }
+// 配额行展示：本地聚合（非供应商 API 口径）的行标注来源；数字复用 fmtNum 紧凑格式。
+function quotaPeriodLabel(q){return q.source==='local'?q.period+'（网关）':q.period;}
+function quotaNumsText(q){
+  const used=q.used!=null?fmtNum(q.used):'—';
+  const lim=q.limit!=null?fmtNum(q.limit):'—';
+  const base=(q.pct!=null?`已用 ${q.pct}% · `:'')+`${used}/${lim}`;
+  return q.source==='local'&&q.calls!=null?`${base} · ${q.calls} 次`:base;
+}
 // Context-window labels for well-known model ids (official docs/API data,
 // 2026-08). Display-only annotation — option values stay "provider/model";
 // unknown ids simply get no suffix.
@@ -1445,18 +1453,16 @@ function renderBalance(bal){
     if(a.label||a.primary)plan=`<div class="bal-plan-line"><span class="bal-plan-label">${esc(a.label||'')}</span><strong class="bal-plan">${esc(a.primary||'')}</strong></div>`;
     if(!Array.isArray(a.quotas))return plan+(a.secondary?`<div class="s-secondary">${esc(a.secondary)}</div>`:'');
     return plan+`<div class="bal-quotas">`+a.quotas.map(q=>{
-      const used=esc(q.used!=null?q.used:'—');
-      const lim=esc(q.limit!=null?q.limit:'—');
+      const period=quotaPeriodLabel(q);
       const pct=q.pct!=null?Math.min(Math.max(q.pct,0),100):0;
-      const pctTxt=q.pct!=null?`已用 ${q.pct}%`:'';
       const resetTxt=q.reset?` · 重置 ${esc(q.reset)}`:'';
       const w=Math.round(pct*2)/2;
       return `<div class="bal-quota">
-        <span class="bal-period">${esc(q.period)}</span>
-        <div class="bal-progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(q.period)}用量">
+        <span class="bal-period">${esc(period)}</span>
+        <div class="bal-progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(period)}用量">
           <div class="bal-progress-fill" style="width:${w}%;background:${barColor(pct)}"></div>
         </div>
-        <span class="bal-nums">${pctTxt} · ${used}/${lim}</span>
+        <span class="bal-nums">${esc(quotaNumsText(q))}</span>
         <span class="bal-reset">${resetTxt}</span>
       </div>`;
     }).join('')+`</div>`;
