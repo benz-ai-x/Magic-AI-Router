@@ -67,6 +67,7 @@ tunnel/ ── SSH 隧道核心
   retry_scheduler.py ── SSH 重试退避调度
   host_key.py ── SSH known_hosts 管理
   host_key_flow.py ── SSH 主机密钥信任流程
+  ssh_launch.py ── SSH 调用策略单一归宿：argv 构建（host-key 三件套 / sshpass-via-fd / -i）+ 一次性探针 probe() + stderr→中文失败分类；SSHMonitor 与 test_tunnel 的共用上游
 
 shellui/ ── 界面
   menu_builder.py ── 菜单栏 UI 构建 + 状态图标

@@ -133,6 +133,7 @@ python -m PyInstaller \
     --add-data "tunnel/retry_scheduler.py:." \
     --add-data "tunnel/host_key.py:." \
     --add-data "tunnel/host_key_flow.py:." \
+    --add-data "tunnel/ssh_launch.py:." \
     --add-data "mpconf/config.py:." \
     --add-data "mpconf/config_store.py:." \
     --add-data "mpconf/config_state.py:." \

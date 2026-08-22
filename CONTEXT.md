@@ -26,6 +26,10 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 一条 SSH 动态端口转发连接（`ssh -D`），包含 SSH 连接本身和它在本地创建的 SOCKS5 监听。两者共生——SSH 断开则 SOCKS5 随之失效。支持配置多条隧道，同一时间只有一条活跃（当前隧道）。切换隧道 = 关闭旧 SSH 连接，建立新 SSH 连接。
 
+### SSH 调用策略（ssh_launch）
+
+「按我们的策略调用 ssh」的单一归宿（`tunnel/ssh_launch.py`）：argv 构建（host-key 三件套 StrictHostKeyChecking=yes + 应用专用 known_hosts + GlobalKnownHostsFile=/dev/null；sshpass-via-fd 密码注入，密码永不出现在 argv/ps；key 认证 -i 传参）、一次性连通性探针 `probe()`、stderr→中文短语的有序失败分类表（密钥已变更先于未信任）。两个调用方各留本职：`SSHMonitor.start` 只持有长驻子进程生命周期（消费 `build_tunnel_command` 的 `SshCommand`），`config_server.test_tunnel` 只持有输入校验与 Keychain 取用（委托 `probe()`）——探针与真实隧道行为恒等，改策略只落一处。
+
 ### 抓包模式（Capture Mode）
 
 实验性功能。启动 mitmdump 作为 TLS MITM 代理（`:8080`），级联到本地代理（`:8888`）。系统代理在抓包期间指向 mitmdump 而非本地代理。
