@@ -17,7 +17,7 @@
 | 环境变量 | 语义 | 来源角色 |
 |---|---|---|
 | `ANTHROPIC_BASE_URL` | 网关地址 `http://<suanpan_listen>` | 固定 |
-| `ANTHROPIC_AUTH_TOKEN` | 占位 token `mage-router` | 固定 |
+| `ANTHROPIC_AUTH_TOKEN` | ~~占位 token `mage-router`~~ 本地客户端 token（2026-08-21 issue #9 增补取代，见文末「增补」节） | 固定 |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `"1"`（禁用实验 beta，兼容供应商 API） | 固定 |
 | `ANTHROPIC_MODEL` | 默认兜底模型 | `default` 角色 |
 | `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` / `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_HAIKU_MODEL` | 各 tier 模型 | `opus`/`sonnet`/`fable`/`haiku` 角色 |
@@ -59,11 +59,11 @@
 
 - **Token 来源**：每安装实例专用随机 token（`mpconf/local_token.py`，
   `secrets.token_hex(16)`，无业务含义），替换历史 `mage-router` 占位。
-- **存储**：`~/.magic-proxy.json` 的 `local_client_token` 字段（配置 store
-  原子写 0600 + 事务边界）；掩码布尔契约（token_set），明文永不回显于
-  UI/日志/preview diff。
-- **轮换**：单活——任意时刻一个有效值，`rotate_token()` 覆盖落盘即刻
-  作废旧值。
+- **存储**：`~/.magic-proxy.json` 的 `local_client_token` 字段（经
+  `config_store.atomic_write` 0600 + 原子替换）；明文永不回显于
+  UI/日志/preview diff（`claude_code_setup._mask_old` 掩码）。
+- **轮换**：设计上单活（任意时刻一个有效值）；轮换入口随 #49 删除
+  （从未接线，重装/手改字段即轮换）。
 - **认证关闭语义**：顶层 `api_key` 空 = 网关不校验本地客户端身份，
   但**所有出站路径**（含 keyless Provider、count_tokens）**无条件剥除**
   一切入站 Authorization/x-api-key——`mage-router`、本地 token、用户真实

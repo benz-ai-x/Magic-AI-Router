@@ -190,7 +190,7 @@ async def forward_request(
     normalize_body(body, provider_name,
                    anthropic_native=provider_cfg.anthropic_native)
     headers = provider_cfg.build_outbound_headers(
-        incoming_headers, api_key, gateway_key=config.api_key)
+        incoming_headers, api_key)
     url = f"{provider_cfg.base_url.rstrip('/')}/v1/messages"
 
     try:
@@ -256,7 +256,7 @@ async def forward_count_tokens(
     normalize_body(body, provider_name,
                    anthropic_native=provider_cfg.anthropic_native)
     headers = provider_cfg.build_outbound_headers(
-        dict(request.headers), api_key, gateway_key=config.api_key)
+        dict(request.headers), api_key)
     url = f"{provider_cfg.base_url.rstrip('/')}/v1/messages/count_tokens"
 
     try:

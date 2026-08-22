@@ -82,42 +82,27 @@ class TestBuildOutboundHeaders(unittest.TestCase):
 
 
 class TestGatewayKeyPassthrough(unittest.TestCase):
-    """Without a provider key, incoming auth is passed through for OAuth
-    backends — but never the gateway's own gate key (#1: a client's
-    x-api-key/Authorization carrying the gateway key must not leak to a
-    third-party backend)."""
+    """issue #9 契约：keyless 出站无条件剥除一切入站凭证（#49 起
+    gateway_key 形参随死代码删除——比较逻辑被无条件剥除取代）。"""
 
-    def test_gateway_key_x_api_key_not_passed_through(self):
-        h = build_outbound_headers({"x-api-key": "gate-key"}, None,
-                                   gateway_key="gate-key")
+    def test_gate_key_x_api_key_not_passed_through(self):
+        h = build_outbound_headers({"x-api-key": "gate-key"}, None)
         self.assertEqual(h, {})
 
-    def test_gateway_key_bearer_not_passed_through(self):
-        h = build_outbound_headers({"authorization": "Bearer gate-key"}, None,
-                                   gateway_key="gate-key")
+    def test_gate_key_bearer_not_passed_through(self):
+        h = build_outbound_headers({"authorization": "Bearer gate-key"}, None)
         self.assertEqual(h, {})
 
-    def test_other_auth_still_passed_through(self):
-        """issue #9 契约反转：keyless 出站剥除一切入站凭证。"""
+    def test_any_auth_never_passed_through_keyless(self):
         incoming = {"authorization": "Bearer oauth-token", "x-api-key": "k"}
-        h = build_outbound_headers(incoming, None, gateway_key="gate-key")
-        self.assertNotIn("authorization", h)
-        self.assertNotIn("x-api-key", h)
-
-    def test_gateway_key_moot_when_provider_key_set(self):
-        # With a provider key, outbound auth is provider's own; the gateway
-        # key parameter must not change anything.
-        h = build_outbound_headers({"x-api-key": "gate-key"}, "sk-x",
-                                   auth_header="x-api-key",
-                                   gateway_key="gate-key")
-        self.assertEqual(h, {"x-api-key": "sk-x"})
-
-    def test_no_gateway_key_keeps_passthrough(self):
-        """issue #9 契约反转：keyless 出站剥除一切入站凭证。"""
-        incoming = {"authorization": "Bearer whatever", "x-api-key": "k"}
         h = build_outbound_headers(incoming, None)
         self.assertNotIn("authorization", h)
         self.assertNotIn("x-api-key", h)
+
+    def test_provider_key_set_wins(self):
+        h = build_outbound_headers({"x-api-key": "gate-key"}, "sk-x",
+                                   auth_header="x-api-key")
+        self.assertEqual(h, {"x-api-key": "sk-x"})
 
 
 if __name__ == "__main__":

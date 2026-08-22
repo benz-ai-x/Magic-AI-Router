@@ -3,8 +3,9 @@
 账房：月底对账就靠这个文件。
 
 失败路径韧性（issue #15）：write/rotate 的任何 OSError 都被吞并计数
-（best-effort adapter——业务响应不依赖观测写入成功）；rolling totals
-只在落盘成功后更新；目录/文件强制 0700/0600、拒绝不安全 symlink。
+（best-effort adapter——业务响应不依赖观测写入成功）。聚合读取方在
+services/balance_usage（全文件扫描，CST 范围过滤）；目录/文件强制
+0700/0600、拒绝不安全 symlink。
 """
 
 from __future__ import annotations
@@ -44,9 +45,6 @@ class UsageLogger:
         self.path = Path(path).expanduser()
         self._lock = Lock()
         self.write_failures = 0
-        # In-memory rolling totals (aggregate reads never scan the JSONL)
-        self.rolling = {"calls": 0, "input_tokens": 0, "output_tokens": 0,
-                        "errors": 0, "latency_sum": 0}
         if self.enabled:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             os.chmod(self.path.parent, 0o700)
@@ -80,13 +78,6 @@ class UsageLogger:
             except OSError as exc:
                 self._fail(exc)
                 return
-            # rolling totals 只在落盘成功后更新
-            self.rolling["calls"] += 1
-            self.rolling["input_tokens"] += entry.input_tokens
-            self.rolling["output_tokens"] += entry.output_tokens
-            self.rolling["latency_sum"] += entry.latency_ms
-            if entry.status >= 400:
-                self.rolling["errors"] += 1
 
     def _maybe_rotate(self) -> None:
         """Rename current log to .1 when it exceeds the size limit."""

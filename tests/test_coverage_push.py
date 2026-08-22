@@ -113,8 +113,8 @@ class TestForwardRequest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SUBAGENT-MODEL", body.get("system", ""))
 
     async def test_gateway_key_not_forwarded_to_keyless_provider(self):
-        """#1: config.api_key (the gate) must be stripped before the client's
-        auth headers are passed through to a provider without its own key."""
+        """issue #9：keyless Provider 出站无条件剥除一切入站凭证——
+        网关 gate key 也不得上游。"""
         mock_request = MagicMock()
         mock_request.headers = {"x-api-key": "gate-key"}
         body = {"model": "test", "max_tokens": 16, "messages": []}

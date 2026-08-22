@@ -291,9 +291,10 @@ def preview(roles=None):
 def setup(roles=None):
     """Configure ~/.claude/settings.json to route Claude Code through the gateway.
 
-    Writes ANTHROPIC_BASE_URL to the gateway address, sets a placeholder auth
-    token, writes model mappings (from explicit roles or derived from Suanpan
-    routing rules), and sets CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1.
+    Writes ANTHROPIC_BASE_URL to the gateway address, writes the local
+    client token (issue #9——stored in ~/.magic-proxy.json, never echoed in
+    plaintext), writes model mappings (from explicit roles or derived from
+    Suanpan routing rules), and sets CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1.
     Backs up the original settings on the first write only (see module
     docstring); replaced user-set values are reported in the returned msg.
 
