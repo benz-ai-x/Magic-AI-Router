@@ -35,13 +35,19 @@ rules: []
 
 
 class SuanpanRuntime:
-    """Manage the Suanpan gateway lifecycle via AsyncRuntime."""
+    """Manage the Suanpan gateway lifecycle via AsyncRuntime.
 
-    def __init__(self):
+    bind_host 是 Docker 适配的 seam：缺省 None = macOS 形态（监听地址
+    取自配置 + 强制回环守卫）；容器形态传 "0.0.0.0"（信任边界=宿主机
+    端口映射），回环守卫不适用。
+    """
+
+    def __init__(self, bind_host=None):
         self._rt = AsyncRuntime("SuanpanGateway", stop_timeout=3)
         self._config_path = get_path("sp")
         self._import_error = ""
         self._cached_listen = ""
+        self._bind_host = bind_host
 
     @property
     def running(self):
@@ -111,7 +117,10 @@ class SuanpanRuntime:
             try:
                 host, port = netloc.parse_listen(
                     config.listen_address(), default_port=9527)
-                netloc.require_loopback(host)
+                if self._bind_host is not None:
+                    host = self._bind_host
+                else:
+                    netloc.require_loopback(host)
             except ValueError as exc:
                 raise ValueError(f"Invalid Suanpan listen address: {exc}") from None
             server_config = uvicorn.Config(

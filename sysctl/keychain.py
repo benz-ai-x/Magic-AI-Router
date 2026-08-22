@@ -3,10 +3,17 @@
 Uses SecItemAdd/SecItemCopyMatching/SecItemDelete directly so the password
 never appears in a subprocess argv — the old `security -w <pw>` CLI path was
 briefly visible in `ps` (#40).
+
+Security 缺失（Linux 容器）时模块仍可导入：Security=None，公开函数的
+全吞异常兜底（keychain must never raise to UI）把 None 解引用转成
+False/""——Docker 路径本就不调用这些函数。
 """
 import logging
 
-import Security
+try:
+    import Security
+except ImportError:
+    Security = None
 
 logger = logging.getLogger("magic-proxy.keychain")
 

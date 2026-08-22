@@ -247,5 +247,44 @@ class TestFactoryListenValidation(unittest.TestCase):
         self.assertTrue(mock_server.should_exit)
 
 
+class TestBindHostOverride(unittest.TestCase):
+    """bind_host 构造参数（Docker 适配 seam）：设置后直接用该地址绑
+    uvicorn 并跳过回环守卫；缺省保持 macOS 行为（config 地址 + 强制回环）。"""
+
+    def _config_kwargs(self, rt, listen):
+        """跑 start() 并调用捕获的 factory，返回 uvicorn.Config 的关键字参数。"""
+        import uvicorn
+        captured = {}
+        mock_config = MagicMock()
+        mock_config.listen_address.return_value = listen
+        with patch.object(rt._rt, "start",
+                          side_effect=lambda f: captured.setdefault("f", f) or True),              patch("suanpan.config.load_config", return_value=mock_config),              patch("suanpan.main.create_app", return_value=MagicMock()),              patch.object(uvicorn, "Config") as mock_uvicorn_config,              patch.object(uvicorn, "Server", return_value=MagicMock()),              patch.object(rt, "_ensure_config"):
+            rt.start()
+            captured["f"](MagicMock())
+        return mock_uvicorn_config.call_args[1]
+
+    def test_override_binds_wildcard(self):
+        rt = SuanpanRuntime(bind_host="0.0.0.0")
+        self.assertEqual(
+            self._config_kwargs(rt, "127.0.0.1:9527")["host"], "0.0.0.0")
+
+    def test_override_skips_loopback_guard(self):
+        # 即便 config 写了非回环地址也不报——守卫只属于 macOS 形态
+        rt = SuanpanRuntime(bind_host="0.0.0.0")
+        self.assertEqual(
+            self._config_kwargs(rt, "1.2.3.4:9527")["host"], "0.0.0.0")
+
+    def test_default_still_guards_loopback(self):
+        rt = SuanpanRuntime()
+        factory, _ = _capture_factory(rt, "1.2.3.4:9527")
+        with self.assertRaisesRegex(ValueError, "Invalid Suanpan listen"):
+            factory(MagicMock())
+
+    def test_override_keeps_config_port(self):
+        rt = SuanpanRuntime(bind_host="0.0.0.0")
+        self.assertEqual(
+            self._config_kwargs(rt, "127.0.0.1:19527")["port"], 19527)
+
+
 if __name__ == "__main__":
     unittest.main()

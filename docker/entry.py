@@ -13,39 +13,17 @@
   跨容器重建保持稳定。容器内 suanpan_listen() 算出的
   http://127.0.0.1:<port> 恰等于宿主机侧 Claude Code 应使用的地址。
 
-零修改现有代码：Linux 容器内 PyObjC 的 ``Security`` 不存在，而
-``suanpan.config`` → ``mpconf.config`` → ``sysctl.keychain`` 的模块级
-import 链会拉到它——入口在 import suanpan 前注入空模块 stub；Docker
-路径永不调用被 stub 的 keychain 函数。
+Linux 容器内 PyObjC 的 ``Security`` 不存在：``sysctl.keychain`` 自身
+try/except 可选化（Security=None + 全吞异常兜底），import 链裸奔即可，
+无需任何 stub。
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
-import types
 
-
-def install_macos_stubs(force: bool = False) -> None:
-    """为 Linux 容器注入 ``Security`` 空模块（PyObjC 缺失时）。
-
-    ``sysctl/keychain.py`` 模块级只 ``import Security``、函数内才取属性，
-    Docker 路径不调用这些函数——空模块即足以让 import 链通过。
-    force=True 无条件替换为 stub（测试用；容器内永不传）。stub 带
-    ``__docker_stub__`` 标记，测试据此清理、绝不误删真实 PyObjC 模块。
-    """
-    if not force:
-        try:
-            import Security  # noqa: F401
-            return
-        except ImportError:
-            pass
-    cur = sys.modules.get("Security")
-    if getattr(cur, "__docker_stub__", False):
-        return  # 已是 stub——幂等
-    stub = types.ModuleType("Security")
-    stub.__docker_stub__ = True
-    sys.modules["Security"] = stub
+from services.suanpan_runtime import SuanpanRuntime
 
 
 def default_paths(env=None):
@@ -104,7 +82,6 @@ def run_sync(sp_path: str, mp_path: str, claude_settings_path: str,
     dry_run=True 走 preview()（只出逐键 diff）；否则 setup()（幂等写入，
     首写 .bak，token 掩码）。结果以 JSON 打到 stdout；退出码 0/1。
     """
-    install_macos_stubs()
     redirect_paths(sp_path, mp_path, claude_settings_path)
     from services import claude_code_setup
     if dry_run:
@@ -122,7 +99,6 @@ def load_app(sp_path: str):
     /health 与端口。绕开 run_from_config_path 的回环守卫（见模块
     docstring）：绑定 0.0.0.0 由 run_serve 决定。
     """
-    install_macos_stubs()
     bootstrap_default_config(sp_path, os.path.dirname(sp_path) or ".")
     from suanpan.config import load_config
     from suanpan.main import create_app
@@ -133,22 +109,25 @@ def load_app(sp_path: str):
 def run_serve() -> int:
     """serve 模式：网关绑 0.0.0.0 + 配置页面 :9528（共用同一 token）。
 
-    GatewayRunner 线程化跑网关；DockerConfigServer 的 on_sp_saved 指向
-    runner.reload——配置页保存 → 网关热重载，无需重启容器（macOS 版经
-    SuanpanRuntime.reload 的等价机制）。
+    SuanpanRuntime(bind_host="0.0.0.0") 跑网关；config server 的
+    on_sp_saved 指向 runner.reload——配置页保存 → 网关热重载，无需重启
+    容器（与 macOS 版同一运行时，仅绑定地址形态不同）。
     """
     paths = default_paths()
-    runner = GatewayRunner(paths["sp"])
+    # 先重定向再构造——SuanpanRuntime 经 PATHS["sp"] 取配置路径；
+    # 缺配置文件时 _ensure_config 首启自建（取代 GatewayRunner 的静默死线程）
+    redirect_paths(paths["sp"], paths["mp"], paths["claude_settings"])
+    runner = SuanpanRuntime(bind_host="0.0.0.0")
     runner.start()
     # 配置页面与网关同容器、同 token——config-ui 失败不阻塞网关（best-effort）
-    cfg = DockerConfigServer(mp_path=paths["mp"], sp_path=paths["sp"],
+    cfg = make_config_server(paths["mp"], paths["sp"],
                              on_sp_saved=runner.reload)
-    ok, url = cfg.start()
+    ok = cfg.start()
     if ok:
-        print(f"配置页面: {url}  Bearer token: {cfg.token}", flush=True)
+        print(f"配置页面: {cfg.url}  Bearer token: {cfg.token}", flush=True)
     else:
         print("config-ui 启动失败（9528 占用？），仅跑网关", file=sys.stderr)
-    # 主线程阻塞保活（GatewayRunner 在 daemon 线程跑网关）
+    # 主线程阻塞保活（网关在 AsyncRuntime 的 daemon 线程里跑）
     try:
         import time
         while True:
@@ -191,11 +170,10 @@ def main(argv=None) -> int:
 
 
 # ── config-ui：Web 配置页面（:9528）──────────────────────────────────
-# 复用 services.config_server（纯 stdlib），两处 Docker 适配：
-# 1. 绑定 0.0.0.0（基类硬编码 127.0.0.1，容器外不可达）——子类覆盖，零修改基类
-# 2. keychain 传 None（Linux 无 macOS Keychain）——ConfigStateStore 的
-#    `self._keychain is not None` 守卫让 SP-only 保存自然跳过 keychain 段。
-# token 复用 #22 的 local_client_token（get_local_token 幂等，零新 secret）。
+# 复用参数化的 services.config_server.ConfigServer（纯 stdlib）：
+# Docker 差异全部是 make_config_server 的构造参数（0.0.0.0 + 卷内固定
+# token）。token 复用 #22 的 local_client_token（get_local_token 幂等，
+# 零新 secret）。
 
 
 def config_token(mp_path: str) -> str:
@@ -204,137 +182,31 @@ def config_token(mp_path: str) -> str:
     return get_local_token(mp_path)
 
 
-class DockerConfigServer:
-    """services.config_server 的 Docker 适配（薄包装，零修改基类）."""
+def make_config_server(mp_path: str, sp_path: str, on_sp_saved=None,
+                       port: int = 9528):
+    """Docker 形态的 config server 装配：差异全部是构造参数。
 
-    def __init__(self, port=9528, mp_path=None, sp_path=None, on_sp_saved=None):
-        self._port = port
-        self._bind_host = "0.0.0.0"   # 基类硬编码 127.0.0.1，容器外不可达
-        self._keychain = None          # Linux 无 Keychain——见 config_state 守卫
-        self._mp_path = mp_path
-        self._sp_path = sp_path
-        self._on_sp_saved = on_sp_saved  # SP 保存成功后回调（热重载网关）
-        self._server = None
-        self._token = None
-
-    @property
-    def token(self):
-        return self._token
-
-    def start(self):
-        """启动 config server（绑 0.0.0.0 + 固定 token）。返回 (ok, url)。"""
-        install_macos_stubs()
-        from services import config_server as cs
-
-        paths = default_paths()
-        mp_path = self._mp_path or paths["mp"]
-        sp_path = self._sp_path or paths["sp"]
-        # 让 config_server 的 sp_load_masked / ConfigStateStore 读写目标文件
-        redirect_paths(sp_path, mp_path, paths["claude_settings"])
-        self._token = config_token(mp_path)
-
-        try:
-            server = cs._ThreadingHTTPServer(
-                (self._bind_host, self._port), cs._Handler,
-                expected_token=self._token,
-                on_sp_saved=self._on_sp_saved)
-        except OSError:
-            return False, ""
-        self._server = server
-        import threading
-        threading.Thread(
-            target=server.serve_forever, name="DockerConfigServer",
-            daemon=True).start()
-        return True, f"http://127.0.0.1:{self._port}/"
-
-    def stop(self):
-        if self._server:
-            self._server.shutdown()
-            self._server.server_close()
-            self._server = None
-
-
-class GatewayRunner:
-    """Suanpan 网关的线程化运行器：uvicorn 跑在 daemon 线程，可 reload。
-
-    macOS 版经 SuanpanRuntime（AsyncRuntime 状态机）管理；Docker 版
-    uvicorn.run() 阻塞主线程，reload 须能从 config server 线程触发——
-    此类把 Server.run() 协程放进独立线程，reload = should_exit + join +
-    重读配置重起。容器内绑 0.0.0.0（信任边界=宿主机端口映射）。
+    重定向 PATHS 三键后构造参数化 ConfigServer——绑 0.0.0.0（容器外
+    经宿主机端口映射可达）、token 取配置卷的 local_client_token
+    （与 sync 同源，零新 secret）。私有符号接触为零。
     """
-
-    def __init__(self, sp_path: str):
-        self._sp_path = sp_path
-        self._server = None
-        self._thread = None
-        self._config = None
-
-    @property
-    def running(self):
-        return bool(self._thread and self._thread.is_alive())
-
-    @property
-    def port(self):
-        return self._config.listen_port if self._config else None
-
-    @property
-    def providers(self):
-        return dict(self._config.providers) if self._config else {}
-
-    def _serve_once(self):
-        """在线程里跑一个 uvicorn Server（阻塞至 should_exit）。"""
-        import asyncio
-        import uvicorn
-        from suanpan.config import load_config
-        from suanpan.main import create_app
-
-        self._config = load_config(self._sp_path)
-        app = create_app(self._config, config_path=self._sp_path)
-        config = uvicorn.Config(
-            app, host="0.0.0.0", port=self._config.listen_port,
-            log_level="warning", loop="asyncio")
-        self._server = uvicorn.Server(config)
-        asyncio.run(self._server.serve())
-
-    def start(self):
-        import threading
-        self._thread = threading.Thread(
-            target=self._serve_once, name="SuanpanGateway", daemon=True)
-        self._thread.start()
-        return True
-
-    def reload(self):
-        """热重载：停旧实例、重读配置、起新实例。未运行则 no-op。"""
-        if not self.running:
-            return True
-        if self._server:
-            self._server.should_exit = True
-        if self._thread:
-            self._thread.join(timeout=5)
-        self._server = None
-        self._thread = None
-        return self.start()
-
-    def stop(self):
-        if self._server:
-            self._server.should_exit = True
-        if self._thread:
-            self._thread.join(timeout=5)
-        self._server = None
-        self._thread = None
+    paths = default_paths()
+    redirect_paths(sp_path, mp_path, paths["claude_settings"])
+    from services.config_server import ConfigServer
+    return ConfigServer(port=port, bind_host="0.0.0.0",
+                        token=config_token(mp_path),
+                        on_sp_saved=on_sp_saved)
 
 
 def run_config_ui() -> int:
     """config-ui 模式：启动 :9528 配置页面（容器内阻塞运行）。"""
-    install_macos_stubs()
     paths = default_paths()
     bootstrap_default_config(paths["sp"], os.path.dirname(paths["sp"]))
-    srv = DockerConfigServer(mp_path=paths["mp"], sp_path=paths["sp"])
-    ok, url = srv.start()
-    if not ok:
+    srv = make_config_server(paths["mp"], paths["sp"])
+    if not srv.start():
         print("config server 启动失败（9528 端口占用？）", file=sys.stderr)
         return 1
-    print(f"配置页面: {url}", flush=True)
+    print(f"配置页面: {srv.url}", flush=True)
     print(f"Bearer token（浏览器带 Authorization 头访问）: {srv.token}",
           flush=True)
     try:

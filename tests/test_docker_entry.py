@@ -8,7 +8,6 @@ import importlib.util
 import json
 import os
 import stat
-import sys
 from pathlib import Path
 
 import pytest
@@ -33,56 +32,13 @@ def entry():
 
 @pytest.fixture(autouse=True)
 def _restore_paths():
-    """PATHS 与 sys.modules 快照恢复——entry 的重定向绝不泄漏到其他测试。
-
-    Security 只做引用级恢复（真实 PyObjC 模块被 pop 后重新 import 会在
-    同进程内二次注册并 objc.error，因此绝不触发真实重导入）。"""
+    """PATHS 快照恢复——entry 的重定向绝不泄漏到其他测试。"""
     from mpconf import config_store
     saved_paths = dict(config_store.PATHS)
-    saved_security = sys.modules.get("Security")
     yield
     config_store.PATHS.clear()
     config_store.PATHS.update(saved_paths)
-    # 只清理 stub——测试期间合法真实导入的 Security 留在 sys.modules
-    # （真实 PyObjC 模块被 pop 后重导入会同进程二次注册 objc.error）
-    cur = sys.modules.get("Security")
-    if cur is not None and getattr(cur, "__docker_stub__", False):
-        if saved_security is None:
-            sys.modules.pop("Security", None)
-        else:
-            sys.modules["Security"] = saved_security
 
-
-# ── install_macos_stubs ────────────────────────────────────────────
-
-class TestInstallMacosStubs:
-    def test_force_installs_stub_module(self, entry):
-        """force=True：注入带标记的空模块，keychain 可导入。"""
-        entry.install_macos_stubs(force=True)
-        assert getattr(sys.modules["Security"], "__docker_stub__", False)
-        # sysctl.keychain 模块级只 `import Security`——stub 足以导入成功
-        import sysctl.keychain  # noqa: F401
-
-    def test_stub_is_idempotent(self, entry):
-        entry.install_macos_stubs(force=True)
-        first = sys.modules["Security"]
-        entry.install_macos_stubs(force=True)
-        assert sys.modules["Security"] is first
-
-    def test_fallback_when_import_fails(self, entry, monkeypatch):
-        """非 force：import 失败（Linux 形态）时落到 stub。"""
-        # sys.modules[name] = None 是 Python 的"导入必失败"哨兵
-        monkeypatch.setitem(sys.modules, "Security", None)
-        entry.install_macos_stubs()
-        assert getattr(sys.modules["Security"], "__docker_stub__", False)
-
-    def test_noop_when_real_security_present(self, entry):
-        """真实 Security 可导入（macOS 形态）：非 force 不替换。"""
-        entry.install_macos_stubs()
-        assert not getattr(sys.modules.get("Security"), "__docker_stub__", False)
-
-
-# ── bootstrap_default_config ───────────────────────────────────────
 
 class TestBootstrapDefaultConfig:
     def test_creates_config_when_missing(self, entry, tmp_path):
@@ -265,20 +221,52 @@ class TestMain:
 
 # ── config-ui：DockerConfigServer ─────────────────────────────────
 
-class TestDockerConfigServer:
-    def test_subclass_binds_wildcard(self, entry):
-        """容器内须绑 0.0.0.0（基类硬编码 127.0.0.1）——子类覆盖，零修改基类。"""
-        srv = entry.DockerConfigServer(port=0)
-        assert srv._bind_host == "0.0.0.0"
+class TestMakeConfigServer:
+    """装配工厂：Docker 差异 = 纯构造参数，无私有符号接触。"""
 
-    def test_default_port_9528(self, entry):
-        srv = entry.DockerConfigServer()
-        assert srv._port == 9528
+    def _spy(self, monkeypatch):
+        import services.config_server as cs_mod
+        calls = []
+        real = cs_mod.ConfigServer
 
-    def test_keychain_stubbed(self, entry):
-        """Linux 无 Keychain——注入存根，SP-only 保存跳过 keychain 段。"""
-        srv = entry.DockerConfigServer()
-        assert srv._keychain is None
+        def spy(*args, **kwargs):
+            calls.append((args, kwargs))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(cs_mod, "ConfigServer", spy)
+        return calls
+
+    def test_constructs_parameterized_config_server(
+            self, entry, tmp_path, monkeypatch):
+        mp = str(tmp_path / "magic-proxy.json")
+        sp = str(tmp_path / "suanpan.yaml")
+        calls = self._spy(monkeypatch)
+        cb = object()
+        entry.make_config_server(mp, sp, on_sp_saved=cb, port=0)
+        _args, kwargs = calls[0]
+        assert kwargs["bind_host"] == "0.0.0.0"
+        assert kwargs["port"] == 0
+        assert kwargs["on_sp_saved"] is cb
+        # token 与 config-ui 同源：配置卷里的 local_client_token
+        assert kwargs["token"] == entry.config_token(mp)
+
+    def test_redirects_paths_before_construct(self, entry, tmp_path):
+        from mpconf import config_store
+        mp = str(tmp_path / "magic-proxy.json")
+        sp = str(tmp_path / "suanpan.yaml")
+        entry.make_config_server(mp, sp, port=0)
+        assert config_store.PATHS["sp"] == sp
+        assert config_store.PATHS["mp"] == mp
+
+    def test_returns_started_ready_server(self, entry, tmp_path):
+        mp = str(tmp_path / "magic-proxy.json")
+        sp = str(tmp_path / "suanpan.yaml")
+        srv = entry.make_config_server(mp, sp, port=0)
+        try:
+            assert srv.start()
+            assert srv._server.server_address[0] == "0.0.0.0"
+        finally:
+            srv.stop()
 
 
 # ── config-ui：token 解析 ─────────────────────────────────────────
@@ -305,9 +293,8 @@ class TestConfigUiHttp:
         mp = str(tmp_path / "magic-proxy.json")
         sp = str(tmp_path / "suanpan.yaml")
         entry.bootstrap_default_config(sp, str(tmp_path))
-        srv = entry.DockerConfigServer(port=0, mp_path=mp, sp_path=sp)
-        ok, _url = srv.start()
-        assert ok
+        srv = entry.make_config_server(mp, sp, port=0)
+        assert srv.start()
         # 端口 0 → OS 分配；从 server 对象取实际端口
         port = srv._server.server_address[1]
         return srv, port
@@ -395,11 +382,9 @@ class TestConfigHotReload:
         sp = str(tmp_path / "suanpan.yaml")
         entry.bootstrap_default_config(sp, str(tmp_path))
         fired = []
-        srv = entry.DockerConfigServer(
-            port=0, mp_path=mp, sp_path=sp,
-            on_sp_saved=lambda: fired.append(1))
-        ok, _ = srv.start()
-        assert ok
+        srv = entry.make_config_server(
+            mp, sp, on_sp_saved=lambda: fired.append(1), port=0)
+        assert srv.start()
         port = srv._server.server_address[1]
         try:
             import urllib.request
@@ -422,11 +407,9 @@ class TestConfigHotReload:
         sp = str(tmp_path / "suanpan.yaml")
         entry.bootstrap_default_config(sp, str(tmp_path))
         fired = []
-        srv = entry.DockerConfigServer(
-            port=0, mp_path=mp, sp_path=sp,
-            on_sp_saved=lambda: fired.append(1))
-        ok, _ = srv.start()
-        assert ok
+        srv = entry.make_config_server(
+            mp, sp, on_sp_saved=lambda: fired.append(1), port=0)
+        assert srv.start()
         port = srv._server.server_address[1]
         try:
             import urllib.request
@@ -447,46 +430,73 @@ class TestConfigHotReload:
 
 # ── 配置热重载：GatewayRunner（uvicorn 线程化 reload）────────────────
 
-class TestGatewayRunner:
+class TestGatewayRuntimeIntegration:
+    """SuanpanRuntime(bind_host=...) 端到端：reload 把新配置换入运行中的
+    网关（#40 语义，经真实 HTTP 观察）。"""
+
     def test_reload_picks_up_new_config(self, entry, tmp_path):
-        """reload() 停旧起新、重读配置——新 Provider 无需重启容器生效。"""
+        import socket
         import time
+        import urllib.request
+
+        import yaml as _y
+
         sp = str(tmp_path / "suanpan.yaml")
+        mp = str(tmp_path / "magic-proxy.json")
+        entry.redirect_paths(sp, mp, str(tmp_path / "s.json"))
         entry.bootstrap_default_config(sp, str(tmp_path))
-        runner = entry.GatewayRunner(sp)
-        runner.start()
+        # 自由端口，避免撞真实 9527
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        cfg = _y.safe_load(open(sp))
+        cfg["listen_port"] = port
+        open(sp, "w").write(_y.safe_dump(cfg))
+
+        from services.suanpan_runtime import SuanpanRuntime
+        rt = SuanpanRuntime(bind_host="127.0.0.1")
+        assert rt.start()
         try:
-            # _serve_once 在线程里异步 load_config——等它就绪
+            def models_text():
+                return urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/v1/models", timeout=2
+                ).read().decode("utf-8")
+
             for _ in range(50):
-                if runner.port is not None:
+                try:
+                    models_text()
                     break
-                time.sleep(0.05)
-            assert runner.running
-            assert runner.port == 9527
+                except Exception:
+                    time.sleep(0.1)
+            assert rt.running
+
             # 改配置（加 provider 模拟热更新场景）
-            import yaml as _y
             cfg = _y.safe_load(open(sp))
             cfg["providers"]["glm"] = {
-                "base_url": "https://example.invalid", "api_key": "k"}
+                "base_url": "https://example.invalid", "api_key": "k",
+                "auth_header": "x-api-key", "enabled": True,
+                "models": ["glm-x"]}
             open(sp, "w").write(_y.safe_dump(cfg, allow_unicode=True))
-            runner.reload()
+            assert rt.reload()
             for _ in range(50):
-                if "glm" in runner.providers:
-                    break
-                time.sleep(0.05)
-            assert runner.running
-            # 重读后 providers 非空（配置已换入内存）
-            assert "glm" in runner.providers
+                try:
+                    if "glm" in models_text():
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.1)
+            assert rt.running
+            assert "glm" in models_text()  # 新配置已换入内存
         finally:
-            runner.stop()
-        assert not runner.running
+            rt.stop()
+        assert not rt.running
 
     def test_reload_noop_when_stopped(self, entry, tmp_path):
-        sp = str(tmp_path / "suanpan.yaml")
-        entry.bootstrap_default_config(sp, str(tmp_path))
-        runner = entry.GatewayRunner(sp)
-        assert runner.reload() is True  # 未启动 → no-op 不炸
-        assert not runner.running
+        from services.suanpan_runtime import SuanpanRuntime
+        rt = SuanpanRuntime(bind_host="127.0.0.1")
+        assert rt.reload() is True  # 未启动 → no-op 不炸
+        assert not rt.running
 
 
 # ── 配置热重载：run_serve 集成 ─────────────────────────────────────
@@ -494,15 +504,15 @@ class TestGatewayRunner:
 class TestRunServeIntegration:
     def test_serve_wires_config_save_to_gateway_reload(self, entry, tmp_path,
                                                        monkeypatch):
-        """run_serve：DockerConfigServer 的 on_sp_saved 指向 GatewayRunner.reload——
+        """run_serve：config server 的 on_sp_saved 指向网关 reload——
         配置页保存 → 网关热重载，无需重启容器。"""
         monkeypatch.setenv("SUANPAN_DATA_DIR", str(tmp_path))
         monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "s.json"))
         captured = {}
 
         class FakeRunner:
-            def __init__(self, sp):
-                captured["sp"] = sp
+            def __init__(self, bind_host=None):
+                captured["bind_host"] = bind_host
                 self.reload_called = 0
 
             def start(self):
@@ -516,25 +526,31 @@ class TestRunServeIntegration:
                 pass
 
         class FakeCfgSrv:
-            def __init__(self, mp_path=None, sp_path=None, on_sp_saved=None):
-                captured["on_sp_saved"] = on_sp_saved
-                self.token = "t"
+            token = "t"
+            url = "http://x/"
 
             def start(self):
-                return True, "http://x/"
+                return True
 
             def stop(self):
                 pass
 
-        monkeypatch.setattr(entry, "GatewayRunner", FakeRunner)
-        monkeypatch.setattr(entry, "DockerConfigServer", FakeCfgSrv)
+        def fake_make(mp, sp, on_sp_saved=None):
+            captured["on_sp_saved"] = on_sp_saved
+            captured["mp"] = mp
+            captured["sp_cfg"] = sp
+            return FakeCfgSrv()
+
+        monkeypatch.setattr(entry, "SuanpanRuntime", FakeRunner)
+        monkeypatch.setattr(entry, "make_config_server", fake_make)
         # 主线程保活循环会永跑——sleep 第一次就 KeyboardInterrupt 跳出
         import time as _time
         monkeypatch.setattr(_time, "sleep",
                             lambda s: (_ for _ in ()).throw(KeyboardInterrupt))
 
         entry.run_serve()
-        # on_sp_saved 已接线且指向 runner.reload
+        # 网关以 0.0.0.0 形态构造；on_sp_saved 已接线且指向 runner.reload
+        assert captured["bind_host"] == "0.0.0.0"
+        assert captured["sp_cfg"] == str(tmp_path / "suanpan.yaml")
         assert callable(captured["on_sp_saved"])
         captured["on_sp_saved"]()  # 模拟保存回调
-        assert captured["sp"] == str(tmp_path / "suanpan.yaml")

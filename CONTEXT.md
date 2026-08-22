@@ -82,6 +82,10 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 统一语义：原子写（mkstemp + chmod 0600 + os.replace）；Suanpan 侧另保留覆盖前 `.bak` 备份。配置内容的语义（mp 的 merge/migrate、sp 的 pydantic 校验与密钥掩码）不在此——留在 `mpconf/config.py` 与 `suanpan/config.py`。
 
+### 部署形态（Deployment Form）
+
+macOS 菜单栏壳与 Docker 容器两种形态共享同一批 `services/` 模块；形态差异**全部是构造参数**，永不复制实现：`ConfigServer(bind_host, token)`（默认 127.0.0.1 + 自造随机 token；容器传 0.0.0.0 + 配置卷 local_client_token）、`SuanpanRuntime(bind_host)`（缺省取配置监听地址 + 强制回环守卫；容器传 0.0.0.0，守卫不适用——信任边界=宿主机端口映射）。`docker/entry.py` 只做装配（`redirect_paths` → `make_config_server` / `SuanpanRuntime`），掏私有符号或抄写函数体都视为回归。`sysctl/keychain` 的 Security 为可选导入（缺失即 None + 全吞异常兜底），Linux import 链无需 stub。
+
 ### Suanpan（算盘）
 
 AI 路由产品。将多家 LLM 后端统一成 Anthropic Messages API，按请求场景和模型规则路由转发。独立运行在自己的端口上，不经过 SSH 隧道。
