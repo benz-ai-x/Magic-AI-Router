@@ -106,24 +106,44 @@ def load_app(sp_path: str):
     return create_app(config, config_path=sp_path), config.listen_port
 
 
+def _recover_pending_txn():
+    """启动即重放残留 journal（#48 T6a）——与 macOS LifecycleRuntime
+    .start_all 同一契约：跨文件崩溃后幂等补齐；残留 journal 只会永久
+    阻塞后续提交。"""
+    from mpconf.config_state import ConfigStateStore
+    if not ConfigStateStore().recover():
+        print("journal 恢复失败——保留现场待人工检查", file=sys.stderr)
+
+
 def run_serve() -> int:
     """serve 模式：网关绑 0.0.0.0 + 配置页面 :9528（共用同一 token）。
 
     SuanpanRuntime(bind_host="0.0.0.0") 跑网关；config server 的
-    on_sp_saved 指向 runner.reload——配置页保存 → 网关热重载，无需重启
-    容器（与 macOS 版同一运行时，仅绑定地址形态不同）。
+    on_sp_saved = 运行中 reload / 已停 start——配置页保存 → 网关热重载，
+    网关首启失败后 web 修复也能拉起（与 macOS 版同一运行时，仅绑定
+    地址形态不同）。
     """
     paths = default_paths()
     # 先重定向再构造——SuanpanRuntime 经 PATHS["sp"] 取配置路径；
     # 缺配置文件时 bootstrap 首启自建（usage_log 指到数据卷，重建不丢），
     # runner 的 _ensure_config 兜底
     redirect_paths(paths["sp"], paths["mp"], paths["claude_settings"])
+    _recover_pending_txn()
     bootstrap_default_config(paths["sp"], os.path.dirname(paths["sp"]))
     runner = SuanpanRuntime(bind_host="0.0.0.0")
-    runner.start()
+    if not runner.start():
+        # #48 T6b：网关死亡绝不静默佯活（容器健康假象骗过编排）；不退
+        # 出——配置页正是修复坏配置的路径（网关起不来的主因），保活供
+        # web 修复后经 on_sp_saved 热重载拉起。
+        print(f"网关启动失败：{runner.error[:200]}", file=sys.stderr)
     # 配置页面与网关同容器、同 token——config-ui 失败不阻塞网关（best-effort）
+    # 保存回调须能拉起已停网关：reload() 对 stopped 是 no-op（真实现
+    # 语义），网关首启失败后 web 修复的闭环靠这里补 start()
+    def _on_sp_saved():
+        runner.reload() if runner.running else runner.start()
+
     cfg = make_config_server(paths["mp"], paths["sp"],
-                             on_sp_saved=runner.reload)
+                             on_sp_saved=_on_sp_saved)
     ok = cfg.start()
     if ok:
         print(f"配置页面: {cfg.url}  Bearer token: {cfg.token}", flush=True)
@@ -203,6 +223,8 @@ def make_config_server(mp_path: str, sp_path: str, on_sp_saved=None,
 def run_config_ui() -> int:
     """config-ui 模式：启动 :9528 配置页面（容器内阻塞运行）。"""
     paths = default_paths()
+    redirect_paths(paths["sp"], paths["mp"], paths["claude_settings"])
+    _recover_pending_txn()
     bootstrap_default_config(paths["sp"], os.path.dirname(paths["sp"]))
     srv = make_config_server(paths["mp"], paths["sp"])
     if not srv.start():

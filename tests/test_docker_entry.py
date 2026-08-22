@@ -514,8 +514,10 @@ class TestRunServeIntegration:
             def __init__(self, bind_host=None):
                 captured["bind_host"] = bind_host
                 self.reload_called = 0
+                self.running = False
 
             def start(self):
+                self.running = True
                 return True
 
             def reload(self):
@@ -598,3 +600,124 @@ class TestRunServeIntegration:
         content = sp_file.read_text()
         assert "usage_log:" in content
         assert f"path: {tmp_path}/logs/usage.jsonl" in content
+
+
+class TestServeStartupRecover:
+    def test_serve_replays_pending_journal(self, entry, tmp_path, monkeypatch):
+        """#48 T6a：commit 中途被 kill 的容器重启后，serve 启动必须幂等
+        重放残留 journal（与 macOS LifecycleRuntime 同契约）——否则
+        journal 永久悬挂且阻塞后续提交。"""
+        import json as _json
+        monkeypatch.setenv("SUANPAN_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "s.json"))
+        sp = tmp_path / "suanpan.yaml"
+        journal = tmp_path / "suanpan.yaml.txn.json"
+        journal.write_text(_json.dumps(
+            {"sp": "listen_port: 9527\nproviders: {}\n"}))
+
+        class FakeRunner:
+            def __init__(self, bind_host=None):
+                pass
+            def start(self):
+                return True
+            def reload(self):
+                return True
+            def stop(self):
+                pass
+
+        class FakeCfgSrv:
+            token, url = "t", "http://x/"
+            def start(self):
+                return True
+            def stop(self):
+                pass
+
+        monkeypatch.setattr(entry, "SuanpanRuntime", FakeRunner)
+        monkeypatch.setattr(entry, "make_config_server",
+                            lambda *a, **kw: FakeCfgSrv())
+        import time as _time
+        monkeypatch.setattr(_time, "sleep",
+                            lambda s: (_ for _ in ()).throw(KeyboardInterrupt))
+        entry.run_serve()
+
+        assert not journal.exists(), "journal 重放后必须清除"
+        assert "listen_port: 9527" in sp.read_text(), "重放必须补齐 SP 段"
+
+    def test_config_ui_replays_pending_journal(self, entry, tmp_path,
+                                               monkeypatch):
+        """#48：config-ui 模式同一恢复契约。"""
+        import json as _json
+        monkeypatch.setenv("SUANPAN_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "s.json"))
+        journal = tmp_path / "suanpan.yaml.txn.json"
+        journal.write_text(_json.dumps(
+            {"sp": "listen_port: 9528\nproviders: {}\n"}))
+
+        class FakeCfgSrv:
+            token, url = "t", "http://x/"
+            def start(self):
+                return True
+            def stop(self):
+                pass
+
+        monkeypatch.setattr(entry, "make_config_server",
+                            lambda *a, **kw: FakeCfgSrv())
+        import time as _time
+        monkeypatch.setattr(_time, "sleep",
+                            lambda s: (_ for _ in ()).throw(KeyboardInterrupt))
+        entry.run_config_ui()
+        assert not journal.exists()
+
+
+class TestServeGatewayStartFailure:
+    def test_serve_reports_failure_keeps_config_ui(self, entry, tmp_path,
+                                                   monkeypatch, capsys):
+        """#48 T6b：网关启动失败必须 stderr 宣告根因，绝不静默佯活；
+        容器保活——配置页正是修复坏配置的路径。"""
+        monkeypatch.setenv("SUANPAN_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_SETTINGS_PATH", str(tmp_path / "s.json"))
+        started = {"cfg": 0, "gw": 0}
+        captured = {}
+
+        class FakeRunner:
+            error = "ValidationError: rules must be a list"
+            def __init__(self, bind_host=None):
+                self.running = False
+            def start(self):
+                started["gw"] += 1
+                self.running = started["gw"] > 1  # 首启失败；修复后再启成功
+                return self.running
+            def reload(self):
+                return True  # reload 对已停网关是 no-op（真实现语义）
+            def stop(self):
+                pass
+
+        class FakeCfgSrv:
+            token, url = "t", "http://x/"
+            def start(self):
+                started["cfg"] += 1
+                return True
+            def stop(self):
+                pass
+
+        def fake_make(mp, sp, on_sp_saved=None, port=9528):
+            captured["on_sp_saved"] = on_sp_saved
+            return FakeCfgSrv()
+
+        monkeypatch.setattr(entry, "SuanpanRuntime", FakeRunner)
+        monkeypatch.setattr(entry, "make_config_server", fake_make)
+        import time as _time
+        monkeypatch.setattr(_time, "sleep",
+                            lambda s: (_ for _ in ()).throw(KeyboardInterrupt))
+        entry.run_serve()
+
+        err = capsys.readouterr().err
+        assert "网关启动失败" in err
+        assert "rules must be a list" in err
+        assert started["cfg"] == 1, "配置页必须照常启动（修复路径）"
+        # 修复闭环：web 保存后 on_sp_saved 必须能把已停网关拉起
+        # （reload() 对 stopped 是 no-op——见 SuanpanRuntime.reload）
+        assert callable(captured["on_sp_saved"])
+        captured["on_sp_saved"]()
+        assert started["gw"] == 2, "on_sp_saved 须对未运行网关走 start()"
+
