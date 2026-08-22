@@ -699,9 +699,9 @@ class TestHandleClientWriterErrors(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSSHMonitorPasswordCloseError(unittest.TestCase):
-    @patch("tunnel.proxy.os.close")
-    @patch("tunnel.proxy.os.write")
-    @patch("tunnel.proxy.os.pipe")
+    @patch("tunnel.ssh_launch.os.close")
+    @patch("tunnel.ssh_launch.os.write")
+    @patch("tunnel.ssh_launch.os.pipe")
     @patch("tunnel.subprocess_monitor.subprocess.Popen")
     @patch("tunnel.subprocess_monitor.subprocess.run")
     def test_password_auth_close_error_swallowed(self, mock_run, mock_popen,

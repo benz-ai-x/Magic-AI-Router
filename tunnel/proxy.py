@@ -1,13 +1,12 @@
 """Async HTTP→SOCKS5 proxy with SSH tunnel management."""
 import asyncio
 import logging
-import os
 import socket
 import struct
 from urllib.parse import urlsplit
 
 from services.stats import Stats
-from tunnel import host_key, http_framer
+from tunnel import http_framer, ssh_launch
 from tunnel.http_framer import Framing, split_header
 from tunnel.subprocess_monitor import SubprocessMonitor
 from tunnel.async_runtime import AsyncRuntime
@@ -443,63 +442,22 @@ class SSHMonitor(SubprocessMonitor):
         Classifies the raw stderr so callers don't string-match SSH output.
         """
         return (self._status == "error"
-                and "REMOTE HOST IDENTIFICATION HAS CHANGED" in self._error_msg)
+                and ssh_launch.host_key_changed(self._error_msg))
 
     def start(self, tunnel: dict, socks5_port: int, password: str = ""):
         """Start the SSH tunnel subprocess for the given tunnel config."""
         self.stop()
 
-        user = tunnel.get("ssh_user", "")
-        host = tunnel["ssh_host"]
-        port = str(tunnel.get("ssh_port", 22))
-        auth_type = tunnel.get("auth_type", "key")
-        compression = tunnel.get("ssh_compression", True)
+        # argv 策略（host-key 三件套 / 认证注入 / keepalive）单一归宿在
+        # ssh_launch；本类只持有子进程生命周期（SubprocessMonitor）。
+        sc = ssh_launch.build_tunnel_command(tunnel, socks5_port, password)
+        self._current_name = tunnel.get("name", sc.destination)
 
-        destination = f"{user}@{host}" if user else host
-
-        ssh_args = [
-            "-D", str(socks5_port),
-            "-N",
-            "-o", "ExitOnForwardFailure=yes",
-            "-o", "StrictHostKeyChecking=yes",
-            "-o", f"UserKnownHostsFile={host_key.KNOWN_HOSTS_PATH}",
-            "-o", "GlobalKnownHostsFile=/dev/null",
-            "-o", "ServerAliveInterval=30",
-            "-o", "ServerAliveCountMax=3",
-        ]
-        if compression:
-            ssh_args.append("-C")
-        ssh_args.extend(["-p", port, destination])
-
-        # sshpass via fd avoids leaking the password into `ps`.
-        pass_fds = ()
-        r_fd = None
-        if auth_type == "password":
-            r_fd, w_fd = os.pipe()
-            try:
-                os.write(w_fd, (password + "\n").encode())
-            finally:
-                os.close(w_fd)
-            cmd = ["sshpass", "-d", str(r_fd), "ssh"] + ssh_args
-            pass_fds = (r_fd,)
-            display_cmd = ["sshpass", "-d", "***", "ssh"] + ssh_args
-        else:
-            key = tunnel.get("ssh_key", "")
-            cmd = ["ssh", "-i", key] + ssh_args
-            display_cmd = cmd
-
-        self._current_name = tunnel.get("name", destination)
-
-        ok = self._start_process(
-            cmd, pass_fds=pass_fds, display_cmd=" ".join(display_cmd))
-
-        if r_fd is not None:
-            try:
-                os.close(r_fd)
-            except OSError:
-                pass
-
-        return ok
+        try:
+            return self._start_process(
+                sc.cmd, pass_fds=sc.pass_fds, display_cmd=sc.display_cmd)
+        finally:
+            sc.close_password_fd()
 
     def _probe_ready(self, port):
         """SOCKS5 handshake probe — sends method negotiation, expects success."""

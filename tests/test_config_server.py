@@ -607,7 +607,8 @@ class TestTestTunnelEndpoint(unittest.TestCase):
 
 
 class TestTunnelProbeLogic(unittest.TestCase):
-    """Unit tests for config_server.test_tunnel — all subprocesses mocked."""
+    """config_server.test_tunnel 的端点职责：输入校验 + Keychain 取用 +
+    委托 ssh_launch.probe（探针 argv / 失败分类的测试在 test_ssh_launch.py）。"""
 
     _KEY_TUNNEL = {
         "ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222,
@@ -618,16 +619,10 @@ class TestTunnelProbeLogic(unittest.TestCase):
         "auth_type": "password",
     }
 
-    @staticmethod
-    def _proc(returncode=0, stderr=""):
-        from types import SimpleNamespace
-        return SimpleNamespace(returncode=returncode,
-                               stderr=stderr.encode("utf-8"))
-
-    def test_missing_host_is_rejected_without_subprocess(self):
-        with patch.object(config_server.subprocess, "run") as run:
+    def test_missing_host_is_rejected_without_probe(self):
+        with patch.object(config_server.ssh_launch, "probe") as probe:
             result = config_server.test_tunnel({"ssh_host": "  ", "ssh_port": 22})
-        run.assert_not_called()
+        probe.assert_not_called()
         self.assertFalse(result["ok"])
         self.assertIn("地址", result["error"])
 
@@ -645,116 +640,31 @@ class TestTunnelProbeLogic(unittest.TestCase):
     def test_password_auth_without_saved_password(self):
         with patch.object(config_server.keychain, "get_password",
                           return_value=""), \
-             patch.object(config_server.subprocess, "run") as run:
+             patch.object(config_server.ssh_launch, "probe") as probe:
             result = config_server.test_tunnel(self._PW_TUNNEL)
-        run.assert_not_called()
+        probe.assert_not_called()
         self.assertFalse(result["ok"])
         self.assertIn("密码", result["error"])
 
-    def test_key_auth_success_uses_batchmode_and_known_hosts(self):
-        with patch.object(config_server.subprocess, "run",
-                          return_value=self._proc(0)) as run:
+    def test_key_auth_delegates_to_ssh_launch(self):
+        with patch.object(config_server.ssh_launch, "probe",
+                          return_value={"ok": True}) as probe:
             result = config_server.test_tunnel(self._KEY_TUNNEL)
         self.assertEqual(result, {"ok": True})
-        cmd = run.call_args[0][0]
-        self.assertEqual(cmd[0], "ssh")
-        self.assertIn("BatchMode=yes", cmd)
-        self.assertIn("ConnectTimeout=5", cmd)
-        self.assertIn("StrictHostKeyChecking=yes", cmd)
-        self.assertIn(
-            f"UserKnownHostsFile={config_server.host_key.KNOWN_HOSTS_PATH}", cmd)
-        self.assertIn("~/.ssh/id_ed25519", cmd)
-        self.assertEqual(cmd[-2:], ["u@example.com", "true"])
-        # Key auth must NOT go through sshpass.
-        self.assertNotIn("sshpass", cmd)
+        probe.assert_called_once_with(
+            self._KEY_TUNNEL, password="",
+            timeout=config_server.ssh_launch.PROBE_TIMEOUT)
 
-    def test_password_auth_success_uses_sshpass_fd(self):
+    def test_password_auth_passes_saved_password_through(self):
         with patch.object(config_server.keychain, "get_password",
                           return_value="sekrit"), \
-             patch.object(config_server.subprocess, "run",
-                          return_value=self._proc(0)) as run:
+             patch.object(config_server.ssh_launch, "probe",
+                          return_value={"ok": False, "error": "连接超时"}) as probe:
             result = config_server.test_tunnel(self._PW_TUNNEL)
-        self.assertEqual(result, {"ok": True})
-        kwargs = run.call_args[1]
-        self.assertTrue(kwargs.get("pass_fds"), "password fd must be passed")
-        cmd = run.call_args[0][0]
-        self.assertEqual(cmd[0], "sshpass")
-        self.assertEqual(cmd[1], "-d")
-        # The password itself must never appear in argv.
-        self.assertNotIn("sekrit", cmd)
-        self.assertIn("NumberOfPasswordPrompts=1", cmd)
-        self.assertNotIn("BatchMode=yes", cmd)
-
-    def test_timeout_returns_chinese_phrase(self):
-        with patch.object(config_server.subprocess, "run",
-                          side_effect=config_server.subprocess.TimeoutExpired(
-                              cmd="ssh", timeout=15)):
-            result = config_server.test_tunnel(self._KEY_TUNNEL)
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"], "连接超时")
-
-    def test_missing_binary_returns_oserror_phrase(self):
-        with patch.object(config_server.subprocess, "run",
-                          side_effect=FileNotFoundError("sshpass")):
-            result = config_server.test_tunnel(self._KEY_TUNNEL)
-        self.assertFalse(result["ok"])
-        self.assertIn("无法启动", result["error"])
-
-    def test_missing_sshpass_mentions_password_hint(self):
-        with patch.object(config_server.keychain, "get_password",
-                          return_value="sekrit"), \
-             patch.object(config_server.subprocess, "run",
-                          side_effect=FileNotFoundError("sshpass")):
-            result = config_server.test_tunnel(self._PW_TUNNEL)
-        self.assertFalse(result["ok"])
-        self.assertIn("sshpass", result["error"])
-
-    def test_host_key_changed_maps_before_verification_failed(self):
-        stderr = ("@@@@ REMOTE HOST IDENTIFICATION HAS CHANGED! @@@@\n"
-                  "Host key verification failed.")
-        with patch.object(config_server.subprocess, "run",
-                          return_value=self._proc(255, stderr)):
-            result = config_server.test_tunnel(self._KEY_TUNNEL)
-        self.assertFalse(result["ok"])
-        self.assertIn("主机密钥已变更", result["error"])
-
-    def test_host_key_untrusted_mapping(self):
-        with patch.object(config_server.subprocess, "run",
-                          return_value=self._proc(255, "Host key verification failed.")):
-            result = config_server.test_tunnel(self._KEY_TUNNEL)
-        self.assertFalse(result["ok"])
-        self.assertIn("主机密钥未信任", result["error"])
-
-    def test_permission_denied_mapping(self):
-        with patch.object(config_server.subprocess, "run",
-                          return_value=self._proc(255, "u@example.com: Permission denied (publickey).")):
-            result = config_server.test_tunnel(self._KEY_TUNNEL)
-        self.assertFalse(result["ok"])
-        self.assertIn("认证失败", result["error"])
-
-    def test_unknown_failure_includes_first_stderr_line(self):
-        with patch.object(config_server.subprocess, "run",
-                          return_value=self._proc(255, "some exotic failure\nsecond line")):
-            result = config_server.test_tunnel(self._KEY_TUNNEL)
-        self.assertFalse(result["ok"])
-        self.assertIn("some exotic failure", result["error"])
-
-    def test_none_stderr_degrades_gracefully(self):
-        from types import SimpleNamespace
-        with patch.object(config_server.subprocess, "run",
-                          return_value=SimpleNamespace(returncode=255, stderr=None)):
-            result = config_server.test_tunnel(self._KEY_TUNNEL)
-        self.assertFalse(result["ok"])
-        self.assertIn("未知错误", result["error"])
-
-    def test_non_utf8_stderr_does_not_crash(self):
-        with patch.object(config_server.subprocess, "run",
-                          return_value=self._proc(255)) as run:
-            from types import SimpleNamespace
-            run.return_value = SimpleNamespace(returncode=255,
-                                               stderr=b"\xff\xfe broken bytes")
-            result = config_server.test_tunnel(self._KEY_TUNNEL)
-        self.assertFalse(result["ok"])
+        self.assertEqual(result, {"ok": False, "error": "连接超时"})
+        probe.assert_called_once_with(
+            self._PW_TUNNEL, password="sekrit",
+            timeout=config_server.ssh_launch.PROBE_TIMEOUT)
 
 
 class TestCaptureCleanEndpoint(unittest.TestCase):

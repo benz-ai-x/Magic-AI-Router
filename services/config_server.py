@@ -10,9 +10,7 @@ responses (restores on write), validates Suanpan config before persisting.
 """
 import json
 import logging
-import os
 import secrets
-import subprocess
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -21,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from sysctl import keychain
 from mpconf import config_store
 from mpconf.config_state import ConfigStateStore
-from tunnel import host_key
+from tunnel import ssh_launch
 from services import claude_code_setup
 from capture import capture_store
 from mpconf.config import load_config, merge_config
@@ -96,47 +94,16 @@ def _read_mp():
     return cfg
 
 
-# Hard ceiling for one tunnel connectivity probe: ssh's own ConnectTimeout
-# covers TCP, this covers everything else (sshpass prompt waits, key
-# exchange stalls) so the HTTP request can never hang indefinitely.
-_TUNNEL_TEST_TIMEOUT = 15
-
-_SSH_FAILURE_PHRASES = (
-    # Order matters: key-changed stderr also contains "Host key verification
-    # failed", so the more specific pattern must come first (same string
-    # SSHMonitor.is_host_key_changed classifies on).
-    ("REMOTE HOST IDENTIFICATION HAS CHANGED", "主机密钥已变更，请先从菜单栏处理告警"),
-    ("Host key verification failed", "主机密钥未信任，请先从菜单栏连接一次完成信任"),
-    ("Permission denied", "认证失败：密钥或密码被拒绝"),
-    ("Connection refused", "连接被服务器拒绝"),
-    ("Could not resolve hostname", "无法解析服务器地址"),
-    ("Connection timed out", "连接超时"),
-    ("No route to host", "无法路由到服务器"),
-    ("Network is unreachable", "网络不可达"),
-)
-
-
-def _describe_ssh_failure(stderr):
-    """Map raw ssh stderr to a short Chinese phrase for the config UI."""
-    text = (stderr or "").strip()
-    for needle, phrase in _SSH_FAILURE_PHRASES:
-        if needle in text:
-            return phrase
-    first_line = text.splitlines()[0] if text else "未知错误"
-    return f"连接失败：{first_line[:120]}"
+# 探针策略（argv / 失败分类 / 超时上限）单一归宿在 tunnel/ssh_launch.py。
+_TUNNEL_TEST_TIMEOUT = ssh_launch.PROBE_TIMEOUT
 
 
 def test_tunnel(tunnel):
     """One-shot SSH reachability probe for one saved tunnel config.
 
-    Mirrors the real tunnel exactly where it matters for the result:
-    - Host-key policy is the app's own (StrictHostKeyChecking=yes over
-      host_key.KNOWN_HOSTS_PATH) — a green result means the tunnel itself
-      would connect; an untrusted host fails fast, never auto-trusts.
-    - Key auth runs BatchMode so a passphrase prompt can never hang; the
-      identity file (possibly "") is passed like SSHMonitor.start does.
-    - Password auth reuses SSHMonitor's sshpass-via-fd pattern so the
-      password never appears in argv.
+    本函数只持有端点职责：输入校验（地址/端口/选项注入守卫）与 Keychain
+    取密码；SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe）——
+    绿结果意味着隧道本身会连上，未信任主机快速失败，绝不自动信任。
 
     Returns {"ok": True} or {"ok": False, "error": "<中文短语>"} — never raises.
     """
@@ -150,56 +117,14 @@ def test_tunnel(tunnel):
     if not host or not 1 <= port <= 65535 or destination.startswith("-"):
         return {"ok": False, "error": "隧道地址或端口无效"}
 
-    ssh_args = [
-        "-o", "ConnectTimeout=5",
-        "-o", "StrictHostKeyChecking=yes",
-        "-o", f"UserKnownHostsFile={host_key.KNOWN_HOSTS_PATH}",
-        "-o", "GlobalKnownHostsFile=/dev/null",
-        "-p", str(port), destination, "true",
-    ]
     password = ""
     if tunnel.get("auth_type") == "password":
         password = keychain.get_password(tunnel)
         if not password:
             return {"ok": False, "error": "钥匙串中没有该隧道的密码，请先保存"}
 
-    r_fd = None
-    try:
-        if password:
-            # sshpass via fd avoids leaking the password into `ps` (SSHMonitor).
-            r_fd, w_fd = os.pipe()
-            try:
-                os.write(w_fd, (password + "\n").encode())
-            finally:
-                os.close(w_fd)
-            cmd = ["sshpass", "-d", str(r_fd), "ssh",
-                   "-o", "NumberOfPasswordPrompts=1"] + ssh_args
-            proc = subprocess.run(
-                cmd, capture_output=True,
-                timeout=_TUNNEL_TEST_TIMEOUT, pass_fds=(r_fd,))
-        else:
-            cmd = ["ssh", "-o", "BatchMode=yes",
-                   "-i", str(tunnel.get("ssh_key") or "")] + ssh_args
-            proc = subprocess.run(
-                cmd, capture_output=True,
-                timeout=_TUNNEL_TEST_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "连接超时"}
-    except OSError:
-        hint = "（密码认证需要 sshpass）" if password else ""
-        return {"ok": False, "error": f"无法启动 ssh{hint}"}
-    finally:
-        if r_fd is not None:
-            try:
-                os.close(r_fd)
-            except OSError:
-                pass
-    if proc.returncode == 0:
-        return {"ok": True}
-    # bytes + replace decode (not text=True): SSH stderr can carry raw bytes
-    # and a strict-locale decode must not blow up the endpoint.
-    stderr = (proc.stderr or b"").decode("utf-8", "replace")
-    return {"ok": False, "error": _describe_ssh_failure(stderr)}
+    return ssh_launch.probe(tunnel, password=password,
+                            timeout=_TUNNEL_TEST_TIMEOUT)
 
 
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
