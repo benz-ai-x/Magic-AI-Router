@@ -338,6 +338,7 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
         result = await spproxy.forward_count_tokens(
             mock_request, body, _decision(), config, client)
         self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.body, b'{"input_tokens":5}')  # #44 验收：body 透传
 
     async def test_real_streamed_json_response_is_forwarded(self):
         """#44：生产路径经 _send_with_retry(stream=True) 拿到的是未读流式
@@ -362,6 +363,30 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
             await real_client.aclose()
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.body, b'{"input_tokens":5}')
+
+    async def test_mid_read_error_returns_502_not_500(self):
+        """#44 复核（c1）：读体中途的传输错误（ReadError 是 HTTPError 子类）
+        必须走 502 塑形，不得逃出 except 链成裸 500。"""
+        import httpx
+
+        async def upstream(request):
+            async def gen():
+                yield b'{"partial'
+                raise httpx.ReadError("mid-read boom")
+            return httpx.Response(200, content=gen(),
+                                  headers={"content-type": "application/json"})
+
+        real_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+        mock_request = MagicMock()
+        mock_request.headers = {}
+        body = {"model": "test", "messages": []}
+        try:
+            result = await spproxy.forward_count_tokens(
+                mock_request, body, _decision(), _cfg(), real_client)
+        finally:
+            await real_client.aclose()
+        self.assertEqual(result.status_code, 502)
+        self.assertIn(b"backend request failed", result.body)
 
     async def test_upstream_error_returns_502(self):
         mock_request = MagicMock()
