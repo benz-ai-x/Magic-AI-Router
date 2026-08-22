@@ -331,12 +331,37 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "application/json"}
         mock_resp.json.return_value = {"input_tokens": 5}
+        mock_resp.aread = AsyncMock()
         client.build_request.return_value = MagicMock()
         client.send = AsyncMock(return_value=mock_resp)
 
         result = await spproxy.forward_count_tokens(
             mock_request, body, _decision(), config, client)
         self.assertEqual(result.status_code, 200)
+
+    async def test_real_streamed_json_response_is_forwarded(self):
+        """#44：生产路径经 _send_with_retry(stream=True) 拿到的是未读流式
+        响应——MagicMock 双打不出 ResponseNotRead，必须用真 httpx 客户端
+        （MockTransport）走完整 build→send→读链。"""
+        import httpx
+
+        async def upstream(request):
+            async def gen():
+                yield b'{"input_tokens":5}'
+            return httpx.Response(200, content=gen(),
+                                  headers={"content-type": "application/json"})
+
+        real_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+        mock_request = MagicMock()
+        mock_request.headers = {}
+        body = {"model": "test", "messages": [{"role": "user", "content": "hi"}]}
+        try:
+            result = await spproxy.forward_count_tokens(
+                mock_request, body, _decision(), _cfg(), real_client)
+        finally:
+            await real_client.aclose()
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.body, b'{"input_tokens":5}')
 
     async def test_upstream_error_returns_502(self):
         mock_request = MagicMock()
@@ -369,6 +394,7 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "application/json"}
         mock_resp.json.return_value = {"input_tokens": 5}
+        mock_resp.aread = AsyncMock()
         client.build_request.return_value = MagicMock()
         client.send = AsyncMock(return_value=mock_resp)
 
@@ -392,6 +418,7 @@ class TestForwardCountTokens(unittest.IsolatedAsyncioTestCase):
         mock_resp.status_code = 200
         mock_resp.headers = {"content-type": "application/json"}
         mock_resp.json.return_value = {"input_tokens": 5}
+        mock_resp.aread = AsyncMock()
         client.build_request.return_value = MagicMock()
         client.send = AsyncMock(return_value=mock_resp)
 

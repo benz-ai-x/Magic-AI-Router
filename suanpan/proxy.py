@@ -272,6 +272,11 @@ async def forward_count_tokens(
             headers={"x-suanpan-provider": provider_name},
         )
 
+    # _send_with_retry 恒以 stream=True 发送（forward_request 的流式转发
+    # 需要）；count_tokens 是非流式语义，读全响应体后再消费——未读即
+    # .json()/.text 会抛 httpx.ResponseNotRead（它不是 HTTPError 子类，
+    # 上面的 except 接不住，会直穿成 500）。
+    await r.aread()
     out_headers = filter_response_headers(r.headers)
     out_headers["x-suanpan-provider"] = provider_name
     return JSONResponse(
