@@ -113,6 +113,20 @@ test("fmtRate formats cache hit rates and preserves missing data", () => {
   assert.equal(L.fmtRate(0.42), "42%");
 });
 
+// ── quota display (balance quick view) ────────────────
+test("quotaPeriodLabel marks locally aggregated rows", () => {
+  assert.equal(L.quotaPeriodLabel({ period: "每月", source: "local" }), "每月（网关）");
+  assert.equal(L.quotaPeriodLabel({ period: "每月" }), "每月");
+  assert.equal(L.quotaPeriodLabel({ period: "5小时" }), "5小时");
+});
+
+test("quotaNumsText omits the pct segment when pct is null", () => {
+  assert.equal(L.quotaNumsText({ pct: 42, used: 42, limit: 100 }), "已用 42% · 42/100");
+  assert.equal(L.quotaNumsText({ pct: null, used: 220, limit: null }), "220/—");
+  assert.equal(L.quotaNumsText({ pct: null, used: 1523456, limit: null }), "1.5M/—");
+  assert.equal(L.quotaNumsText({ pct: 0, used: 0, limit: 100 }), "已用 0% · 0/100");
+});
+
 test("usageRangeOptions marks the selected statistics range", () => {
   assert.deepEqual(L.usageRangeOptions("7d"), [
     { value: "today", label: "今日", active: false },
