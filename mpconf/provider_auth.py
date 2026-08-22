@@ -8,7 +8,6 @@ shape outbound auth headers", shared by:
 No third-party imports: the config server must work even when the Suanpan
 gateway deps (pydantic/FastAPI) are absent (ADR-000 lazy-import design).
 """
-import hmac
 import os
 
 # Headers never forwarded to the backend (hop-by-hop or auth-related).
@@ -53,30 +52,14 @@ def resolve_api_key(provider):
     return None
 
 
-def _is_gateway_credential(value, gateway_key):
-    """True when a passthrough auth value is the gateway's own gate key.
-
-    Matches the bare key (x-api-key form) and the Bearer form (any scheme
-    casing). Compared in constant time — it is a secret.
-    """
-    if not gateway_key or not isinstance(value, str):
-        return False
-    key_b = gateway_key.encode("utf-8", "replace")
-    if hmac.compare_digest(value.encode("utf-8", "replace"), key_b):
-        return True
-    scheme, _, rest = value.partition(" ")
-    return (scheme.lower() == "bearer"
-            and hmac.compare_digest(rest.encode("utf-8", "replace"), key_b))
-
-
-def build_outbound_headers(incoming, api_key, auth_header=None, gateway_key=None):
+def build_outbound_headers(incoming, api_key, auth_header=None):
     """Build outbound headers: filter hop-by-hop, apply provider auth.
 
     With a key, writes it per ``auth_header`` convention ("x-api-key" → bare
     header, "Authorization" → Bearer; None/other defaults to Bearer). Without
-    a key, passes through the incoming auth header (OAuth from /login) —
-    except values that are the gateway's own gate key (``gateway_key``),
-    which must never reach a backend.
+    a key, strips ALL incoming credentials unconditionally (issue #9) —
+    the gateway's own gate key, placeholder or user token, must never reach
+    a backend.
     """
     out = {}
     for k, v in incoming.items():

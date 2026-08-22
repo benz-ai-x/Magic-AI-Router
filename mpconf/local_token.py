@@ -43,17 +43,3 @@ def get_local_token(path: str) -> str:
     cfg[FIELD] = secrets.token_hex(16)
     _write(path, cfg)
     return cfg[FIELD]
-
-
-def rotate_token(path: str) -> str:
-    """单活轮换：生成新值覆盖落盘，旧值即刻作废。返回新 token。"""
-    cfg = _read(path)
-    cfg[FIELD] = secrets.token_hex(16)
-    _write(path, cfg)
-    return cfg[FIELD]
-
-
-def mask_token_state(path: str) -> dict:
-    """掩码布尔契约：token_set 布尔 + 永不回显明文。"""
-    cfg = _read(path)
-    return {"token_set": bool(cfg.get(FIELD))}

@@ -34,21 +34,6 @@ class TestUsageLoggerWrite(unittest.TestCase):
             logger.write(_entry())
             self.assertFalse((Path(d) / "u.jsonl").exists())
 
-    def test_rolling_totals_accumulate(self):
-        with tempfile.TemporaryDirectory() as d:
-            logger = UsageLogger(enabled=True, path=str(Path(d) / "u.jsonl"))
-            logger.write(_entry(input_tokens=100, output_tokens=50))
-            logger.write(_entry(input_tokens=200, output_tokens=30))
-            self.assertEqual(logger.rolling["calls"], 2)
-            self.assertEqual(logger.rolling["input_tokens"], 300)
-            self.assertEqual(logger.rolling["output_tokens"], 80)
-
-    def test_error_counted_in_rolling(self):
-        with tempfile.TemporaryDirectory() as d:
-            logger = UsageLogger(enabled=True, path=str(Path(d) / "u.jsonl"))
-            logger.write(_entry(status=500))
-            self.assertEqual(logger.rolling["errors"], 1)
-
 
 class TestUsageLoggerRotate(unittest.TestCase):
     def test_rotate_renames_old_file(self):

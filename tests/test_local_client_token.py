@@ -6,7 +6,6 @@
   Authorization/x-api-key（含 mage-router/本地 token/用户真实值）
 - 永不回显明文于 UI/日志/diff（掩码布尔契约）
 """
-import json
 import os
 import stat
 import tempfile
@@ -14,8 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mpconf.local_token import (get_local_token, rotate_token,
-                                mask_token_state)
+from mpconf.local_token import get_local_token
 from mpconf.provider_auth import build_outbound_headers
 
 
@@ -30,24 +28,6 @@ class TestTokenLifecycle(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(os.stat(cfg_path).st_mode), 0o600)
             self.assertEqual(get_local_token(cfg_path), tok)
 
-    def test_rotation_single_active_old_value_dead(self):
-        with tempfile.TemporaryDirectory() as d:
-            cfg_path = str(Path(d) / "magic-proxy.json")
-            old = get_local_token(cfg_path)
-            new = rotate_token(cfg_path)
-            self.assertNotEqual(old, new)
-            self.assertEqual(get_local_token(cfg_path), new)
-            # 旧值不存在于文件
-            self.assertNotIn(old, Path(cfg_path).read_text())
-
-    def test_mask_state_never_echoes_plaintext(self):
-        with tempfile.TemporaryDirectory() as d:
-            cfg_path = str(Path(d) / "magic-proxy.json")
-            tok = get_local_token(cfg_path)
-            state = mask_token_state(cfg_path)
-            self.assertTrue(state["token_set"])
-            self.assertNotIn(tok, json.dumps(state))
-
 
 class TestUnconditionalOutboundStripping(unittest.TestCase):
     """验收⑤：keyless Provider 出站绝不透传任何入站凭证。"""
@@ -61,8 +41,7 @@ class TestUnconditionalOutboundStripping(unittest.TestCase):
 
     def test_keyless_provider_strips_local_token_too(self):
         incoming = {"Authorization": "Bearer lc-abc123"}
-        out = build_outbound_headers(incoming, api_key=None,
-                                     gateway_key="lc-abc123")
+        out = build_outbound_headers(incoming, api_key=None)
         self.assertNotIn("Authorization", out)
 
 

@@ -17,7 +17,7 @@
 | 环境变量 | 语义 | 来源角色 |
 |---|---|---|
 | `ANTHROPIC_BASE_URL` | 网关地址 `http://<suanpan_listen>` | 固定 |
-| `ANTHROPIC_AUTH_TOKEN` | 占位 token `mage-router` | 固定 |
+| `ANTHROPIC_AUTH_TOKEN` | ~~占位 token `mage-router`~~ 本地客户端 token（2026-08-21 issue #9 增补取代，见文末「增补」节） | 固定 |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `"1"`（禁用实验 beta，兼容供应商 API） | 固定 |
 | `ANTHROPIC_MODEL` | 默认兜底模型 | `default` 角色 |
 | `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` / `ANTHROPIC_DEFAULT_FABLE_MODEL` / `ANTHROPIC_DEFAULT_HAIKU_MODEL` | 各 tier 模型 | `opus`/`sonnet`/`fable`/`haiku` 角色 |

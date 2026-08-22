@@ -45,14 +45,12 @@ class ProviderConfig(BaseModel):
 
     def build_outbound_headers(
         self, incoming: dict[str, str], api_key: str | None,
-        gateway_key: str | None = None,
     ) -> dict[str, str]:
         """Build outbound headers: filter hop-by-hop, apply auth.
 
-        ``gateway_key`` (the Suanpan gate key, AppConfig.api_key) is stripped
-        from passthrough auth so it never reaches a keyless backend."""
-        return _build_outbound(incoming, api_key, auth_header=self.auth_header,
-                               gateway_key=gateway_key)
+        Keyless 出站无条件剥除一切入站凭证（issue #9）——网关自己的
+        gate key 绝不落到后端。"""
+        return _build_outbound(incoming, api_key, auth_header=self.auth_header)
 
 
 class RouterConfig(BaseModel):

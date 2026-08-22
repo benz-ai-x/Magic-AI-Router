@@ -20,6 +20,7 @@ RUNTIME_MODULES = [
     "tunnel/proxy.py", "tunnel/async_runtime.py", "tunnel/http_framer.py",
     "tunnel/connection_coordinator.py", "tunnel/subprocess_monitor.py",
     "tunnel/retry_scheduler.py", "tunnel/host_key.py", "tunnel/host_key_flow.py",
+    "tunnel/ssh_launch.py",
     "mpconf/config.py", "mpconf/config_store.py", "mpconf/config_state.py",
     "mpconf/netloc.py", "mpconf/provider_auth.py",
     "shellui/menu_builder.py", "shellui/webview_window.py",

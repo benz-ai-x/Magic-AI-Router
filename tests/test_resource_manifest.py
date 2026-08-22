@@ -74,3 +74,25 @@ class TestBuildScriptCoverage(unittest.TestCase):
         from tools.resource_manifest import RUNTIME_MODULES
         missing = [m for m in RUNTIME_MODULES if not (ROOT / m).is_file()]
         self.assertEqual(missing, [])
+
+
+class TestBuildScriptReverseCoverage(unittest.TestCase):
+    """#49：守卫双向——build.sh 多打的 --add-data 也必须在 manifest
+    （或显式白名单）。ssh_launch 曾漂移出 RUNTIME_MODULES 无人报警。"""
+
+    def test_every_add_data_covered_by_manifest_or_allowlist(self):
+        import re
+        from tools.resource_manifest import RESOURCE_MANIFEST, RUNTIME_MODULES
+        build = (ROOT / "build.sh").read_text()
+        # 白名单：非资源、非 import 模块的构建自身产物
+        allowlist = {"build_time.txt", "dist-mitmdump/mitmdump"}
+        covered = {src for src, _ in RESOURCE_MANIFEST}
+        covered |= {m for m in RUNTIME_MODULES if m != "app.py"}
+        covered |= allowlist
+        stray = [m.group(1).rsplit(":", 1)[0] for m in
+                 re.finditer(r'--add-data "([^"]+)"', build)]
+        uncovered = sorted({s for s in stray if s not in covered})
+        self.assertEqual(
+            uncovered, [],
+            f"build.sh 打包了 manifest 未收录的文件（真源漂移）: {uncovered}")
+

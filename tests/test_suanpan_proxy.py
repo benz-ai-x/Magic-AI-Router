@@ -156,7 +156,7 @@ class TestBuildOutboundHeaders(unittest.TestCase):
         """The gateway's own gate key must never reach a keyless backend."""
         cfg = ProviderConfig(base_url="http://x")
         incoming = {"x-api-key": "gate-key", "Content-Type": "application/json"}
-        result = cfg.build_outbound_headers(incoming, None, gateway_key="gate-key")
+        result = cfg.build_outbound_headers(incoming, None)
         self.assertNotIn("x-api-key", result)
         self.assertNotIn("X-Api-Key", result)
         self.assertEqual(result["Content-Type"], "application/json")
