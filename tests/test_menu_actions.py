@@ -210,7 +210,7 @@ class TestSuanpanActions(unittest.TestCase):
 
 
 class TestSleepLoginActions(unittest.TestCase):
-    def test_toggle_prevent_sleep_flips_and_spersists(self):
+    def test_toggle_prevent_sleep_flips_and_persists(self):
         a = _make_app({"prevent_sleep": False})
         a.toggle_prevent_sleep(None)
         self.assertTrue(a._config["prevent_sleep"])

@@ -233,11 +233,23 @@ class ConfigStateStore:
         parent = os.path.dirname(self.journal_path) or "."
         if not os.path.isdir(parent):
             os.makedirs(parent, mode=0o700)
-        tmp = self.journal_path + ".tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(payload, f, ensure_ascii=False)
-        os.replace(tmp, self.journal_path)
+        # mkstemp 唯一临时名（#46 同标准：固定 path+".tmp" 名并发互截断）；
+        # 失败抛 OSError 由 commit 的回滚路径接住
+        import tempfile as _tempfile
+        fd, tmp = _tempfile.mkstemp(
+            dir=parent, prefix="." + os.path.basename(self.journal_path) + ".",
+            suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.journal_path)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def _atomic_install(self, path, text):
         parent = os.path.dirname(path) or "."
@@ -418,16 +430,21 @@ class ConfigStateStore:
 
         内存副本永不整文件覆写磁盘——stale 副本丢更新的根因即此。读新
         经 load_config（含迁移；IdentityMigrationError 原样上抛，由调用
-        方决定弹窗），缺文件时从 merge 默认起步；随后走与 UI 保存完全
-        相同的 prepare/commit 管线（校验 + journal + 0600 原子写）。
+        方决定弹窗），缺文件时从 merge 默认起步；主文件损坏/不可读时
+        拒绝（load_config 会把损坏折叠成 None → merge 默认整文件覆写，
+        静默清空用户配置）。随后走与 UI 保存完全相同的 prepare/commit
+        管线（校验 + journal + 0600 原子写）。
         """
         from mpconf.config import load_config, merge_config
+        mp_state = self.load().mp_state
+        if mp_state in ("invalid", "io_error"):
+            return SaveResult(False, "validate", [
+                f"主配置文件{('损坏' if mp_state == 'invalid' else '不可读')}"
+                "，已阻止菜单写入以防覆盖（原内容见 .bak 隔离档）"])
         cfg = load_config(self.mp_path)
         if cfg is None:
             cfg = merge_config(None)
         mutated = mutate(cfg)
-        if mutated is None:
-            mutated = cfg
         plan = self.prepare(mp=mutated)
         if not plan.ok:
             return SaveResult(False, "validate", plan.errors)

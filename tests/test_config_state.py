@@ -177,8 +177,9 @@ class TestCommitTransaction(unittest.TestCase):
                                sp={"listen_port": 9528, "providers": {}})
         calls["n"] = 99  # 之后所有 replace 都失败（进程崩溃等价）
         def crash_replace(src, dst, *a, **kw):
-            # journal 落盘放行；此后安装与回滚全崩（进程崩溃等价）
-            if str(src).endswith(".txn.json.tmp"):
+            # journal 落盘放行（mkstemp 随机中段，认后缀+标记即可）；
+            # 此后安装与回滚全崩（进程崩溃等价）
+            if str(src).endswith(".tmp") and "txn.json" in str(src):
                 return real_replace(src, dst, *a, **kw)
             raise OSError("simulated crash, rollback also dead")
         with mock.patch.object(cs.os, "replace", side_effect=crash_replace):
@@ -505,6 +506,24 @@ class TestUpdateMp(unittest.TestCase):
             self.assertEqual(
                 len(disk.get("tunnels", [])), 2,
                 "菜单开关抹掉了 UI 并发保存的隧道（#46 丢更新）")
+
+
+    def test_update_refuses_when_disk_config_corrupt(self):
+        """#46 复核：主文件损坏（已隔离 .bak）时菜单写径必须拒绝——
+        否则 load_config 折叠 None → merge 默认整文件覆写，静默清空
+        用户配置（与「invalid 不覆盖最后已知良好 .bak」立场冲突）。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = self._store(d)
+            (Path(d) / "magic-proxy.json").write_text("{corrupt json")
+            result = store.update_mp(
+                lambda c: {**c, "prevent_sleep": True})
+            self.assertFalse(result.ok)
+            self.assertTrue(any("损坏" in e or "invalid" in e
+                                for e in result.errors), result.errors)
+            self.assertEqual(
+                (Path(d) / "magic-proxy.json").read_text(), "{corrupt json",
+                "拒绝时不得触碰损坏的主文件")
 
     def test_update_missing_file_starts_from_defaults(self):
         import tempfile

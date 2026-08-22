@@ -20,8 +20,7 @@ from sysctl import port_check
 from shellui.bridge_protocol import ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY
 from capture.capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
-    DEFAULT_CONFIG, IdentityMigrationError, load_config, merge_config,
-    save_config)
+    DEFAULT_CONFIG, IdentityMigrationError, load_config, merge_config)
 from shellui.log_window import LogBuffer, show_log_window
 from shellui.webview_window import show_config_window
 from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
@@ -392,7 +391,10 @@ class MagicProxyApp(rumps.App):
                              self._config.get("prevent_sleep", False))
 
     def toggle_launch_at_login(self, _):
-        enabled = not self._config.get("launch_at_login", False)
+        # 目标态从磁盘真相推导（#46 复核：内存副本可能滞后于 UI 保存，
+        # 与 prevent_sleep 同一口径）
+        cfg = load_config()
+        enabled = not (cfg or {}).get("launch_at_login", False)
         ok, err = login_item.set_launch_at_login(enabled)
         if not ok:
             rumps.alert(title="Magic AI Router", message=f"无法设置登录启动：\n\n{err}")
