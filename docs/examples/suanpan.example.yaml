@@ -17,7 +17,8 @@ body_limit_mb: 50
 
 usage_log:
   enabled: true
-  path: ~/.suanpan/usage.jsonl
+  # 与 schema 默认一致（suanpan/config.py UsageLogConfig）
+  path: ~/.suanpan/logs/usage.jsonl
 
 providers:
   # Each provider needs base_url + auth.  Use api_key (inline) or api_key_env
@@ -46,8 +47,9 @@ providers:
 router:
   default: anthropic/claude-sonnet-4-20250514
 
-rules:
-  # Route by model-name prefix (checked in order, first match wins).
+# 节标题下全注释 = YAML null——写 rules: 后接注释示例会解析成 null 而
+# 过不了 schema（rules 必须是列表）；空列表起步，示例以注释内联：
+rules: []
   # - match_prefix: claude-haiku
   #   route_to: anthropic/claude-haiku-4-5-20251001
   # - match_prefix: claude-3-5-sonnet

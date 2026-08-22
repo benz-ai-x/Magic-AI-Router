@@ -94,6 +94,20 @@ class AppConfig(BaseModel):
                 pass  # let pydantic's int validator surface the error
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_null_sections(cls, data: Any) -> Any:
+        """#47：显式 null 节 = 缺省——「节标题 + 下面全注释」是最常见的
+        手编 YAML 姿势（解析为 null），应等价于缺省而非 ValidationError。
+        仅归一显式 null：键缺失仍走必填校验（providers 不会因此放宽）。
+        """
+        if isinstance(data, dict):
+            for key, default in (("rules", []), ("router", {}),
+                                 ("usage_log", {}), ("providers", {})):
+                if key in data and data[key] is None:
+                    data[key] = default
+        return data
+
     @model_validator(mode="after")
     def _check_route_targets(self) -> "AppConfig":
         provider_names = set(self.providers)
@@ -132,6 +146,24 @@ class AppConfig(BaseModel):
 def load_config(path: Path | str) -> AppConfig:
     raw = yaml.safe_load(Path(path).read_text())
     return AppConfig.model_validate(raw)
+
+
+def friendly_config_error(exc: Exception) -> str:
+    """#47：配置装载错误 → 单行可定位文案（字段路径 + 消息）。
+
+    pydantic ValidationError 取逐字段 ``loc: msg``；其余异常取
+    ``类型: 消息``。消费方（网关 factory 塑形 / ConfigStateStore 事务
+    校验）共用此一格式化，错误文本永不携带 secret（字段值不进消息）。
+    """
+    items = getattr(exc, "errors", None)
+    if callable(items):
+        parts = []
+        for it in items():
+            loc = ".".join(str(x) for x in it.get("loc", ()))
+            parts.append(f"{loc or '配置'}: {it.get('msg', exc)}")
+        if parts:
+            return "；".join(parts)
+    return f"{type(exc).__name__}: {exc}"
 
 
 def dump_config(config: AppConfig) -> str:
