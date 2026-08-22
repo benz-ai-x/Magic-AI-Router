@@ -333,7 +333,7 @@ def _shape_balance_error(exc) -> str:
         return "连接超时"
     if isinstance(reason, ConnectionRefusedError):
         return "连接被拒绝"
-    if isinstance(reason, __import__("socket").gaierror):
+    if isinstance(reason, socket.gaierror):
         return "域名解析失败"
     return type(exc).__name__
 
