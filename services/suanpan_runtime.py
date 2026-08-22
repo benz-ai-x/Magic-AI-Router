@@ -112,7 +112,15 @@ class SuanpanRuntime:
 
         def factory(loop):
             from mpconf import netloc
-            config = load_config(config_path_str)
+            try:
+                config = load_config(config_path_str)
+            except Exception as exc:
+                # #47：装载失败塑形为可定位中文（路径 + 字段）——AsyncRuntime
+                # 存 str(exc)，菜单栏 [:40] 截断后仍可读可行动
+                from suanpan.config import friendly_config_error
+                raise ValueError(
+                    f"{config_path_str} 配置无效："
+                    f"{friendly_config_error(exc)}") from None
             app = create_app(config, config_path=config_path_str)
             try:
                 host, port = netloc.parse_listen(

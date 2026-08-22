@@ -68,14 +68,10 @@ _REQUEST_TIMEOUT_MAX = 86400
 
 
 def _schema_error_lines(exc) -> list:
-    """pydantic ValidationError → 中文可读行（字段路径: 消息）。"""
-    lines = []
-    for item in getattr(exc, "errors", lambda: [])():
-        loc = ".".join(str(x) for x in item.get("loc", ()))
-        lines.append(f"schema 校验失败 {loc or '配置'}: {item.get('msg', exc)}")
-    if not lines:
-        lines.append(f"schema 校验失败: {exc}")
-    return lines
+    """schema 校验错误行——格式化单一归宿 suanpan.friendly_config_error_lines。"""
+    from suanpan.config import friendly_config_error_lines
+    return [f"schema 校验失败 {seg}"
+            for seg in friendly_config_error_lines(exc)]
 
 
 def _valid_http_origin(url) -> bool:

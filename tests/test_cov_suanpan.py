@@ -255,3 +255,55 @@ class TestUsageLoggerRotateOSError(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExampleConfigValidates(unittest.TestCase):
+    """#47 T4a：发货样例必须过自己的 schema——菜单「复制配置样例」发给
+    用户的文件，复制即用不得踩雷（样例↔schema 永久锁死）。"""
+
+    def test_example_yaml_loads(self):
+        from suanpan.config import load_config
+        from pathlib import Path
+        example = Path(__file__).resolve().parents[1] / "docs" / "examples" / "suanpan.example.yaml"
+        cfg = load_config(str(example))
+        self.assertEqual(cfg.listen_port, 9527)
+        self.assertIn("anthropic", cfg.providers)
+        self.assertIn("deepseek", cfg.providers)
+
+
+class TestNullSectionTolerance(unittest.TestCase):
+    """#47 T4b：「节标题 + 下面全注释」= YAML null——最常见手编姿势，
+    显式 null 应等价于缺省（缺失 providers 键仍报错，不放宽必填）。"""
+
+    def _load(self, text):
+        from suanpan.config import load_config
+        import tempfile
+        import os
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(text)
+            p = f.name
+        try:
+            return load_config(p)
+        finally:
+            os.unlink(p)
+
+    def test_null_rules_router_usage_log_tolerated(self):
+        cfg = self._load(
+            "providers:\n"
+            "  p:\n    base_url: https://x.example\n    api_key: k\n"
+            "rules:\n"
+            "router:\n"
+            "usage_log:\n")
+        self.assertEqual(cfg.rules, [])
+        self.assertEqual(cfg.router.default, None)
+        self.assertTrue(cfg.usage_log.enabled)
+
+    def test_null_providers_tolerated(self):
+        cfg = self._load("providers:\n")
+        self.assertEqual(cfg.providers, {})
+
+    def test_missing_providers_still_rejected(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            self._load("listen_port: 9527\n")
+

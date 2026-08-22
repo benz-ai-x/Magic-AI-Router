@@ -291,3 +291,37 @@ class TestBindHostOverride(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFactoryConfigErrorShaping(unittest.TestCase):
+    """#47 T4c：配置装载失败必须塑形为可定位中文（文件路径 + 字段路径）
+    ——菜单栏 [:40] 截断后仍可读可行动，而非 pydantic 英文堆栈。"""
+
+    def test_bad_config_error_names_file_and_field(self):
+        import pathlib
+        import tempfile
+        import uvicorn
+        rt = SuanpanRuntime()
+        with tempfile.TemporaryDirectory() as d:
+            p = str(pathlib.Path(d) / "suanpan.yaml")
+            pathlib.Path(p).write_text("providers: {}\nrules: not-a-list\n")
+            rt._config_path = p
+            captured = {}
+
+            def capture(factory):
+                captured["f"] = factory
+                return True
+
+            with patch.object(rt._rt, "start", side_effect=capture), \
+                 patch("suanpan.main.create_app", return_value=MagicMock()), \
+                 patch.object(uvicorn, "Config"), \
+                 patch.object(uvicorn, "Server"), \
+                 patch.object(rt, "_ensure_config"):
+                rt.start()
+            with self.assertRaises(ValueError) as ctx:
+                captured["f"](MagicMock())
+            msg = str(ctx.exception)
+            self.assertIn("suanpan.yaml", msg, msg)
+            self.assertIn("rules", msg, msg)
+            self.assertIn("配置", msg, msg)
+
