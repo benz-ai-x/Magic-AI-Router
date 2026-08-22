@@ -57,6 +57,52 @@ class TestForwardRequest(unittest.IsolatedAsyncioTestCase):
             mock_request, body, _decision(), config, logger, client)
         self.assertEqual(result.status_code, 200)
 
+
+    async def test_fallback_decision_sets_response_header(self):
+        """#50：显式意图 fall-through → 响应头 x-suanpan-fallback 宣告
+        原意图（客户端/日志可感知，绝不静默误投）。"""
+        import httpx
+
+        async def upstream(request):
+            async def gen():
+                yield b'{"input_tokens":5}'
+            return httpx.Response(200, content=gen(),
+                                  headers={"content-type": "application/json"})
+
+        real_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+        mock_request = MagicMock()
+        mock_request.headers = {}
+        body = {"model": "test", "messages": []}
+        try:
+            result = await spproxy.forward_count_tokens(
+                mock_request, body, _decision(fallback_from="ghost/m"),
+                _cfg(), real_client)
+        finally:
+            await real_client.aclose()
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.headers["x-suanpan-fallback"], "ghost/m")
+        self.assertEqual(result.headers["x-suanpan-provider"], "p1")
+
+    async def test_no_fallback_no_header(self):
+        import httpx
+
+        async def upstream(request):
+            async def gen():
+                yield b'{"input_tokens":5}'
+            return httpx.Response(200, content=gen(),
+                                  headers={"content-type": "application/json"})
+
+        real_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+        mock_request = MagicMock()
+        mock_request.headers = {}
+        try:
+            result = await spproxy.forward_count_tokens(
+                mock_request, {"model": "t", "messages": []}, _decision(),
+                _cfg(), real_client)
+        finally:
+            await real_client.aclose()
+        self.assertNotIn("x-suanpan-fallback", result.headers)
+
     async def test_upstream_error_returns_502(self):
         mock_request = MagicMock()
         mock_request.headers = {}
