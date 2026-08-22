@@ -95,8 +95,9 @@ pip install -q --upgrade pip
 pip install -q --require-hashes -r requirements-lock.txt
 
 # Generate the menu-bar state icon if missing (Pillow is in the venv).  The
-# production app icon is the approved v2 artwork under assets/icon; the menu-bar
-# state icon is loaded and tinted dynamically by menu_builder.py.
+# production app icon is icons/magic-ai-router-macos-v2.icns (see APP_ICON
+# below); the menu-bar state icon is loaded and tinted dynamically by
+# menu_builder.py.
 if [ ! -f assets/MenubarIcon.png ]; then
     python tools/generate_icon.py
 fi

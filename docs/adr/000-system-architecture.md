@@ -29,7 +29,7 @@ AppGenesisForge（AGF）团队模板刚装入本项目，其 ADR-000 模板默�
 | 系统代理开关 | `networksetup`（subprocess） | `system_proxy.py` 调 `-setwebproxy` / `-setsecurewebproxy` / `-setproxybypassdomains` / `-setwebproxystate` / `-getwebproxy` / `-listallnetworkservices`；被 `app.py` 两处依赖（高扇入） |
 | 端口占用检查 | `lsof` + POSIX kill（subprocess） | `port_check.py:65 ["lsof","-nP",f"-iTCP@127.0.0.1:{port}","-sTCP:LISTEN","-F","pcn"]`；解析输出拿 PID + 进程名，SIGTERM→SIGKILL 安全 kill；被 `app.py` 两处依赖（高扇入） |
 | 外部终端启动（**已移除**） | —（原 `osascript` / `launcher.py`） | v0.3.0 前经 `osascript` + `launcher.py` 启动 iTerm2/Terminal.app；该功能连同 `launcher.py` + `tests/test_launcher.py` 已于 commit `8ff997a`（"删启动终端"）移除，此行仅留架构演进痕迹 |
-| 图标生成 | Pillow | `generate_icon.py` 用 PIL 画菜单栏状态图标模板 `MenubarIcon.png`（纯 alpha 蒙版，运行时由 `menu_builder.py` 染色）；应用图标为 `assets/icon/` 下静态 v2 美术稿，非代码生成 |
+| 图标生成 | Pillow | `generate_icon.py` 用 PIL 画菜单栏状态图标模板 `MenubarIcon.png`（纯 alpha 蒙版，运行时由 `menu_builder.py` 染色）；应用图标为 `icons/magic-ai-router-macos-v2.icns` 静态美术稿（build.sh `APP_ICON`），非代码生成 |
 | 配置 | JSON 文件 `~/.magic-proxy.json` | 多隧道配置；`config.sample.json` 为模板；`auth_type` 为 `key`（默认）或 `password` |
 | AI 路由网关（Suanpan） | FastAPI + uvicorn + httpx + pydantic | `suanpan/` 子包（`:9527`）：`main.py` app factory + `middleware.py`（APIKey + BodyLimit 中间件）；`router.py` 按 内联覆盖 → SUBAGENT-MODEL 标签 → 模型规则 → 默认 链路路由；`proxy.py` 流式转发 + SSE 用量提取；统一多家 LLM 为 Anthropic Messages API。经 `suanpan_runtime.py` 线程化宿主，**延迟导入**（依赖未装时 app 正常启动） |
 | Suanpan 配置 | YAML 文件 `~/.suanpan.yaml` | 参考 `suanpan.example.yaml`；首次启动自动创建最小默认配置；Pydantic schema 在 `suanpan/config.py` |
