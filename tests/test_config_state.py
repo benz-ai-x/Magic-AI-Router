@@ -597,6 +597,36 @@ class TestPrepareSpSchemaValidation(unittest.TestCase):
                             plan.errors)
 
 
+
+
+class TestReadonlyDecoratedFields(unittest.TestCase):
+    """#52：服务端注入的只读装饰字段单点声明——注入（config_server）
+    与剥除（prepare）共用一名单，新增装饰字段不再靠两侧注释对齐。"""
+
+    def test_declaration_covers_both_sides(self):
+        from mpconf.config_state import READONLY_DECORATED_FIELDS
+        self.assertIsInstance(READONLY_DECORATED_FIELDS, frozenset)
+        self.assertIn("has_password", READONLY_DECORATED_FIELDS)
+        self.assertIn("capture_active", READONLY_DECORATED_FIELDS)
+
+    def test_prepare_strips_exactly_the_declared_fields(self):
+        """注入字段全被剥除（持久化配置永不携带），未声明字段不受累。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = ConfigStateStore(
+                mp_path=str(Path(d) / "m.json"),
+                sp_path=str(Path(d) / "s.yaml"))
+            plan = store.prepare(mp={"tunnels": [{
+                "name": "t", "ssh_host": "h", "ssh_port": 22,
+                "auth_type": "key", "has_password": True,
+                "capture_active": False}]})
+            self.assertTrue(plan.ok, plan.errors)
+            self.assertNotIn("has_password",
+                             plan.mp_candidate["tunnels"][0])
+            self.assertNotIn("capture_active",
+                             plan.mp_candidate["tunnels"][0])
+
+
 if __name__ == "__main__":
     unittest.main()
 
