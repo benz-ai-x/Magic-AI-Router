@@ -68,6 +68,17 @@ class TestFallbackObservable(unittest.TestCase):
         d = decide_route(body, config=cfg)
         self.assertEqual(d.fallback_from, "p/model-b")
 
+
+    def test_fallback_intent_sanitized_no_control_chars(self):
+        """#50 复核：model 来自客户端请求体——CR/LF/控制字符不得进入
+        fallback_from（否则响应头构造在误投之后 500，可感知性反被摧毁）。"""
+        cfg = _config()
+        d = decide_route({"model": "ghost/x\r\nSet-Cookie: evil=1"},
+                         config=cfg)
+        self.assertNotIn("\r", d.fallback_from)
+        self.assertNotIn("\n", d.fallback_from)
+        self.assertTrue(d.fallback_from.startswith("ghost/x"))
+
     def test_normal_routes_carry_no_fallback(self):
         cfg = _config()
         self.assertIsNone(decide_route({"model": "p/m"}, config=cfg).fallback_from)

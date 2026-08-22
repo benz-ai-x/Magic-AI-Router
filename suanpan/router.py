@@ -38,6 +38,16 @@ class NoRouteMatched(Exception):
         self.source_model = source_model
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _sanitize_intent(raw: str) -> str:
+    """#50：显式意图串进入 fallback_from 前消毒——剥离 CR/LF/控制
+    字符（model 来自客户端请求体，带 CRLF 会让响应头构造在误投之后
+    500，可感知性反被摧毁）。"""
+    return _CONTROL_CHARS.sub(" ", raw).strip()
+
+
 def _parse_target(target: str) -> tuple[str, str]:
     sep = "/" if "/" in target else ","
     provider, _, model = target.partition(sep)
@@ -77,7 +87,7 @@ def decide_route(
             return RouteDecision(provider, target, "inline")
         # unknown or disabled provider → fall through（容错刻意，#50 起
         # 携带原意图供调用方宣告——绝不静默误投）
-        fallback_from = source_model
+        fallback_from = _sanitize_intent(source_model)
 
     # Priority 2: <SUBAGENT-MODEL>x</> escape hatch
     m = SUBAGENT_RE.search(sys_text)
@@ -87,7 +97,7 @@ def decide_route(
         if provider in config.providers and config.providers[provider].enabled:
             return RouteDecision(provider, target, "subagent", strip_marker=True)
         # unknown or disabled provider → fall through（同上）
-        fallback_from = fallback_from or intent
+        fallback_from = fallback_from or _sanitize_intent(intent)
 
     # Priority 3: prefix rules
     for rule in config.rules:
