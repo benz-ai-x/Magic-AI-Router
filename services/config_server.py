@@ -94,16 +94,13 @@ def _read_mp():
     return cfg
 
 
-# 探针策略（argv / 失败分类 / 超时上限）单一归宿在 tunnel/ssh_launch.py。
-_TUNNEL_TEST_TIMEOUT = ssh_launch.PROBE_TIMEOUT
-
-
 def test_tunnel(tunnel):
     """One-shot SSH reachability probe for one saved tunnel config.
 
     本函数只持有端点职责：输入校验（地址/端口/选项注入守卫）与 Keychain
-    取密码；SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe）——
-    绿结果意味着隧道本身会连上，未信任主机快速失败，绝不自动信任。
+    取密码；SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe，
+    含超时上限）——绿结果意味着隧道本身会连上，未信任主机快速失败，
+    绝不自动信任。
 
     Returns {"ok": True} or {"ok": False, "error": "<中文短语>"} — never raises.
     """
@@ -123,8 +120,7 @@ def test_tunnel(tunnel):
         if not password:
             return {"ok": False, "error": "钥匙串中没有该隧道的密码，请先保存"}
 
-    return ssh_launch.probe(tunnel, password=password,
-                            timeout=_TUNNEL_TEST_TIMEOUT)
+    return ssh_launch.probe(tunnel, password=password)
 
 
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):

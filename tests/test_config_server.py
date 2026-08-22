@@ -651,9 +651,7 @@ class TestTunnelProbeLogic(unittest.TestCase):
                           return_value={"ok": True}) as probe:
             result = config_server.test_tunnel(self._KEY_TUNNEL)
         self.assertEqual(result, {"ok": True})
-        probe.assert_called_once_with(
-            self._KEY_TUNNEL, password="",
-            timeout=config_server.ssh_launch.PROBE_TIMEOUT)
+        probe.assert_called_once_with(self._KEY_TUNNEL, password="")
 
     def test_password_auth_passes_saved_password_through(self):
         with patch.object(config_server.keychain, "get_password",
@@ -662,9 +660,7 @@ class TestTunnelProbeLogic(unittest.TestCase):
                           return_value={"ok": False, "error": "连接超时"}) as probe:
             result = config_server.test_tunnel(self._PW_TUNNEL)
         self.assertEqual(result, {"ok": False, "error": "连接超时"})
-        probe.assert_called_once_with(
-            self._PW_TUNNEL, password="sekrit",
-            timeout=config_server.ssh_launch.PROBE_TIMEOUT)
+        probe.assert_called_once_with(self._PW_TUNNEL, password="sekrit")
 
 
 class TestCaptureCleanEndpoint(unittest.TestCase):

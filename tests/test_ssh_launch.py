@@ -241,6 +241,21 @@ class TestProbe(unittest.TestCase):
             result = ssh_launch.probe(self._KEY)
         self.assertFalse(result["ok"])
 
+    def test_null_ssh_key_coerced_to_empty_string(self):
+        """显式 ssh_key: null 不得让 None 进入 argv（probe 绝不抛异常）。"""
+        t = dict(self._KEY, ssh_key=None)
+        with patch.object(ssh_launch.subprocess, "run",
+                          return_value=self._proc(0)) as run:
+            result = ssh_launch.probe(t)
+        self.assertEqual(result, {"ok": True})
+        cmd = run.call_args[0][0]
+        self.assertEqual(cmd[cmd.index("-i") + 1], "")
+
+    def test_null_ssh_key_coerced_in_tunnel_command(self):
+        t = dict(self._KEY, ssh_key=None)
+        sc = ssh_launch.build_tunnel_command(t, 1080)
+        self.assertEqual(sc.cmd[sc.cmd.index("-i") + 1], "")
+
 
 if __name__ == "__main__":
     unittest.main()

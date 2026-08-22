@@ -96,12 +96,14 @@ def _host_key_args():
 
 
 def _with_auth(tunnel, ssh_args, password, extra_auth_args=()):
-    """把认证注入策略套到 ssh_args 上，返回 SshCommand 的公共字段。
+    """把认证注入策略套到 ssh_args 上，返回完整的 SshCommand。
 
     password 认证走 sshpass -d fd（密码经管道传递，永不出现在 argv/ps）；
-    key 认证前置 -i。extra_auth_args 是模式专属认证参数（探针的
-    BatchMode / NumberOfPasswordPrompts）。
+    key 认证前置 -i（显式 null 兜底为空串，argv 绝不出现 None）。
+    extra_auth_args 是模式专属认证参数（探针的 BatchMode /
+    NumberOfPasswordPrompts）。
     """
+    destination = _destination(tunnel)
     if tunnel.get("auth_type") == "password":
         r_fd, w_fd = os.pipe()
         try:
@@ -112,10 +114,13 @@ def _with_auth(tunnel, ssh_args, password, extra_auth_args=()):
                + ssh_args)
         display_cmd = " ".join(
             ["sshpass", "-d", "***", "ssh"] + list(extra_auth_args) + ssh_args)
-        return cmd, display_cmd, (r_fd,), r_fd
-    key = tunnel.get("ssh_key", "")
+        return SshCommand(cmd=cmd, display_cmd=display_cmd,
+                          destination=destination, pass_fds=(r_fd,),
+                          password_fd=r_fd)
+    key = str(tunnel.get("ssh_key") or "")
     cmd = ["ssh"] + list(extra_auth_args) + ["-i", key] + ssh_args
-    return cmd, " ".join(cmd), (), None
+    return SshCommand(cmd=cmd, display_cmd=" ".join(cmd),
+                      destination=destination)
 
 
 def build_tunnel_command(tunnel, socks5_port, password=""):
@@ -127,15 +132,11 @@ def build_tunnel_command(tunnel, socks5_port, password=""):
         + ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3"])
     if tunnel.get("ssh_compression", True):
         ssh_args.append("-C")
-    destination = _destination(tunnel)
-    ssh_args.extend(["-p", port, destination])
-    cmd, display_cmd, pass_fds, r_fd = _with_auth(tunnel, ssh_args, password)
-    return SshCommand(cmd=cmd, display_cmd=display_cmd,
-                      destination=destination, pass_fds=pass_fds,
-                      password_fd=r_fd)
+    ssh_args.extend(["-p", port, _destination(tunnel)])
+    return _with_auth(tunnel, ssh_args, password)
 
 
-def probe(tunnel, password="", timeout=PROBE_TIMEOUT):
+def probe(tunnel, password=""):
     """一次性连通性探针：与真实隧道同策略地连一次并立即退出。
 
     绿结果意味着隧道本身也会连上；未信任的主机快速失败，绝不自动信任。
@@ -152,25 +153,21 @@ def probe(tunnel, password="", timeout=PROBE_TIMEOUT):
         extra = ("-o", "NumberOfPasswordPrompts=1")
     else:
         extra = ("-o", "BatchMode=yes")
-    cmd, _display, pass_fds, r_fd = _with_auth(tunnel, ssh_args, password,
-                                               extra)
+    sc = _with_auth(tunnel, ssh_args, password, extra)
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, timeout=timeout, pass_fds=pass_fds)
+            sc.cmd, capture_output=True, timeout=PROBE_TIMEOUT,
+            pass_fds=sc.pass_fds)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "连接超时"}
     except OSError:
         hint = "（密码认证需要 sshpass）" if password else ""
         return {"ok": False, "error": f"无法启动 ssh{hint}"}
     finally:
-        if r_fd is not None:
-            try:
-                os.close(r_fd)
-            except OSError:
-                pass
+        sc.close_password_fd()
     if proc.returncode == 0:
         return {"ok": True}
-    # bytes + replace decode (not text=True): SSH stderr can carry raw bytes
-    # and a strict-locale decode must not blow up the endpoint.
+    # bytes + replace decode (not text=True)：SSH stderr 可能携带原始字节，
+    # 严格 locale 解码绝不能把探针打崩。
     stderr = (proc.stderr or b"").decode("utf-8", "replace")
     return {"ok": False, "error": describe_failure(stderr)}
