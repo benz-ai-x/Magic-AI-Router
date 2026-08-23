@@ -23,17 +23,28 @@ DEFAULT_LOCK_PATH = os.path.join(
 
 
 def _ps_pid_info(pid: int):
-    """生产 pid_info：ps 取进程启动时间与可执行路径。失败返回 (None, None)。"""
+    """生产 pid_info：ps 取进程启动时间与可执行路径。失败返回 (None, None)。
+
+    ps -o lstart= -o comm= 输出单行「lstart(定宽日期) + 空白 + comm」——
+    不是两行（#65：len(lines)!=2 的解析错配曾让 _holder_alive 恒 False，
+    单实例守卫在生产从未生效）。lstart 定宽为 5 词（Www Mmm dd HH:MM:SS
+    yyyy），按 5 词切前缀即可靠分出 comm。
+    """
     try:
         out = subprocess.run(
             ["ps", "-p", str(pid), "-o", "lstart=", "-o", "comm="],
             capture_output=True, timeout=3, text=True)
         if out.returncode != 0:
             return None, None
-        lines = out.stdout.strip().splitlines()
-        if len(lines) != 2:
+        line = out.stdout.strip()
+        if not line:
             return None, None
-        return lines[0].strip(), lines[1].strip()
+        parts = line.split(None, 5)  # lstart 定宽 5 词；第 6 段起为 comm
+        if len(parts) != 6:
+            return None, None
+        start = " ".join(parts[:5])
+        exe = parts[5].strip()
+        return (start or None), (exe or None)
     except (OSError, subprocess.SubprocessError):
         return None, None
 
