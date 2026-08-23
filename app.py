@@ -17,7 +17,8 @@ from sysctl import keychain
 from sysctl import login_item
 from mpconf import netloc
 from sysctl import port_check
-from shellui.bridge_protocol import ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY
+from shellui.bridge_protocol import (ACTION_COPY_AGENT_INSTRUCTIONS,
+    ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY)
 from capture.capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
     DEFAULT_CONFIG, IdentityMigrationError, load_config, merge_config)
@@ -442,19 +443,24 @@ class MagicProxyApp(rumps.App):
         self._dirty()
 
     def open_capture_dir(self, _):
-        d = os.path.expanduser(self._config.get("capture_dir", DEFAULT_CAPTURE_DIR))
+        from capture import capture_store
         try:
-            os.makedirs(d, exist_ok=True)
+            # #70 W13：经 prepare 带标记建目录——裸 makedirs（无标记、
+            # 0755）曾让 prepare 拒「非本应用创建的现有目录」，抓包模式
+            # 永远无法启动（菜单动作打败自家安全契约）
+            d = capture_store.prepare(
+                self._config.get("capture_dir", DEFAULT_CAPTURE_DIR))
             subprocess.Popen(["open", d])
         except OSError:
             actions_log.exception("Failed to open capture dir")
 
     def open_today_jsonl(self, _):
-        d = os.path.expanduser(self._config.get("capture_dir", DEFAULT_CAPTURE_DIR))
-        today = time.strftime("%Y-%m-%d")
-        path = os.path.join(d, f"{today}.jsonl")
+        from capture import capture_store
         try:
-            os.makedirs(d, exist_ok=True)
+            d = capture_store.prepare(
+                self._config.get("capture_dir", DEFAULT_CAPTURE_DIR))
+            today = time.strftime("%Y-%m-%d")
+            path = os.path.join(d, f"{today}.jsonl")
             if os.path.exists(path):
                 subprocess.Popen(["open", "-t", path])
             else:
@@ -563,6 +569,22 @@ class MagicProxyApp(rumps.App):
             logger.exception("show_preferences failed")
             rumps.alert(title="Magic AI Router", message=f"打开设置失败:\n\n{e!r}")
 
+    def _copy_agent_instructions(self):
+        """原生侧拼装 AI 助手指令（#70 S13）：token 不出原生进程——
+        JS 侧 URLSearchParams 在 #10 删 query 认证后恒空，复制出的
+        指令带空 Bearer 必 401。此处持 expected_token 直接上剪贴板。"""
+        token = self._config_server.token
+        url = self._config_server.url
+        text = (
+            "我在用 Magic AI Router（macOS 菜单栏应用）。\n"
+            f"请先读 {url}agent.md 了解产品功能和配置方法。\n"
+            "当前配置 API（需要 token）：\n"
+            f'  curl -H "Authorization: Bearer {token}" {url}api/state\n'
+            "你可以通过这个 API 读取和修改我的配置，帮我完成设置。")
+        proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+        proc.communicate(text.encode())
+        self._notify("已复制 AI 助手指令", "含 token 的 curl 已就绪")
+
     def _bridge_action(self, action):
         """App-level bridge actions from the settings window.
 
@@ -578,6 +600,8 @@ class MagicProxyApp(rumps.App):
                              name="BridgeReconnect", daemon=True).start()
         elif kind == ACTION_OPEN_PATH and action.get("kind") == "captureDir":
             self.open_capture_dir(None)
+        elif kind == ACTION_COPY_AGENT_INSTRUCTIONS:
+            self._copy_agent_instructions()
 
     def quit_app(self, _):
         # 退出顺序契约由 LifecycleRuntime.quit 持有（系统代理恢复先于 SSH 停止）

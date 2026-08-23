@@ -408,6 +408,14 @@ function viewSnapshot(view,state,roles){
   }
   return null;
 }
+// #70 S1：路由目标文法镜像 suanpan/router.parse_route_target（"/" 优先
+// "," 兜底）——单一所有者；不再散点 split('/')。
+function parseTarget(t){
+  t=String(t||'');
+  const sep=t.includes('/')?'/':(t.includes(',')?',':'/');
+  const i=t.indexOf(sep);
+  return i<0?[t,'']:[t.slice(0,i),t.slice(i+1)];
+}
 function validateConfig(S){
   // Pre-save validation; returns a list of human-readable error strings.
   const errors=[];
@@ -440,10 +448,10 @@ function validateConfig(S){
   // #3 悬空引用：规则/默认路由指向的供应商必须存在，否则网关路由落空。
   const providerNames=new Set(Object.keys(S.sp.providers||{}));
   (S.sp.rules||[]).forEach((r,i)=>{
-    const t=(r&&r.route_to)||'',pk=t.split('/')[0];
+    const t=(r&&r.route_to)||'',pk=parseTarget(t)[0];
     if(t&&!providerNames.has(pk))errors.push(`规则 ${i+1} 引用了不存在的供应商 ${pk}`);
   });
-  const defRoute=(S.sp.router||{}).default||'',defPk=defRoute.split('/')[0];
+  const defRoute=(S.sp.router||{}).default||'',defPk=parseTarget(defRoute)[0];
   if(defRoute&&!providerNames.has(defPk))errors.push(`默认路由引用了不存在的供应商 ${defPk}`);
   return errors;
 }
@@ -594,7 +602,7 @@ function routeTargetOptionsFor(providers,current,emptyLabel){
   Object.entries(providers||{}).forEach(([k,p])=>{
     const models=p.models||[];
     if(!models.length)return;
-    const referenced=(current||'').split('/')[0]===k;
+    const referenced=parseTarget(current||'')[0]===k;
     if(p.enabled===false&&!referenced)return;
     const opts=models.map(m=>{
       const v=k+'/'+m;
@@ -1710,14 +1718,10 @@ function ccRenderDefault(){
 
 // ── AI agent helper ───────────────────────────────────
 function copyAgentInstructions(){
-  const port=location.port||'9528';
-  const token=new URLSearchParams(location.search).get('token')||'';
-  const text=`我在用 Magic AI Router（macOS 菜单栏应用）。
-请先读 http://127.0.0.1:${port}/agent.md 了解产品功能和配置方法。
-当前配置 API（需要 token）：
-  curl -H "Authorization: Bearer ${token}" http://127.0.0.1:${port}/api/state
-你可以通过这个 API 读取和修改我的配置，帮我完成设置。`;
-  navigator.clipboard.writeText(text).then(()=>toast('已复制 AI 助手指令到剪贴板')).catch(()=>toast('复制失败，请手动复制'));
+  // #70 S13：token 拼装移原生侧（#10 后 URL 永不带凭证，此处曾恒空
+  // 导致复制的 curl 401）——发 bridge 消息，由 app 持 expected_token
+  // 直接把完整文本上剪贴板；toast 由原生通知承担。
+  nativeSend('copyAgentInstructions');
 }
 
 // ── keyboard + dirty listener ─────────────────────────

@@ -914,3 +914,27 @@ test("dirtyProjection: single-field change marks exactly that view", () => {
   assert.deepEqual([...p.views], ["proxy"]);
   assert.equal(p.total, 1);
 });
+
+
+// ── parseTarget（#70 文法镜像）──
+test("parseTarget mirrors parse_route_target dual-separator grammar", () => {
+  assert.deepEqual(L.parseTarget("glm/glm-4.6"), ["glm", "glm-4.6"]);
+  assert.deepEqual(L.parseTarget("glm,glm-4.6"), ["glm", "glm-4.6"],
+                   "逗号兜底文法（schema 双分隔符）");
+  assert.deepEqual(L.parseTarget("glm"), ["glm", ""]);
+  assert.deepEqual(L.parseTarget(""), ["", ""]);
+});
+
+test("validateConfig accepts comma-form router default", () => {
+  const S = {
+    mp: { tunnels: [] },
+    sp: {
+      providers: { glm: { base_url: "https://open.bigmodel.cn/api/anthropic", api_key: "k" } },
+      router: { default: "glm,glm-4.6" },
+      rules: [],
+      listen_port: 9527,
+    },
+  };
+  assert.deepEqual(L.validateConfig(S), [],
+                   "schema 合法的逗号 default 不得被 UI 误拦");
+});

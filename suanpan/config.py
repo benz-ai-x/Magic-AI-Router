@@ -120,15 +120,11 @@ class AppConfig(BaseModel):
         for i, rule in enumerate(self.rules):
             _collect(f"rules[{i}].route_to", rule.route_to)
 
+        # 文法单一所有者（#70 S1）：消费 router.parse_route_target——
+        # 不再内联双分隔符逻辑（曾三处漂移）
+        from suanpan.router import parse_route_target
         for where, target in targets:
-            # Slash takes precedence; comma is the fallback separator.
-            # "/" not in target → the comma branch must be reachable so that
-            # targets like "glm,glm-4.6" validate against "glm", not the whole
-            # string (which would never match a provider name).
-            if "/" in target:
-                provider = target.partition("/")[0]
-            else:
-                provider = target.partition(",")[0]
+            provider, _model = parse_route_target(target)
             if provider not in provider_names:
                 raise ValueError(
                     f"{where}={target!r} references unknown provider {provider!r}; "

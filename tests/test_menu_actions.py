@@ -281,14 +281,14 @@ class TestCaptureActions(unittest.TestCase):
 
     def test_open_capture_dir(self):
         a = _make_app()
-        with patch.object(app.os, "makedirs"), \
+        with patch("capture.capture_store.prepare", return_value="/tmp/cap"), \
              patch.object(app.subprocess, "Popen") as popen:
             a.open_capture_dir(None)
         popen.assert_called_once()
 
     def test_open_today_jsonl_existing(self):
         a = _make_app()
-        with patch.object(app.os, "makedirs"), \
+        with patch("capture.capture_store.prepare", return_value="/tmp/cap"), \
              patch.object(app.os.path, "exists", return_value=True), \
              patch.object(app.time, "strftime", return_value="2026-08-10"), \
              patch.object(app.subprocess, "Popen") as popen:
@@ -376,12 +376,13 @@ class TestLaunchAppProxied(unittest.TestCase):
 class TestOSErrorPaths(unittest.TestCase):
     def test_open_capture_dir_oserror_swallowed(self):
         a = _make_app()
-        with patch.object(app.os, "makedirs", side_effect=OSError("denied")):
+        with patch("capture.capture_store.prepare",
+                   side_effect=OSError("denied")):
             a.open_capture_dir(None)  # should not raise
 
     def test_open_today_jsonl_missing_file_opens_dir(self):
         a = _make_app()
-        with patch.object(app.os, "makedirs"), \
+        with patch("capture.capture_store.prepare", return_value="/tmp/cap"), \
              patch.object(app.os.path, "exists", return_value=False), \
              patch.object(app.time, "strftime", return_value="2026-08-10"), \
              patch.object(app.subprocess, "Popen") as popen:
