@@ -12,7 +12,7 @@ dist-mitmdump/
 .build-venv-main/
 build_time.txt
 
-# AppGenesisForge 运行态产物（可重建，不入库；ADR-021 codemap .agf/ 等）
+# AppGenesisForge 运行态产物（可重建，不入库）
 **/.agf/*
 !**/.agf/config.json
 progress/board.html*
@@ -20,8 +20,6 @@ progress/board.html*
 
 # AGF worktree 运行时检出（每个是一份完整仓库拷贝，数百 MB，可重建）
 .claude/worktrees/
-# codemap 工具的 Python 虚拟环境（由 uv.lock 重建）
-tools/codemap/.venv/
 # macOS Finder 产物
 .DS_Store
 **/.DS_Store
