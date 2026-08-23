@@ -48,10 +48,20 @@ def _sanitize_intent(raw: str) -> str:
     return cleaned.encode("latin-1", "replace").decode("latin-1")
 
 
-def _parse_target(target: str) -> tuple[str, str]:
+def parse_route_target(target: str) -> tuple[str, str]:
+    """路由目标文法的唯一所有者（#70 S1）："/" 优先、"," 兜底。
+
+    消费方：router 自身（inline/subagent/规则/默认）+ config_state.
+    prepare + suanpan.config._check_route_targets——手编合法配置
+    "glm,glm-4.6" 曾在 schema 合法却被事务路径误拦（文法漂移）。
+    """
     sep = "/" if "/" in target else ","
     provider, _, model = target.partition(sep)
     return provider, model
+
+
+# 兼容别名（模块内既有调用点）
+_parse_target = parse_route_target
 
 
 def _make_decision(

@@ -35,6 +35,7 @@ OPENABLE_KINDS = frozenset({"captureDir"})
 ACTION_SHOW_OPEN_PANEL = "showOpenPanel"
 ACTION_RECONNECT_PROXY = "reconnectProxy"
 ACTION_OPEN_PATH = "openPath"
+ACTION_COPY_AGENT_INSTRUCTIONS = "copyAgentInstructions"
 
 
 def _plain(obj):
@@ -103,6 +104,10 @@ class BridgeCore:
                 return [{"type": ACTION_OPEN_PATH, "kind": kind}]
             logger.warning("openPath for unknown kind: %r", kind)
             return []
+        if mtype == "copyAgentInstructions":
+            # #70 S13：指令文本含 Bearer token——拼装必须在原生侧（JS 永不
+            # 接触凭证）；app 层持 expected_token 直接把完整文本上剪贴板
+            return [{"type": ACTION_COPY_AGENT_INSTRUCTIONS}]
         logger.warning("unknown bridge message type: %r", mtype)
         return []
 

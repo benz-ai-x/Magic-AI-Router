@@ -171,7 +171,7 @@ class TestCommitTransaction(unittest.TestCase):
         # 故障注入 B：真崩溃——安装与回滚都失败，journal 保留待启动恢复
         # 先成功提交一轮建立旧文件（旧内容非空，回滚才有会失败的写）
         pre = store.prepare(mp={"http_listen_port": 1000},
-                            sp={"listen_port": 1000, "providers": {}})
+                            sp={"listen_port": 9527, "providers": {}})
         self.assertTrue(store.commit(pre).ok)
         plan_b = store.prepare(mp={"http_listen_port": 8889},
                                sp={"listen_port": 9528, "providers": {}})
@@ -349,7 +349,7 @@ class TestFaultInjectionCompletions(unittest.TestCase):
         store = self._store()
         # 先有旧文件
         self.assertTrue(store.commit(store.prepare(
-            mp={"http_listen_port": 1000}, sp={"listen_port": 1000, "providers": {}})).ok)
+            mp={"http_listen_port": 1000}, sp={"listen_port": 9527, "providers": {}})).ok)
         plan = store.prepare(mp={"http_listen_port": 8888})
         calls = {"n": 0}
         real_replace = os.replace
@@ -366,7 +366,7 @@ class TestFaultInjectionCompletions(unittest.TestCase):
         loaded = store.load()
         self.assertEqual(loaded.mp_data.get("http_listen_port"), 1000,
                          "MP 回滚到旧内容")
-        self.assertEqual(loaded.sp_data.get("listen_port"), 1000,
+        self.assertEqual(loaded.sp_data.get("listen_port"), 9527,
                          "SP 未被触碰")
 
     def test_corrupt_journal_recovered_and_cleared(self):
@@ -727,6 +727,36 @@ class TestCrashShapeGuards(unittest.TestCase):
             self.assertFalse(plan.ok)
             self.assertTrue(any("rules" in e for e in plan.errors))
 
+
+
+    def test_comma_default_accepted_grammar_converged(self):
+        """#70 S1：router.default 逗号文法（schema 双分隔符合法）经事务
+        路径不得被 prepare 误拦——「schema 合法但保存被拒」的假错误。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = ConfigStateStore(
+                mp_path=str(Path(d) / "m.json"),
+                sp_path=str(Path(d) / "s.yaml"))
+            plan = store.prepare(sp={
+                "providers": {"glm": {"base_url": "https://x.test",
+                                      "api_key": "k"}},
+                "router": {"default": "glm,glm-4.6"}})
+            self.assertTrue(plan.ok, plan.errors)
+
+
+    def test_port_conflict_rejected_by_prepare(self):
+        """#70 S10：端口冲突检查上收事务边界——validateConfig 只在 JS 层，
+        agent 直接 curl /api/state 可绕过；prepare 必须兜底。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = ConfigStateStore(
+                mp_path=str(Path(d) / "m.json"),
+                sp_path=str(Path(d) / "s.yaml"))
+            plan = store.prepare(mp={"tunnels": [], "socks5_port": 8888,
+                                     "http_listen_port": 8888})
+            self.assertFalse(plan.ok)
+            self.assertTrue(any("冲突" in e for e in plan.errors),
+                            plan.errors)
 
 if __name__ == "__main__":
     unittest.main()

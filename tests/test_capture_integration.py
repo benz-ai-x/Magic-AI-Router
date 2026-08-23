@@ -265,16 +265,18 @@ class TestToggleCapture(unittest.TestCase):
 class TestCaptureDirMenuActions(unittest.TestCase):
     def test_open_capture_dir_creates_dir_and_opens_it(self):
         inst = _new_app()
-        with patch("os.makedirs") as makedirs, \
+        with patch("capture.capture_store.prepare",
+                   return_value=capture.DEFAULT_CAPTURE_DIR) as prep, \
              patch("subprocess.Popen") as popen:
             inst.open_capture_dir(None)
-        makedirs.assert_called_once_with(capture.DEFAULT_CAPTURE_DIR, exist_ok=True)
+        prep.assert_called_once()  # #70 W13：经 prepare 带标记建目录
         popen.assert_called_once_with(["open", capture.DEFAULT_CAPTURE_DIR])
 
     def test_open_today_jsonl_opens_file_when_present(self):
         inst = _new_app()
         today_path = os.path.join(capture.DEFAULT_CAPTURE_DIR, "2026-07-08.jsonl")
-        with patch("os.makedirs"), \
+        with patch("capture.capture_store.prepare",
+                   return_value=capture.DEFAULT_CAPTURE_DIR), \
              patch("time.strftime", return_value="2026-07-08"), \
              patch("os.path.exists", return_value=True), \
              patch("subprocess.Popen") as popen:
@@ -283,7 +285,8 @@ class TestCaptureDirMenuActions(unittest.TestCase):
 
     def test_open_today_jsonl_falls_back_to_dir_when_file_missing(self):
         inst = _new_app()
-        with patch("os.makedirs"), \
+        with patch("capture.capture_store.prepare",
+                   return_value=capture.DEFAULT_CAPTURE_DIR), \
              patch("time.strftime", return_value="2026-07-08"), \
              patch("os.path.exists", return_value=False), \
              patch("subprocess.Popen") as popen:

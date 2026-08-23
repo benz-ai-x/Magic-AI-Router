@@ -159,23 +159,48 @@ class ConfigStateStore:
             if rules is not None and not isinstance(rules, list):
                 errors.append("rules 必须是列表")
                 rules = []
+            # 路由目标文法单一所有者（#70 S1）：parse_route_target 消费
+            # 路由侧双分隔符（"/" 优先 "," 兜底）——不再 split("/") 手写
+            from suanpan.router import parse_route_target as _parse_route
             for r in rules or []:
                 if not isinstance(r, dict):
                     # 形状守卫（#69 S11）：元素非 dict（如 "abc"）时
                     # schema 校验已记错，此处不得再对它 .get() 裸抛
                     continue
                 target = r.get("route_to", "")
-                routes.add(str(target).split("/", 1)[0])
+                routes.add(_parse_route(str(target))[0])
             router = sp_c.get("router")
             if router is not None and not isinstance(router, dict):
                 errors.append("router 必须是映射")
                 router = {}
-            routes.add(str((router or {}).get("default") or "")
-                       .split("/", 1)[0])
+            _default_target = (router or {}).get("default") or ""
+            if _default_target:
+                routes.add(_parse_route(str(_default_target))[0])
             routes.discard("")
             for prov in sorted(routes):
                 if prov and prov not in providers:
                     errors.append(f"route_to/default 引用了不存在的供应商：{prov}")
+
+        # 端口冲突检查上收事务边界（#70 S10）：JS validateConfig 只在
+        # 浏览器层——agent 直接 curl /api/state 可绕过；prepare 兜底拦
+        # 同值冲突（落盘后才由 bind 失败就太迟）
+        _port_refs = []
+        if mp_c is not None:
+            for _f in _MP_PORTS:
+                _v = mp_c.get(_f)
+                if isinstance(_v, int) and not isinstance(_v, bool):
+                    _port_refs.append((_f, _v))
+        if sp_c is not None:
+            _v = sp_c.get("listen_port")
+            if isinstance(_v, int) and not isinstance(_v, bool):
+                _port_refs.append(("listen_port", _v))
+        _seen = {}
+        for _name, _p in _port_refs:
+            if _p in _seen:
+                errors.append(
+                    f"端口冲突：{_seen[_p]} 与 {_name} 同为 {_p}")
+            else:
+                _seen[_p] = _name
 
         if errors:
             return CommitPlan(False, errors)

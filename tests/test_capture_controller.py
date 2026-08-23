@@ -274,3 +274,28 @@ class TestPreflightErrorLifecycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOpenDirBeforeEnable(unittest.TestCase):
+    """#70 W13：菜单「打开抓包目录」预建（无标记、0755）曾让
+    capture_store.prepare() 拒「非本应用创建的现有目录」→ 抓包模式
+    永远无法启动。菜单动作必须经 prepare 带标记建目录。"""
+
+    def test_menu_prebuilt_dir_then_enable_succeeds(self):
+        import os
+        import shutil
+        from capture import capture_store
+        home = os.path.expanduser("~")
+        target = os.path.join(home, ".tmp-w13-cap-check")
+        shutil.rmtree(target, ignore_errors=True)
+        try:
+            # 菜单动作的合法形态：经 prepare 建（带标记）
+            prepared = capture_store.prepare(target)
+            # 抓包启动 preflight 再 prepare 不得拒（幂等）
+            again = capture_store.prepare(target)
+            self.assertEqual(prepared, again)
+            marker = os.path.join(target, capture_store.MARKER)
+            self.assertTrue(os.path.isfile(marker))
+        finally:
+            shutil.rmtree(target, ignore_errors=True)
+

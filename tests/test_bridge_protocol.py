@@ -207,5 +207,16 @@ class TestDirtyStateMachine(unittest.TestCase):
         self.assertFalse(core.dirty)
 
 
+
+    def test_copy_agent_instructions_action(self):
+        """#70 S13：复制指令需原生侧拼 token——JS 永不接触凭证。
+        bridge 新消息类型 dispatch 出 copyAgentInstructions 动作。"""
+        core = BridgeCore()
+        actions = core.handle_message(
+            {"type": "copyAgentInstructions", "payload": {}})
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["type"], "copyAgentInstructions")
+
+
 if __name__ == "__main__":
     unittest.main()
