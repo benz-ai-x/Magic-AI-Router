@@ -112,8 +112,15 @@ class ConnectionCoordinator:
             self._retry_connect()
 
     def check_ssh(self):
-        """Check SSH status and handle errors. Call after setting status icon."""
-        with self._lifecycle_lock:
+        """Check SSH status and handle errors. Call after setting status icon.
+
+        非阻塞（#68 复核）：restart 持锁跨有界 join（≤~11s），1s tick
+        若阻塞等锁会把菜单卡死——try-lock 拿不到就跳过本拍（状态下拍
+        再收敛；单实例 tick 是主线程唯一调用方，跳拍安全）。
+        """
+        if not self._lifecycle_lock.acquire(blocking=False):
+            return
+        try:
             if self._paused:
                 return
             if self._ssh.status not in ("connecting", "connected", "stopped"):
@@ -126,6 +133,8 @@ class ConnectionCoordinator:
                     self._host_key.begin_replacement()
                 else:
                     self._retry.handle_error()
+        finally:
+            self._lifecycle_lock.release()
 
     def restart(self, reload_config_fn):
         """Full stop + config reload + restart."""

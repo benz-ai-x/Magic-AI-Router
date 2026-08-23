@@ -245,40 +245,52 @@ class TestThreadContract(unittest.TestCase):
     daemon 线程 stop() 与主线程 tick check() 的无保护竞态曾以
     AttributeError 落在 rumps 定时器回调内。"""
 
-    def test_concurrent_restart_and_check_no_crash(self):
-        """daemon 线程 restart（桥接重连路径）与主线程 check_ssh 并发——
-        锁归状态机所有者后，任何交错都不抛 AttributeError。"""
+    def test_concurrent_stop_and_check_serialized(self):
+        """#68 竞态点直接钉在 SubprocessMonitor.process：无锁时 daemon
+        stop() 置 None 与 check() 读 .process.poll() 形成 AttributeError
+        窗口。经 coordinator 锁后 stop/check 串行化——process 在 check
+        内永不半路变 None。用 MagicMock process 强制竞态字段非 None
+        （pytest 无 NSRunLoop 时 _ssh.start 不跑、process 恒 None，纯
+        压力测试打不中——复核证实 vacuous）。"""
         import threading
         conn = _make_coordinator()
-        # SSH monitor 真对象（subprocess_monitor 的 process 字段是竞态点）
-        stop = threading.Event()
         errors = []
+        # 竞态字段非 None + 强制交错：poll 返回 None（仍 running）让
+        # check 走到第二轮读；stop 置 None 的窗口被锁消除
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        conn._ssh.process = mock_proc
+        conn._ssh._status = "connecting"  # check 的进入条件
 
-        def restarter():
+        stop = threading.Event()
+
+        def stopper():
             while not stop.is_set():
                 try:
-                    conn.restart(lambda: None)
+                    conn.cancel()
                 except Exception as exc:
-                    errors.append(exc)
+                    errors.append(("stopper", exc))
                     return
+                conn._ssh.process = mock_proc  # 复位供下一轮
+                conn._ssh._status = "connecting"
 
         def checker():
             while not stop.is_set():
                 try:
                     conn.check_ssh()
                 except AttributeError as exc:
-                    errors.append(exc)
+                    errors.append(("checker", exc))
                     return
+                except Exception:
+                    return  # 非竞态异常（poll 在 None 上等）直接见
 
-        t1 = threading.Thread(target=restarter, daemon=True)
+        t1 = threading.Thread(target=stopper, daemon=True)
         t2 = threading.Thread(target=checker, daemon=True)
         t1.start()
         t2.start()
-        stop_after = threading.Timer(0.6, stop.set)
-        stop_after.start()
+        threading.Timer(0.5, stop.set).start()
         t1.join(3)
         t2.join(3)
-        conn.stop_all()
         self.assertEqual(errors, [],
-                         f"并发 restart/check 抛出异常（#68 无锁竞态）: {errors}")
+                         f"并发 stop/check 抛出 AttributeError（#68）: {errors}")
 
