@@ -147,7 +147,12 @@ def replace(tunnel, keys):
                 existing = fh.readlines()
         lookup = _lookup_name(host, port)
         kept = [line for line in existing if not line.split() or line.split()[0] != lookup]
-        text = "".join(kept) + keys.rstrip("\n") + "\n"
+        # 末行换行归一（#69 R7）：手编 known_hosts 末行缺 \n 时新 key
+        # 会胶接到旧行（刚验证过指纹的新 key 不可达）
+        base = "".join(kept)
+        if base and not base.endswith("\n"):
+            base += "\n"
+        text = base + keys.rstrip("\n") + "\n"
         return config_store.atomic_write(KNOWN_HOSTS_PATH, text)
     except (OSError, ValueError, TypeError):
         return False

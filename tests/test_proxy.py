@@ -436,6 +436,29 @@ class TestHandleHttpEdgeCases(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(b"X-Custom", forwarded)
         self.assertIn(b"X-Keep: visible\r\n", forwarded)
 
+
+    async def test_connection_multi_token_with_space_stripped(self):
+        """#69 S11c："keep-alive, X-Hop" 的 " x-hop" 未 strip 时永不匹配
+        blocked——客户端声明的逐跳头被转发 origin（RFC 7230 动态机制）。"""
+        client_reader = _reader(
+            b"Host: example.com\r\n"
+            b"Connection: keep-alive, X-Hop\r\n"
+            b"X-Hop: secret\r\n"
+            b"X-Keep: visible\r\n\r\n"
+        )
+        client_writer = _Writer()
+        remote_reader = _reader(b"HTTP/1.1 204 No Content\r\n\r\n")
+        remote_writer = _Writer()
+        with patch.object(proxy, "socks5_connect",
+                          new=AsyncMock(return_value=(remote_reader, remote_writer))):
+            await proxy.handle_http(
+                client_reader, client_writer,
+                b"GET http://example.com/ HTTP/1.1\r\n",
+                "127.0.0.1:1080", proxy.Stats())
+        forwarded = bytes(remote_writer.data)
+        self.assertNotIn(b"X-Hop", forwarded)
+        self.assertIn(b"X-Keep: visible\r\n", forwarded)
+
     async def test_socks5_failure_responds_502(self):
         client_reader = _reader(b"Host: example.com\r\n\r\n")
         client_writer = _Writer()

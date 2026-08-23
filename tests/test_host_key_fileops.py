@@ -124,3 +124,30 @@ class TestHostKeyInspectDetailed(unittest.TestCase):
         known, keys, fps, err = host_key.inspect({"ssh_host": "srv", "ssh_port": 22})
         self.assertFalse(known)
         self.assertIn("fingerprint", err.lower())
+
+
+class TestReplaceNewlineGuard(unittest.TestCase):
+    """#69 R7：手编 known_hosts 末行缺 \n 时，新 key 不得胶接到旧行
+    （否则刚验证过指纹的新 key 不可达）。"""
+
+    def test_missing_trailing_newline_no_glue(self):
+        import tempfile
+        import os
+        from unittest.mock import patch
+        from tunnel import host_key
+        with tempfile.TemporaryDirectory() as d:
+            kh = os.path.join(d, "known_hosts")
+            with open(kh, "w") as f:
+                f.write("oldhost ssh-ed25519 AAAA_OLD")  # 无末行换行
+            # replace 用 APP_SECURITY_DIR 锁 + KNOWN_HOSTS_PATH 常量——
+            # 两者都 patch 到临时目录
+            with patch.object(host_key, "KNOWN_HOSTS_PATH", kh), \
+                 patch.object(host_key, "APP_SECURITY_DIR", d):
+                ok = host_key.replace(
+                    {"ssh_host": "newhost", "ssh_port": 22},
+                    "newhost ssh-ed25519 AAAA_NEW")
+            self.assertTrue(ok)
+            lines = open(kh).read().splitlines()
+            # 新 key 独占一行（不胶接到 oldhost 行尾）
+            self.assertTrue(any(ln.startswith("newhost ssh") for ln in lines),
+                            lines)

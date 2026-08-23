@@ -153,3 +153,17 @@ class TestDefaultFallback(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNonStringModel(unittest.TestCase):
+    """#69 R7：非字符串 model 远程可触发 TypeError 500——规整后正常路由。"""
+
+    def test_int_model_routes_default_not_crash(self):
+        cfg = _config()
+        d = decide_route({"model": 123}, config=cfg)
+        self.assertEqual(d.provider, "p")
+
+    def test_list_model_no_crash(self):
+        cfg = _config()
+        d = decide_route({"model": ["x"]}, config=cfg)
+        self.assertIsNotNone(d)

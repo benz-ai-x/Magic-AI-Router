@@ -43,6 +43,28 @@ class TestAPIKeyMiddleware(unittest.TestCase):
             self.assertEqual(r.status_code, 401)
 
 
+
+    def test_non_ascii_credentials_401_not_500(self):
+        """#69 R7：非 ASCII 凭证（真实栈以 latin-1 解码进 request.
+        headers）compare_digest 不接 str——编码 bytes 后 401，不裸抛
+        TypeError 500。直接 dispatch（TestClient 的 h11 会先在入站拒
+        非 ASCII，够不到被测路径）。"""
+        import asyncio
+        from unittest.mock import MagicMock
+        from suanpan.middleware import APIKeyMiddleware
+
+        mw = APIKeyMiddleware(MagicMock(), api_key="gate-key")
+        request = MagicMock()
+        request.headers = {"x-api-key": "sk-tést"}  # latin-1 解码形态
+        request.url.path = "/v1/messages"
+
+        async def call_next(_):
+            return MagicMock()
+
+        resp = asyncio.run(mw.dispatch(request, call_next))
+        self.assertEqual(resp.status_code, 401)
+
+
 class TestRoutes(unittest.TestCase):
     def test_health(self):
         from starlette.testclient import TestClient

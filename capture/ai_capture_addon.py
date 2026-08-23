@@ -528,6 +528,14 @@ class AICaptureAddon:
 
     # -- hooks -------------------------------------------------------------
     def request(self, flow):
+        # Hooks never raise（#69 S11b：response()/error() 有守卫、request()
+        # 没有——畸形 body 曾让该 flow 静默永不被抓包）
+        try:
+            self._request_inner(flow)
+        except Exception:
+            log.exception("ai_capture request hook dropped flow")
+
+    def _request_inner(self, flow):
         ident = identify(flow.request.pretty_host, flow.request.path)
         if ident is None:
             return  # non-AI (or non-chat) traffic passes through untouched
