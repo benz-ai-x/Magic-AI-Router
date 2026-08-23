@@ -426,6 +426,11 @@ class ConfigServer:
     def url(self):
         return f"http://127.0.0.1:{self._port}/"
 
+    @property
+    def port(self):
+        """实际监听端口（start 后回写——port=0 时 url 不再撒谎，#71 S8）。"""
+        return self._port
+
     def start(self):
         """Start the server. Returns True on success, False if port unavailable."""
         if self.running:
@@ -439,6 +444,8 @@ class ConfigServer:
         except OSError:
             logger.warning("Config server: port %d unavailable", self._port)
             return False
+        # port=0 由 OS 分配——回写真实端口（url/port 属性自此不撒谎）
+        self._port = self._server.server_address[1]
         self._thread = threading.Thread(
             target=self._server.serve_forever, name="ConfigServer", daemon=True)
         self._thread.start()

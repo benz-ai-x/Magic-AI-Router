@@ -16,7 +16,9 @@ class TestConfigServerLifecycle(unittest.TestCase):
         cs2 = ConfigServer(port=0)
         self.assertTrue(cs2.start())
         self.assertTrue(cs2.running)
-        self.assertNotEqual(cs2._server.server_address[1], 0)
+        # #71 S8：走公开 seam——start 后 port property 回写真实端口
+        self.assertNotEqual(cs2.port, 0)
+        self.assertIn(str(cs2.port), cs2.url)
         cs2.stop()
         self.assertFalse(cs2.running)
 

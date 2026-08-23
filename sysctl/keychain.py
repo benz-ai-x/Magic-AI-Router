@@ -8,6 +8,8 @@ Security 缺失（Linux 容器）时模块仍可导入：Security=None，公开�
 全吞异常兜底（keychain must never raise to UI）把 None 解引用转成
 False/""——Docker 路径本就不调用这些函数。
 """
+from __future__ import annotations  # PEP 604 注解惰性求值——3.9 下界兼容（#71 S15）
+
 import logging
 
 try:
