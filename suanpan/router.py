@@ -9,12 +9,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-import structlog
 
 from suanpan.compat import extract_system_text
 from suanpan.config import AppConfig
 
-_log = structlog.get_logger()
 
 
 SUBAGENT_RE = re.compile(r"<SUBAGENT-MODEL>(.*?)</SUBAGENT-MODEL>", re.DOTALL)

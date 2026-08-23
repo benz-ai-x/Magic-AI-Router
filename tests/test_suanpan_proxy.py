@@ -343,6 +343,8 @@ class TestRetryPolicy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 2, "显式幂等键的 POST 按幂等策略重试")
 
     async def test_attempt_and_reason_logged(self):
+        """#67：stdlib 栈——reason/attempt 经 %s 参数入消息文本（可路由到
+        LogBuffer/文件，structlog kwargs 形态已删）。"""
         from unittest.mock import patch as _patch
         req = httpx.Request("GET", "https://api.example.com/m")
         client = MagicMock(spec=httpx.AsyncClient)
@@ -350,13 +352,14 @@ class TestRetryPolicy(unittest.IsolatedAsyncioTestCase):
         client.send = send
         with _patch("suanpan.proxy._log") as log:
             await _send_with_retry(client, req)
-        # structlog 风格：事件名为首个位置参数
         retry_events = [c for c in log.warning.call_args_list
-                        if c.args and c.args[0] == "transport_retry"]
+                        if c.args and "transport_retry" in c.args[0]]
         self.assertTrue(retry_events)
-        self.assertIn(retry_events[0].kwargs.get("reason"),
+        msg_args = retry_events[0].args
+        # 位置参数序列：reason（第 4 位 %s）与 attempt（第 5 位）
+        self.assertIn(msg_args[3],
                       ("pre-send-proven", "idempotent-transport"))
-        self.assertEqual(retry_events[0].kwargs.get("attempt"), 1)
+        self.assertEqual(msg_args[4], 1)
 
     async def test_second_failure_propagates_no_loop(self):
         req = httpx.Request("GET", "https://api.example.com/m")
