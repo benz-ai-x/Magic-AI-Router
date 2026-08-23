@@ -997,12 +997,14 @@ async function saveAll(forceRulesSync){
     forceRulesSync);
   recomputeDirty();  // 覆盖取消/失败/成功全部出口的状态栏与 pending bar 刷新
 }
+let _toastGen=0;  // #72 R7a：代际守卫——旧 toast 的超时不得提前藏掉新 toast
 function toast(msg,err){
   const t=document.getElementById('toast');document.getElementById('toast-msg').textContent=msg;
   t.setAttribute('role',err?'alert':'status');
   t.className='toast is-visible'+(err?' err':'');
+  const gen=++_toastGen;
   // Long messages (e.g. sync results with backup paths) need more read time.
-  setTimeout(()=>t.classList.remove('is-visible'),(err||msg.length>40)?6000:4000);
+  setTimeout(()=>{if(gen===_toastGen)t.classList.remove('is-visible');},(err||msg.length>40)?6000:4000);
 }
 function toggleSwitch(el){
   const on=el.getAttribute('aria-checked')!=='true';el.setAttribute('aria-checked',on);
@@ -1358,6 +1360,11 @@ function collectProvider(){
     const prefix=oldName+'/';
     (S.sp.rules||[]).forEach(r=>{if(r.route_to&&r.route_to.startsWith(prefix))r.route_to=newName+'/'+r.route_to.substring(prefix.length);});
     if(S.sp.router&&S.sp.router.default&&S.sp.router.default.startsWith(prefix))S.sp.router.default=newName+'/'+S.sp.router.default.substring(prefix.length);
+    // #72 R7a：ccRoles 的 model 引用同步改写——悬空后经 fall-through
+    // 静默误投（路由侧只认 provider 名）
+    Object.values(ccRoles||{}).forEach(r=>{
+      if(r&&r.model&&r.model.startsWith(prefix))r.model=newName+'/'+r.model.substring(prefix.length);
+    });
   }
 }
 async function fetchProviderModels(btn){
