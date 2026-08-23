@@ -100,5 +100,12 @@ class TestDeletePassword(unittest.TestCase):
         sec.SecItemDelete.return_value = -25300
         keychain.delete_password(_TUNNEL)  # should not raise
 
+    @patch("sysctl.keychain.Security", new_callable=_mock_security)
+    def test_real_failure_reports_false(self, sec):
+        """#69 R7：SecItemDelete 其他非零状态（真实失败）如实返回 False
+        ——不再恒报 True。"""
+        sec.SecItemDelete.return_value = -26276  # 非 0 非 NotFound
+        self.assertFalse(keychain.delete_password(_TUNNEL))
+
     def test_no_host_is_noop(self):
         keychain.delete_password({"ssh_host": ""})  # should not raise

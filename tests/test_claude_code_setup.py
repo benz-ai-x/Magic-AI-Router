@@ -687,3 +687,24 @@ class TestPreview(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSettingsShapeGuard(unittest.TestCase):
+    """#69 R7：settings.json 为 JSON 数组/标量时不裸抛——规整为空 dict
+    走「新建」分支（首写 .bak 保留原内容）。"""
+
+    def test_array_settings_degrades_to_new_file(self):
+        import tempfile
+        import os
+        from services import claude_code_setup
+        from mpconf import config_store
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = os.path.join(d, "settings.json")
+            with open(settings_path, "w") as f:
+                f.write('["not", "a", "dict"]')
+            from unittest.mock import patch
+            with patch.dict(config_store.PATHS,
+                            {"claude_settings": settings_path}):
+                result = claude_code_setup.preview()
+            self.assertIn("ok", result)  # 错误塑形返回，不裸抛
+

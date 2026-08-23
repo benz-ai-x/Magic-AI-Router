@@ -709,6 +709,25 @@ class TestLocalTokenSurvivesSave(unittest.TestCase):
             self.assertEqual(disk.get("local_client_token"), "tok-xyz")
 
 
+
+
+class TestCrashShapeGuards(unittest.TestCase):
+    """#69 崩溃族红测试：畸形输入走 4xx/类型容忍，不裸抛。"""
+
+    def test_prepare_rules_non_dict_elements_rejected_not_crashed(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            store = ConfigStateStore(
+                mp_path=str(Path(d) / "m.json"),
+                sp_path=str(Path(d) / "s.yaml"))
+            plan = store.prepare(sp={
+                "providers": {"p": {"base_url": "https://x.test",
+                                    "api_key": "k"}},
+                "rules": ["abc"]})
+            self.assertFalse(plan.ok)
+            self.assertTrue(any("rules" in e for e in plan.errors))
+
+
 if __name__ == "__main__":
     unittest.main()
 

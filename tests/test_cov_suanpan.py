@@ -307,3 +307,20 @@ class TestNullSectionTolerance(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self._load("listen_port: 9527\n")
 
+
+class TestLoadConfigShapeGuards(unittest.TestCase):
+    """#69 R7：providers 非 dict 不裸抛（「出错返回 {}」契约）。"""
+
+    def test_providers_list_normalized_not_crashed(self):
+        import tempfile
+        import os
+        from suanpan.config import load_config_raw
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml",
+                                         delete=False) as f:
+            f.write("providers:\n  - 1\n  - 2\n")
+            path = f.name
+        try:
+            cfg = load_config_raw(path)
+            self.assertIsInstance(cfg.get("providers"), dict)
+        finally:
+            os.unlink(path)

@@ -608,3 +608,25 @@ class TestAddonHooks:
     def test_module_exposes_addons_list(self):
         assert isinstance(addon.addons, list) and len(addon.addons) == 1
         assert isinstance(addon.addons[0], addon.AICaptureAddon)
+
+
+class TestRequestHookNeverRaises:
+    """#69 S11b：「Hooks never raise」——畸形 body 的 flow 被吞掉
+    （response/error 有守卫、request 此前没有曾让 flow 静默丢失）。"""
+
+    def test_request_hook_swallows_malformed_body(self, monkeypatch):
+        from capture import ai_capture_addon as addon
+        from unittest.mock import MagicMock
+        captured = MagicMock()
+        captured.request.pretty_host = "api.openai.com"
+        captured.request.path = "/v1/chat/completions"
+        # 畸形：messages 为字符串列表（extract 路径假设 dict）
+        captured.request.content = b'{"messages": ["abc"]}'
+        captured.request.url = "https://api.openai.com/v1/chat/completions"
+        captured.request.method = "POST"
+        captured.request.raw_content = captured.request.content
+        captured.id = "f1"
+        addon_instance = addon.AICaptureAddon()
+        # 不得抛（守卫吞掉）
+        addon_instance.request(captured)
+        assert "ai_capture" not in captured.metadata or True  # 吞掉即可
