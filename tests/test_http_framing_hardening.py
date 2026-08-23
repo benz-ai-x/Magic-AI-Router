@@ -31,7 +31,10 @@ class Test1xxIteration(unittest.TestCase):
 
             # 直接调内部（私有但在同一测试面——行为即「无限 1xx 不炸」）
             await proxy._relay_one_response(reader, W(), "GET")
-            self.assertTrue(writes.count(b"\r\n\r\n") >= 0)  # 终止于 EOF 即达
+            # 真实 oracle（#72 复核）：100 个 1xx 接续后 204 终响应必须
+            # 被转发——不是「不炸就行」
+            self.assertTrue(any(b"204 No Content" in w for w in writes),
+                            "204 终响应未被转发")
 
         asyncio.run(run())  # 不 RecursionError 即过
 
