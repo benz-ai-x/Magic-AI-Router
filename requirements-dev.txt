@@ -7,6 +7,7 @@ mitmproxy==12.2.3
 pyinstaller==6.21.0
 Pillow==12.3.0
 pytest==8.4.2
+pytest-cov==7.1.0
 ruff==0.12.2
 # Suanpan AI router gateway
 fastapi>=0.115
