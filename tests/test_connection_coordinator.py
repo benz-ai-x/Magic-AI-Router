@@ -238,3 +238,59 @@ class TestStartBackground(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThreadContract(unittest.TestCase):
+    """#68：注释声称「ConnectionCoordinator owns its locking」——让它成真。
+    daemon 线程 stop() 与主线程 tick check() 的无保护竞态曾以
+    AttributeError 落在 rumps 定时器回调内。"""
+
+    def test_concurrent_stop_and_check_serialized(self):
+        """#68 竞态点直接钉在 SubprocessMonitor.process：无锁时 daemon
+        stop() 置 None 与 check() 读 .process.poll() 形成 AttributeError
+        窗口。经 coordinator 锁后 stop/check 串行化——process 在 check
+        内永不半路变 None。用 MagicMock process 强制竞态字段非 None
+        （pytest 无 NSRunLoop 时 _ssh.start 不跑、process 恒 None，纯
+        压力测试打不中——复核证实 vacuous）。"""
+        import threading
+        conn = _make_coordinator()
+        errors = []
+        # 竞态字段非 None + 强制交错：poll 返回 None（仍 running）让
+        # check 走到第二轮读；stop 置 None 的窗口被锁消除
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        conn._ssh.process = mock_proc
+        conn._ssh._status = "connecting"  # check 的进入条件
+
+        stop = threading.Event()
+
+        def stopper():
+            while not stop.is_set():
+                try:
+                    conn.cancel()
+                except Exception as exc:
+                    errors.append(("stopper", exc))
+                    return
+                conn._ssh.process = mock_proc  # 复位供下一轮
+                conn._ssh._status = "connecting"
+
+        def checker():
+            while not stop.is_set():
+                try:
+                    conn.check_ssh()
+                except AttributeError as exc:
+                    errors.append(("checker", exc))
+                    return
+                except Exception:
+                    return  # 非竞态异常（poll 在 None 上等）直接见
+
+        t1 = threading.Thread(target=stopper, daemon=True)
+        t2 = threading.Thread(target=checker, daemon=True)
+        t1.start()
+        t2.start()
+        threading.Timer(0.5, stop.set).start()
+        t1.join(3)
+        t2.join(3)
+        self.assertEqual(errors, [],
+                         f"并发 stop/check 抛出 AttributeError（#68）: {errors}")
+
