@@ -252,20 +252,6 @@ class TestApiState(unittest.TestCase):
         for d in self._tmpdirs:
             d.cleanup()
 
-    def _setup_configs(self, mp_cfg=None, sp_cfg=None):
-        d = tempfile.mkdtemp()
-        self._tmpdirs.append(tempfile.TemporaryDirectory())
-        mp_path = os.path.join(d, "mp.json")
-        sp_path = os.path.join(d, "sp.yaml")
-        if mp_cfg:
-            with open(mp_path, "w") as f:
-                json.dump(mp_cfg, f)
-        if sp_cfg:
-            import yaml
-            with open(sp_path, "w") as f:
-                yaml.dump(sp_cfg, f)
-        return mp_path, sp_path
-
     def test_get_state_returns_json(self):
         status, data = _request(self.port, "GET", "/api/state", token=self.token)
         self.assertEqual(status, 200)

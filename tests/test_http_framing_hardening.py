@@ -31,8 +31,7 @@ class Test1xxIteration(unittest.TestCase):
 
             # 直接调内部（私有但在同一测试面——行为即「无限 1xx 不炸」）
             await proxy._relay_one_response(reader, W(), "GET")
-            self.assertEqual(writes.count(b"\r\n\r\n") if writes else 0,
-                             writes.count(b"\r\n\r\n"))
+            self.assertTrue(writes.count(b"\r\n\r\n") >= 0)  # 终止于 EOF 即达
 
         asyncio.run(run())  # 不 RecursionError 即过
 

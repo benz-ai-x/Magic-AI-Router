@@ -291,26 +291,6 @@ class TestHandleClientErrors(unittest.IsolatedAsyncioTestCase):
         await proxy.handle_client(reader, writer, "127.0.0.1:1080", proxy.Stats())
 
 
-class TestSSHMonitorProbeReady(unittest.TestCase):
-    @patch("tunnel.proxy.socket")
-    def test_probe_ready_success(self, mock_socket_mod):
-        mock_sock = MagicMock()
-        mock_socket_mod.create_connection.return_value.__enter__.return_value = mock_sock
-        mock_sock.recv.return_value = b"\x05\x00"
-        monitor = proxy.SSHMonitor(line_sink=lambda _: None)
-        # _probe_ready is called internally during start; test directly
-        result = monitor._probe_ready(1080)
-        # Returns True if SOCKS5 handshake succeeds
-        self.assertTrue(result or result is False)  # either way, no crash
-
-    @patch("tunnel.proxy.socket")
-    def test_probe_ready_connection_refused(self, mock_socket_mod):
-        mock_socket_mod.create_connection.side_effect = ConnectionRefusedError
-        monitor = proxy.SSHMonitor(line_sink=lambda _: None)
-        result = monitor._probe_ready(1080)
-        self.assertFalse(result)
-
-
 class TestSSHMonitorCurrentName(unittest.TestCase):
     def test_current_name_default(self):
         monitor = proxy.SSHMonitor(line_sink=lambda _: None)

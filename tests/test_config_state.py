@@ -62,12 +62,6 @@ class TestLoadStates(unittest.TestCase):
 class TestPrepareValidation(unittest.TestCase):
     """验收：所有候选配置在首次 mutation 前完成 schema 与跨引用校验。"""
 
-    def _store(self):
-        with tempfile.TemporaryDirectory() as d:
-            yield ConfigStateStore(
-                mp_path=str(Path(d) / "magic-proxy.json"),
-                sp_path=str(Path(d) / "suanpan.yaml"))
-
     def _prepare(self, mp=None, sp=None):
         with tempfile.TemporaryDirectory() as d:
             store = ConfigStateStore(
