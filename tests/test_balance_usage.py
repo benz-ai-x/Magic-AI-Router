@@ -403,175 +403,6 @@ class TestFetchBalance(unittest.TestCase):
         self.assertEqual(result[0]["error"], "未配置 API Key")
 
 
-class TestFetchBalanceLocalMonthly(unittest.TestCase):
-    """Plan providers whose API reports no monthly token window get a local
-    fallback row aggregated from the gateway usage log (source="local";
-    zero-filled when the log has nothing — 三行永远齐). An API-reported
-    monthly token pool (Kimi totalQuota) wins; GLM's 每月·工具 (TIME_LIMIT)
-    is a different unit and does not suppress the local token row."""
-
-    GLM_QUOTA_URL = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
-    GLM_ACCOUNT_URL = ("https://www.bigmodel.cn/api/biz/account/"
-                       "query-customer-account-report")
-    KIMI_URL = "https://api.kimi.com/coding/v1/usages"
-
-    GLM_PRO_QUOTA = {"data": {"level": "pro", "limits": [
-        {"type": "CREDIT_LIMIT", "unit": 3, "percentage": 1,
-         "usage": 12000, "currentValue": 12},
-        {"type": "CREDIT_LIMIT", "unit": 6, "percentage": 5,
-         "usage": 60000, "currentValue": 3322}]}}
-    GLM_MAX_QUOTA = {"data": {"level": "max", "limits": [
-        {"type": "TOKENS_LIMIT", "unit": 3, "percentage": 0},
-        {"type": "TOKENS_LIMIT", "unit": 6, "percentage": 0},
-        {"type": "TIME_LIMIT", "unit": 5, "percentage": 0,
-         "usage": 4000, "currentValue": 7}]}}
-    GLM_ACCOUNT = {"data": {"balance": 1.0, "totalSpendAmount": 9.0}}
-    KIMI_PAYLOAD = {
-        "usage": {"limit": "100", "used": "46"},
-        "user": {"membership": {"level": "LEVEL_ADVANCED"}},
-        "limits": [{"window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
-                    "detail": {"limit": "100", "used": "1"}}],
-        "totalQuota": {},
-    }
-
-    def _run(self, by_url, sp):
-        def side_effect(url, headers=None, data=None, method=None,
-                        timeout=None):
-            return json.dumps(by_url[url]).encode()
-
-        with patch.object(AuthenticatedHttpClient, "open",
-                          side_effect=side_effect), \
-                patch.object(balance_usage, "datetime", _frozen_datetime()):
-            return balance_usage.fetch_balance(sp)
-
-    def _write_log(self, entries):
-        f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
-        for e in entries:
-            f.write(json.dumps(e) + "\n")
-        f.close()
-        self.addCleanup(os.unlink, f.name)
-        return f.name
-
-    def _glm_sp(self, log_path):
-        return {
-            "usage_log": {"path": log_path},
-            "providers": {"glm": {
-                "base_url": "https://open.bigmodel.cn/api/paas/v4",
-                "api_key": "k"}},
-        }
-
-    def test_pro_without_api_monthly_gets_local_row(self):
-        log = self._write_log([
-            _usage_record(provider="glm", input_tokens=10, output_tokens=5,
-                          cache_read_tokens=90),
-            _usage_record(provider="glm", input_tokens=20, output_tokens=15,
-                          cache_read_tokens=30, cache_creation_tokens=50),
-        ])
-        result = self._run(
-            {self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
-             self.GLM_ACCOUNT_URL: self.GLM_ACCOUNT}, self._glm_sp(log))
-        apis = result[0]["apis"]
-        qs = apis[0]["quotas"]
-        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
-        m = qs[2]
-        self.assertEqual(m["used"], 220)  # 10+5+90 + 20+15+30+50
-        self.assertEqual(m["calls"], 2)
-        self.assertIsNone(m["limit"])
-        self.assertIsNone(m["pct"])
-        self.assertEqual(m["source"], "local")
-        # 账户余额 API has no quotas — untouched
-        self.assertNotIn("quotas", apis[1])
-
-    def test_api_monthly_wins_over_local(self):
-        """Kimi-style totalQuota (period exactly 每月) suppresses the local row."""
-        log = self._write_log([_usage_record(provider="kimi", input_tokens=9)])
-        sp = {
-            "usage_log": {"path": log},
-            "providers": {"kimi": {
-                "base_url": "https://api.kimi.com/anthropic", "api_key": "k"}},
-        }
-        payload = dict(self.KIMI_PAYLOAD,
-                       totalQuota={"limit": "500", "used": "130"})
-        result = self._run({self.KIMI_URL: payload}, sp)
-        qs = result[0]["apis"][0]["quotas"]
-        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
-        m = qs[2]
-        self.assertEqual(m["used"], 130)   # API 口径，不是本地聚合
-        self.assertEqual(m["limit"], 500)
-        self.assertNotIn("source", m)
-
-    def test_glm_max_tool_time_monthly_does_not_suppress_local_tokens(self):
-        """GLM Max unit 5 is TIME_LIMIT (工具时长), not token usage: it is
-        labeled 每月·工具 and the local token row is still appended."""
-        log = self._write_log([_usage_record(provider="glm", input_tokens=9,
-                                             output_tokens=1)])
-        result = self._run(
-            {self.GLM_QUOTA_URL: self.GLM_MAX_QUOTA,
-             self.GLM_ACCOUNT_URL: self.GLM_ACCOUNT}, self._glm_sp(log))
-        qs = result[0]["apis"][0]["quotas"]
-        self.assertEqual([q["period"] for q in qs],
-                         ["5小时", "每周", "每月·工具", "每月"])
-        tool = qs[2]
-        self.assertEqual(tool["used"], 7)
-        self.assertEqual(tool["limit"], 4000)
-        self.assertNotIn("source", tool)
-        local = qs[3]
-        self.assertEqual(local["source"], "local")
-        self.assertEqual(local["used"], 10)
-
-    def test_kimi_empty_total_quota_gets_local_row(self):
-        log = self._write_log([_usage_record(
-            provider="kimi", input_tokens=100, output_tokens=50)])
-        sp = {
-            "usage_log": {"path": log},
-            "providers": {"kimi": {
-                "base_url": "https://api.kimi.com/anthropic", "api_key": "k"}},
-        }
-        result = self._run({self.KIMI_URL: self.KIMI_PAYLOAD}, sp)
-        qs = result[0]["apis"][0]["quotas"]
-        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
-        self.assertEqual(qs[2]["source"], "local")
-        self.assertEqual(qs[2]["used"], 150)
-
-    def test_missing_log_still_shows_zero_local_row(self):
-        """「三行永远齐」：本地无数据时显示 0 行而非消失。"""
-        result = self._run(
-            {self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
-             self.GLM_ACCOUNT_URL: self.GLM_ACCOUNT},
-            self._glm_sp("/nonexistent/usage.jsonl"))
-        qs = result[0]["apis"][0]["quotas"]
-        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
-        m = qs[2]
-        self.assertEqual(m["source"], "local")
-        self.assertEqual(m["used"], 0)
-        self.assertEqual(m["calls"], 0)
-
-    def test_no_local_entries_for_provider_still_shows_zero_row(self):
-        log = self._write_log([_usage_record(provider="other", input_tokens=1)])
-        result = self._run(
-            {self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
-             self.GLM_ACCOUNT_URL: self.GLM_ACCOUNT}, self._glm_sp(log))
-        qs = result[0]["apis"][0]["quotas"]
-        self.assertEqual([q["period"] for q in qs], ["5小时", "每周", "每月"])
-        self.assertEqual(qs[2]["used"], 0)
-        self.assertEqual(qs[2]["source"], "local")
-
-    def test_simple_balance_provider_untouched(self):
-        log = self._write_log([
-            _usage_record(provider="deepseek", input_tokens=1)])
-        sp = {
-            "usage_log": {"path": log},
-            "providers": {"deepseek": {
-                "base_url": "https://api.deepseek.com/anthropic",
-                "api_key": "k"}},
-        }
-        result = self._run(
-            {"https://api.deepseek.com/user/balance": {"balance_infos": [
-                {"total_balance": "9.0", "topped_up_balance": "9.0",
-                 "currency": "CNY"}]}}, sp)
-        self.assertNotIn("quotas", result[0]["apis"][0])
-
-
 class TestFetchUsage(unittest.TestCase):
     def test_missing_log_returns_zero(self):
         result = balance_usage.fetch_usage({"usage_log": {"path": "/nonexistent/x.jsonl"}})
@@ -973,4 +804,88 @@ class TestBalanceErrorShaping(unittest.TestCase):
                       "api_key": "k"}}})
         err = results[0]["apis"][0]["error"]
         self.assertIn("拒绝", err)
+
+
+class TestAllApiQuotaDisplay(unittest.TestCase):
+    """#调研落地：「全读 API，没有不显示」——GLM 月度换 model-usage 官方
+    统计（本月窗口）；Kimi Advanced（totalQuota={}）月度行消失；本地
+    聚合回退整体删除。"""
+
+    GLM_QUOTA_URL = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
+    GLM_ACCOUNT_URL = ("https://www.bigmodel.cn/api/biz/account/"
+                       "query-customer-account-report")
+    GLM_MODEL_USAGE = ("https://open.bigmodel.cn/api/monitor/usage/model-usage")
+    KIMI_URL = "https://api.kimi.com/coding/v1/usages"
+
+    def _run(self, by_url, sp):
+        def side_effect(url, headers=None, data=None, method=None,
+                        timeout=None):
+            for key, payload in by_url.items():
+                if url.startswith(key):
+                    return json.dumps(payload).encode()
+            raise AssertionError(f"unmocked URL: {url}")
+        with patch.object(AuthenticatedHttpClient, "open",
+                          side_effect=side_effect):
+            return balance_usage.fetch_balance(sp)
+
+    GLM_PRO_QUOTA = {"data": {"level": "pro", "limits": [
+        {"type": "CREDIT_LIMIT", "unit": 3, "percentage": 1,
+         "usage": 12000, "currentValue": 12},
+        {"type": "CREDIT_LIMIT", "unit": 6, "percentage": 5,
+         "usage": 60000, "currentValue": 3322}]}}
+    GLM_MODEL_USAGE_RESP = {"data": {"totalUsage": {
+        "totalModelCallCount": 1920, "totalTokensUsage": 420500000}}}
+
+    def test_glm_monthly_from_model_usage_api(self):
+        """GLM 月度 = model-usage 本月窗口官方统计（非本地聚合）。"""
+        sp = {"providers": {"glm": {
+            "base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "api_key": "k"}}}
+        result = self._run({
+            self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
+            self.GLM_ACCOUNT_URL: {"data": {"balance": 1.0,
+                                            "totalSpendAmount": 9.0}},
+            self.GLM_MODEL_USAGE: self.GLM_MODEL_USAGE_RESP,
+        }, sp)
+        apis = result[0]["apis"]
+        all_q = [q for a in apis for q in a.get("quotas", [])]
+        self.assertIn("每月", [q["period"] for q in all_q])
+        m = next(q for q in all_q if q["period"] == "每月")
+        self.assertEqual(m["used"], 420500000)   # 官方 totalTokensUsage
+        self.assertEqual(m["calls"], 1920)        # totalModelCallCount
+        self.assertEqual(m.get("source"), "api")
+        self.assertNotIn("_sort", m)
+
+    def test_glm_monthly_no_local_fallback(self):
+        """GLM 月度不再落本地 usage.jsonl 聚合行（source=local 整体删除）。"""
+        sp = {"usage_log": {"path": "/tmp/nonexistent-usage.jsonl"},
+              "providers": {"glm": {
+                  "base_url": "https://open.bigmodel.cn/api/paas/v4",
+                  "api_key": "k"}}}
+        result = self._run({
+            self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
+            self.GLM_ACCOUNT_URL: {"data": {"balance": 1.0,
+                                            "totalSpendAmount": 9.0}},
+            self.GLM_MODEL_USAGE: self.GLM_MODEL_USAGE_RESP,
+        }, sp)
+        for api in result[0]["apis"]:
+            for q in api.get("quotas", []):
+                self.assertNotEqual(q.get("source"), "local")
+
+    def test_kimi_advanced_no_monthly_row(self):
+        """Kimi Advanced（totalQuota={}）月度行不显示——API 没有就不实现。"""
+        sp = {"providers": {"kimi": {
+            "base_url": "https://api.kimi.com/anthropic", "api_key": "k"}}}
+        payload = {"usage": {"limit": "100", "used": "42",
+                             "resetTime": "2026-08-16T03:00:46Z"},
+                   "limits": [{"window": {"duration": 300,
+                                          "timeUnit": "TIME_UNIT_MINUTE"},
+                               "detail": {"used": 0, "limit": 100,
+                                          "resetTime": "2026-08-23T21:00:00Z"}}],
+                   "user": {"membership": {"level": "LEVEL_ADVANCED"}},
+                   "totalQuota": {}}
+        result = self._run({self.KIMI_URL: payload}, sp)
+        qs = result[0]["apis"][0]["quotas"]
+        self.assertNotIn("每月", [q["period"] for q in qs])
+        self.assertEqual([q["period"] for q in qs], ["5小时", "每周"])
 

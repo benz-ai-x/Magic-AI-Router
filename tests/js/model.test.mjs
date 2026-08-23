@@ -114,8 +114,7 @@ test("fmtRate formats cache hit rates and preserves missing data", () => {
 });
 
 // ── quota display (balance quick view) ────────────────
-test("quotaPeriodLabel marks locally aggregated rows", () => {
-  assert.equal(L.quotaPeriodLabel({ period: "每月", source: "local" }), "每月（网关）");
+test("quotaPeriodLabel 直显 period（全 API 后无本地聚合行）", () => {
   assert.equal(L.quotaPeriodLabel({ period: "每月" }), "每月");
   assert.equal(L.quotaPeriodLabel({ period: "5小时" }), "5小时");
 });
@@ -127,12 +126,12 @@ test("quotaNumsText omits the pct segment when pct is null", () => {
   assert.equal(L.quotaNumsText({ pct: 0, used: 0, limit: 100 }), "已用 0% · 0/100");
 });
 
-test("quotaNumsText renders call count on locally aggregated rows", () => {
+test("quotaNumsText renders call count on rows carrying calls", () => {
   assert.equal(
-    L.quotaNumsText({ pct: null, used: 243311832, limit: null, source: "local", calls: 621 }),
+    L.quotaNumsText({ pct: null, used: 243311832, limit: null, calls: 621 }),
     "243.3M/— · 621 次");
   assert.equal(
-    L.quotaNumsText({ pct: null, used: 0, limit: null, source: "local", calls: 0 }),
+    L.quotaNumsText({ pct: null, used: 0, limit: null, calls: 0 }),
     "0/— · 0 次");
 });
 

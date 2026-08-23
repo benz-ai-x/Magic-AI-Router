@@ -186,17 +186,19 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
             "base_url": "https://open.bigmodel.cn",
             "api_key": "sk-glm",
         }}}
-        # Two APIs: quota/limit + account report → patch urlopen twice
+        # GLM 现 3 个 API：quota/limit + account report + model-usage（月度）
         bodies = [
             json.dumps({"data": {"limits": [{"unit": 5, "percentage": 50}]}}).encode(),
             json.dumps({"data": {"balance": 1.5, "totalSpendAmount": 0.25}}).encode(),
+            json.dumps({"data": {"totalUsage": {"totalModelCallCount": 1,
+                        "totalTokensUsage": 100}}}).encode(),
         ]
         with patch.object(AuthenticatedHttpClient, "open",
                    side_effect=[_FakeResp(b) for b in bodies]) as m:
             r = balance_usage.fetch_balance(sp)
         entry = r[0]
         self.assertTrue(entry["supported"])
-        self.assertEqual(len(entry["apis"]), 2)
+        self.assertEqual(len(entry["apis"]), 3)
         # Both calls used the bare key (raw style)
         for call in m.call_args_list:
             self.assertEqual(call.kwargs["headers"].get("Authorization"), "sk-glm")

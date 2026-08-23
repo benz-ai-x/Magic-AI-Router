@@ -575,12 +575,15 @@ function balanceRowModel(b){
   return{name:b.provider,state:'ok',quotaApis,moneyApis};
 }
 // 配额行展示：本地聚合（非供应商 API 口径）的行标注来源；数字复用 fmtNum 紧凑格式。
-function quotaPeriodLabel(q){return q.source==='local'?q.period+'（网关）':q.period;}
+// 「全读 API」后无本地聚合行——period 直显（原「（网关）」本地标注
+// 随本地回退删除而失效）
+function quotaPeriodLabel(q){return q.period;}
 function quotaNumsText(q){
   const used=q.used!=null?fmtNum(q.used):'—';
   const lim=q.limit!=null?fmtNum(q.limit):'—';
   const base=(q.pct!=null?`已用 ${q.pct}% · `:'')+`${used}/${lim}`;
-  return q.source==='local'&&q.calls!=null?`${base} · ${q.calls} 次`:base;
+  // 带调用次数的行（GLM model-usage 月度统计）显示次数
+  return q.calls!=null?`${base} · ${q.calls} 次`:base;
 }
 // Context-window labels for well-known model ids (official docs/API data,
 // 2026-08). Display-only annotation — option values stay "provider/model";

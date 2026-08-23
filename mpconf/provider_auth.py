@@ -51,6 +51,10 @@ PROVIDER_REGISTRY = {
         "hosts": ["bigmodel.cn"],
         "base_url": "https://open.bigmodel.cn/api/anthropic",
         "anthropic_native": True,
+        # model_usage 端点：GLM 月度官方统计（本月窗口 token 用量+调用
+        # 次数）——fetch_balance 组 startTime/endTime 本月范围
+        "model_usage_url": ("https://open.bigmodel.cn/api/monitor/usage/"
+                            "model-usage"),
         "balance_apis": [
             ("https://open.bigmodel.cn/api/monitor/usage/quota/limit",
              "raw", "Coding Plan"),
