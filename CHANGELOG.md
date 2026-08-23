@@ -3,6 +3,34 @@
 All notable changes to Magic-AI-Router are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [v0.7.0] — 2026-08-23 — 两轮架构评审全量落地（19 issue，可靠性/一致性大修）
+
+### Fixed
+- **count_tokens 必 500（#44）**：流式响应未读即 `r.json()`（ResponseNotRead 逃出 except 链）→ `aread()` 后消费；读体错误并入 502 塑形
+- **AsyncRuntime 自死锁（#45）**：非可重入锁二次获取（冻结整个菜单栏）+ 一并修复揭开的 join 未启动线程竞态
+- **配置写入大一统（#46）**：菜单开关/校验双轨/local_token 弱写/stale 副本丢更新四违例收敛唯一事务管线（`update_mp` 写前读新 + pydantic 并入事务路径）
+- **手编配置体验三件套（#47）**：发货样例过自己的 schema + null 节归一（`rules:` 空节不再炸）+ 网关配置错误中文塑形
+- **Docker 两缺口（#48）**：journal 启动重放（此前无人调 recover）+ 网关失败 stderr 宣告 + web 修复闭环补真
+- **配置体验/凭证（#66）**：local_client_token 穿越保存存活（merge 保留注册字段 + 掩码契约合规——明文不出 UI）
+- **桥接重连线程契约（#68）**：ConnectionCoordinator 持锁（假注释成真）+ alert 经 AppHelper.callAfter 回主线程
+- **崩溃族整批（#69）**：prepare 畸形 rules / addon request 守卫 / Connection 多 token / config_server 非 dict body / middleware 非 ASCII / decide_route 非字符串 model 等 10 点形状守卫
+- **校验单主化（#70）**：端口冲突上收 prepare（agent 直 PUT 也拦）+ 路由文法收敛（逗号 default 不再误拦）+ 复制 AI 助手指令原生侧拼 token（不再复制空 Bearer 401）+ 抓包目录经 prepare 建（不再自毁安全契约）
+- **单实例守卫生效（#65）**：ps 单行输出解析修正（此前活实例锁永远被抢走）+ LC_ALL=C 钉死
+- **CI 覆盖率门禁（#64）**：pytest-cov 入 lock（此前 --cov 即 exit 4，门禁从未验证任何 commit）
+
+### Changed
+- **structlog→stdlib（#67）**：统一日志栈——#50 可感知回退告警在打包形态下进 MagicProxy.log/日志窗
+- **架构深化批（#71）**：keychain PEP604（3.9 下界）+ on_sp_saved 双形态统一 + ConfigServer 端口 seam + 状态全集声明 + 抓包命名归位
+- **供应商注册表收敛（#51）**：单一真源（余额端点/UI 模板共消费）
+- **路由 fall-through 可感知化（#50）**：显式意图误投携带 `x-suanpan-fallback` 响应头 + 日志宣告（绝不静默误投）
+
+### Chore / Docs
+- 清道夫（#49）：死代码簇/rolling 只写状态/manifest 反向守卫/ADR 自洽
+- 遗留 WE 处置（#52）：只读装饰字段单点声明 + 评估记录
+- 摩擦点清理（#53）：常量时间比较/哈希合一/错误分类/文档指针等 8 项
+- 测试债清理（#72）：恒真断言/死 helper + R7a 两项（重命名级联/toast 代际守卫）
+- 文档卫生（#82/#83）：废弃引用清理 + CLAUDE.md/CONTEXT.md 写作卫生
+
 ## [Unreleased]
 
 ### Changed
