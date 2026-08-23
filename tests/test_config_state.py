@@ -629,6 +629,86 @@ class TestReadonlyDecoratedFields(unittest.TestCase):
             self.assertEqual(plan.mp_candidate["tunnels"][0]["name"], "t")
 
 
+
+class TestLocalTokenSurvivesSave(unittest.TestCase):
+    """#66 S2：任何 Web 保存/菜单写经 prepare→merge→commit 后，
+    local_client_token 必须存活——已写入 ~/.claude/settings.json 的
+    ANTHROPIC_AUTH_TOKEN 与 Docker /data 卷稳定性契约依赖它。"""
+
+    def test_merge_preserves_registered_extra_fields(self):
+        """merge_config 保留注册的额外字段（UI 提交含 token 时存活）。"""
+        from mpconf.config import merge_config
+        out = merge_config({"tunnels": [],
+                            "local_client_token": "tok-abc",
+                            "prevent_sleep": True})
+        self.assertEqual(out.get("local_client_token"), "tok-abc",
+                         "merge 白名单吞掉注册的额外字段（#66 活 bug）")
+
+    def test_ui_put_semantics_documented_as_full_replace(self):
+        """UI PUT 的 mp 候选是完整替换语义（UI 的 S.mp 来自 /api/state
+        全量）——候选不含 token 即替换掉它。这钉的是「经 update_mp（写前
+        读新）的写径 token 存活」；经 UI 的完整替换由前端 S.mp 携带
+        token 保证（见 test_token_survives_update_mp 为写径锚点）。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            mp = Path(d) / "magic-proxy.json"
+            store = ConfigStateStore(mp_path=str(mp),
+                                     sp_path=str(Path(d) / "s.yaml"))
+            mp.write_text(json.dumps({"tunnels": [],
+                                      "local_client_token": "tok-abc"}))
+            # UI 全量替换（候选带 token，与 S.mp 同形）→ 存活
+            plan = store.prepare(mp={"prevent_sleep": True,
+                                     "local_client_token": "tok-abc"})
+            self.assertTrue(plan.ok, plan.errors)
+            self.assertTrue(store.commit(plan).ok)
+            disk = json.loads(mp.read_text())
+            self.assertEqual(disk.get("local_client_token"), "tok-abc")
+
+
+    def test_ui_state_never_echoes_plaintext_token(self):
+        """掩码契约（#66 复核发现）：/api/state 的 S.mp 不得携带明文
+        local_client_token——UI 回 token_set 布尔；prepare 按旧档恢复
+        真实值（与 _restore_masked_sp_keys 同款注入）。"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            mp = Path(d) / "magic-proxy.json"
+            mp.write_text(json.dumps({"tunnels": [],
+                                      "local_client_token": "tok-secret"}))
+            # 注入侧：明文不得出 config_server._read_mp
+            from services.config_server import _read_mp
+            from mpconf import config_store
+            with __import__("unittest.mock", fromlist=["patch"]).patch.dict(
+                    config_store.PATHS, {"mp": str(mp)}):
+                served = _read_mp()
+            self.assertNotIn("local_client_token", served,
+                             "明文 token 经 /api/state 出进程（掩码契约破）")
+            self.assertIs(served.get("local_client_token_set"), True)
+            # 剥除/恢复侧：UI 回传 token_set + 无新值 → prepare 恢复旧值
+            store = ConfigStateStore(mp_path=str(mp),
+                                     sp_path=str(Path(d) / "s.yaml"))
+            plan = store.prepare(mp={"prevent_sleep": True,
+                                     "local_client_token_set": True})
+            self.assertTrue(plan.ok, plan.errors)
+            self.assertTrue(store.commit(plan).ok)
+            disk = json.loads(mp.read_text())
+            self.assertEqual(disk.get("local_client_token"), "tok-secret",
+                             "掩码恢复未生效——token 丢失")
+            self.assertNotIn("local_client_token_set", disk)
+
+    def test_token_survives_update_mp(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            mp = Path(d) / "magic-proxy.json"
+            store = ConfigStateStore(mp_path=str(mp),
+                                     sp_path=str(Path(d) / "s.yaml"))
+            mp.write_text(json.dumps({"tunnels": [],
+                                      "local_client_token": "tok-xyz"}))
+            result = store.update_mp(lambda c: {**c, "prevent_sleep": True})
+            self.assertTrue(result.ok, result.errors)
+            disk = json.loads(mp.read_text())
+            self.assertEqual(disk.get("local_client_token"), "tok-xyz")
+
+
 if __name__ == "__main__":
     unittest.main()
 

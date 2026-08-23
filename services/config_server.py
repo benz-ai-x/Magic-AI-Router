@@ -91,6 +91,11 @@ def _read_mp():
         # has_password 属 READONLY_DECORATED_FIELDS（prepare 剥除侧单点声明）
         t["has_password"] = bool(
             t.get("auth_type") == "password" and keychain.get_password(t))
+    # 掩码契约（#66 复核）：local_client_token 明文永不出进程——UI 回
+    # token_set 布尔；prepare 按旧档恢复真实值（sp 侧 api_key 同款模式）
+    if "local_client_token" in cfg:
+        cfg.pop("local_client_token", None)
+        cfg["local_client_token_set"] = True
     return cfg
 
 
