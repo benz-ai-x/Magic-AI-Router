@@ -170,7 +170,8 @@ class LogWindow(NSObject):
             NSMakeRect(0, 0, content_size.width, content_size.height)
         )
         # Canonical scroll-view resizing for NSTextView, otherwise it renders
-        # but ignores wrapping / scrolling (same gotcha as prefs.py term box).
+        # but ignores wrapping / scrolling（NSTextView 经典 gotcha——须先设
+        # scroll view 的 content size，否则文本不换行不滚动）。
         tv.setMinSize_((0.0, content_size.height))
         tv.setMaxSize_((1.0e7, 1.0e7))
         tv.setVerticallyResizable_(True)

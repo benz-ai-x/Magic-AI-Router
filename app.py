@@ -334,10 +334,8 @@ class MagicProxyApp(rumps.App):
         return switch
 
     # ── suanpan ──────────────────────────────────────────
-    # Candidate-1: 原先 ServiceCoordinator.toggle_suanpan / reload_suanpan /
-    # restart_suanpan 把 SuanpanRuntime 的公开方法封装成
-    # (running, address, error) / (ok, error) 元组。现在这些组装直接写在
-    # App 的菜单回调里，不再多一层间接。
+    # SuanpanRuntime 的公开方法组装直接写在 App 的菜单回调里，不再多一层
+    # 间接（#43 重构落地）。
 
     def toggle_suanpan(self, _):
         sp = self._suanpan
