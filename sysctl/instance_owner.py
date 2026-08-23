@@ -33,7 +33,10 @@ def _ps_pid_info(pid: int):
     try:
         out = subprocess.run(
             ["ps", "-p", str(pid), "-o", "lstart=", "-o", "comm="],
-            capture_output=True, timeout=3, text=True)
+            capture_output=True, timeout=3, text=True,
+            # LC_ALL=C：钉死 lstart 的英文 5 词形态——CJK locale 下 ps 输出
+            # 本地化（「二  8月/18 …」4 词）会让定宽切分失配，守卫失败开放
+            env={**os.environ, "LC_ALL": "C"})
         if out.returncode != 0:
             return None, None
         line = out.stdout.strip()

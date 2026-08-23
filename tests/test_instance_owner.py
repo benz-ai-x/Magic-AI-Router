@@ -152,7 +152,8 @@ class TestRealPsParse(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             lock = Path(d) / "lock.json"
             start, exe = _ps_pid_info(os.getpid())
-            # 真实当前进程持锁
+            # 真实当前进程持锁（真 ps 解析出的 start 与 holder-alive
+            # 校验路径同形）——二次 acquire 必须被拒
             import json
             lock.write_text(json.dumps(
                 {"pid": os.getpid(), "start": start, "exe": exe,
