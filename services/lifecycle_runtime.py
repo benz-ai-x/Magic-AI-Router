@@ -136,7 +136,10 @@ class LifecycleRuntime:
 
     # ── reload 链内化：配置服务线程 → 网关线程，不出模块 ──────────
     def _on_sp_saved(self):
-        self._suanpan.reload()
+        # #71 W9：与 Docker 形态同一策略——运行中 reload、已停 start。
+        # macOS 首启失败后网页改对配置 → 保存必须能拉起死网关（此前
+        # 只 reload 对 stopped 空转，闭环只在 Docker 存在）。
+        self._suanpan.reload() if self._suanpan.running else self._suanpan.start()
 
     # ── 生命周期 ────────────────────────────────────────────────
     def start_all(self):

@@ -197,7 +197,9 @@ class TestInternalizedReload(unittest.TestCase):
 
     def test_on_sp_saved_reloads_suanpan(self):
         svc = _make_coordinator()
-        with patch.object(svc._suanpan, "reload") as mock_reload:
+        with patch.object(type(svc._suanpan), "running",
+                          new_callable=lambda: property(lambda self: True)), \
+             patch.object(svc._suanpan, "reload") as mock_reload:
             svc._on_sp_saved()
         mock_reload.assert_called_once_with()
 
@@ -286,3 +288,27 @@ class TestStartAllFailureBranches(unittest.TestCase):
                  patch.object(svc._config_server, "stop"):
                 svc.quit(lambda: None)
             self.assertFalse(os.path.exists(owner.lock_path))
+
+    def test_on_sp_saved_starts_stopped_gateway(self):
+        """#71 W9：macOS 形态「网页修复拉起死网关」闭环——首启失败后
+        web 改对配置保存，on_sp_saved 必须能 start 已停网关（对齐
+        Docker 的 reload-or-start）。"""
+        svc = _make_coordinator()
+        with patch.object(type(svc._suanpan), "running",
+                          new_callable=lambda: property(lambda self: False)), \
+             patch.object(svc._suanpan, "start") as start, \
+             patch.object(svc._suanpan, "reload") as reload:
+            svc._on_sp_saved()
+        start.assert_called_once()
+        reload.assert_not_called()
+
+    def test_on_sp_saved_reloads_running_gateway(self):
+        svc = _make_coordinator()
+        with patch.object(type(svc._suanpan), "running",
+                          new_callable=lambda: property(lambda self: True)), \
+             patch.object(svc._suanpan, "start") as start, \
+             patch.object(svc._suanpan, "reload") as reload:
+            svc._on_sp_saved()
+        reload.assert_called_once()
+        start.assert_not_called()
+

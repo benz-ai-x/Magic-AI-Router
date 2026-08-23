@@ -476,7 +476,7 @@ class TestCaptureOSErrorHandlers:
         d = tmp_path / "listdir-fail"
         d.mkdir()
         monkeypatch.setattr(os, "listdir", lambda p: (_ for _ in ()).throw(OSError("perm")))
-        assert capture.cleanup_expired_captures(str(d), 7) == 0
+        assert capture_store.cleanup_expired_captures(str(d), 7) == 0
 
     def test_remove_oserror_continues_and_counts_zero(self, tmp_path, monkeypatch):
         d = tmp_path / "remove-fail"
@@ -484,7 +484,7 @@ class TestCaptureOSErrorHandlers:
         old_date = (datetime.now().date() - timedelta(days=30)).isoformat()
         (d / f"{old_date}.jsonl").write_text("{}")
         monkeypatch.setattr(os, "remove", lambda p: (_ for _ in ()).throw(OSError("busy")))
-        deleted = capture.cleanup_expired_captures(str(d), 7)
+        deleted = capture_store.cleanup_expired_captures(str(d), 7)
         assert deleted == 0
 
 

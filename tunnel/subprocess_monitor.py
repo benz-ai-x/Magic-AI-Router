@@ -27,6 +27,10 @@ class SubprocessMonitor:
     _PROCESS_NAME = "subprocess"
     _STATUS_STARTING = "starting"
     _STATUS_RUNNING = "running"
+    # 状态全集（#71 S3 单点声明）：子类可覆写 STARTING/RUNNING 词汇
+    # （SSHMonitor 改 "connecting"/"connected"），STOPPED/ERROR 恒定
+    _STATUS_STOPPED = "stopped"
+    _STATUS_ERROR = "error"
 
     def __init__(self, *, line_sink=None):
         self.process = None
