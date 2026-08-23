@@ -90,7 +90,7 @@ query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `
 |--------|------|-------------|
 | GET | `/api/state` | 读取全部配置（mp + sp），密码/密钥已掩码 |
 | PUT | `/api/state` | 保存全部配置（body: `{"mp": {...}, "sp": {...}}`） |
-| GET | `/api/balance` | 查询各供应商余额/配额；套餐类含 5小时/每周/每月 配额窗口，每月行可能是网关本地聚合（`source: "local"`，UI 标注「（网关）」） |
+| GET | `/api/balance` | 查询各供应商余额/配额；套餐类含 5小时/每周配额窗口；每月行：GLM 经 model-usage 本月窗口官方统计，Kimi 仅 totalQuota 非空（高阶套餐）时显示——API 无月度维度则不显示 |
 | GET | `/api/usage?range=today\|7d\|month\|all` | 聚合本地用量日志；缺省 `all`，`month` = CST 自然月；返回总览、供应商、CST 每日与路由来源统计 |
 | POST | `/api/fetch-models` | 拉取供应商模型列表（body: `{"provider": "GLM_MAX"}`） |
 | POST | `/api/test-provider` | 测试供应商连通性（body: `{"provider": "GLM_MAX", "model": "glm-5.2"}`） |

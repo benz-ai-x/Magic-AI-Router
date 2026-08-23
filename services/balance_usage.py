@@ -39,7 +39,7 @@ PROVIDER_BALANCE_APIS = [
     if entry["balance_apis"]
 ]
 
-_MONTHLY_PERIOD = "每月"  # canonical label; fetch_balance suppression matches it exactly
+_MONTHLY_PERIOD = "每月"  # canonical label（GLM model-usage / Kimi totalQuota 共用）
 _UNIT_NAMES = {3: "5小时", 5: _MONTHLY_PERIOD, 6: "每周"}
 _WEEK_HOURS = 24 * 7
 _MONTH_HOURS = 24 * 30
@@ -147,7 +147,7 @@ def normalize_balance(raw, label):
             period = _UNIT_NAMES.get(lim.get("unit"), f"unit{lim.get('unit')}")
             if lim.get("type") == "TIME_LIMIT":
                 # 工具时长配额（usageDetails: search-prime/web-reader/zread），
-                # 不是 token 用量——period 标口径，且不抑制本地月度 token 行
+                # 不是 token 用量——period 标「·工具」与 model-usage 月度行区分
                 period += "·工具"
             p = lim.get("percentage")
             if isinstance(p, (int, float)):
@@ -166,6 +166,19 @@ def normalize_balance(raw, label):
         return {"label": label, "primary": level,
                 "pct": max(pcts) if pcts else None,
                 "quotas": quotas}
+    # GLM model-usage（月度官方统计，本月窗口）：{"data": {"totalUsage":
+    # {"totalModelCallCount", "totalTokensUsage"}}——替换本地聚合行
+    tu = d.get("totalUsage") if isinstance(d.get("totalUsage"), dict) else None
+    if tu is not None and "totalTokensUsage" in tu:
+        tokens = tu.get("totalTokensUsage")
+        calls = tu.get("totalModelCallCount")
+        row = _quota_row(_MONTHLY_PERIOD, None, tokens, None, None,
+                         _MONTH_HOURS)
+        del row["_sort"]
+        row["source"] = "api"
+        row["calls"] = calls
+        return {"label": label, "primary": "本月用量",
+                "pct": None, "quotas": [row]}
     # Kimi Coding Plan: {"usage": {周额度}, "limits": [{window: 5小时窗口}],
     # "totalQuota": {月度会员池, 按套餐填充, 可能为 {}}, "user": {...}}
     if isinstance(raw.get("usage"), dict) and "limit" in raw["usage"]:
@@ -338,32 +351,23 @@ def _shape_balance_error(exc) -> str:
     return type(exc).__name__
 
 
+def _month_window():
+    """本月起止（GLM model-usage 查询窗口）——CST 日历，与 usage 聚合
+    的时区口径一致。"""
+    now = datetime.now(CST)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    fmt = "%Y-%m-%d %H:%M:%S"
+    return start.strftime(fmt), now.strftime(fmt)
+
+
 def fetch_balance(sp_raw):
     """Query each enabled provider's balance API. ``sp_raw`` = raw Suanpan config dict.
 
-    Plan providers (quota windows) without an API-reported monthly TOKEN row
-    get a local row aggregated from the gateway usage log (source="local",
-    limit/pct None, zero-filled when the log has nothing — 三行永远齐).
-    An API monthly token pool (Kimi totalQuota, period exactly 每月) wins;
-    GLM's 每月·工具 (TIME_LIMIT) is a different unit and does not suppress it.
+    「全读 API，没有不显示」（#调研落地）：GLM 月度经 model-usage 本月
+    窗口官方统计；Kimi 月度仅 totalQuota 非空（高阶套餐）才显示；
+    API 无月度维度的供应商该行不出现——本地聚合回退已删除。
     """
     results = []
-    monthly_providers = None  # lazy: only read the log when a plan lacks API monthly
-
-    def local_monthly_row(name):
-        nonlocal monthly_providers
-        if monthly_providers is None:
-            monthly_providers = fetch_usage(sp_raw, "month")["providers"]
-        bucket = monthly_providers.get(name)
-        return {
-            "period": _MONTHLY_PERIOD,
-            "pct": None,
-            "used": sum(bucket[f] for f in _TOKEN_FIELDS) if bucket else 0,
-            "limit": None,
-            "reset": None,
-            "source": "local",
-            "calls": bucket["calls"] if bucket else 0,
-        }
 
     for name, p in sp_raw.get("providers", {}).items():
         if p.get("enabled") is False:
@@ -378,7 +382,7 @@ def fetch_balance(sp_raw):
         if not key:
             results.append({"provider": name, "supported": True, "error": "未配置 API Key"})
             continue
-        _, apis = matched
+        frag, apis = matched
         api_res = []
         for url, style, label in apis:
             try:
@@ -391,13 +395,23 @@ def fetch_balance(sp_raw):
             except Exception as e:
                 api_res.append({"label": label,
                                 "error": _shape_balance_error(e)})
-        for res in api_res:
-            quotas = res.get("quotas")
-            if not isinstance(quotas, list):
-                continue
-            if any(q.get("period") == _MONTHLY_PERIOD for q in quotas):
-                continue
-            quotas.append(local_monthly_row(name))
+        # GLM 月度：model-usage 本月窗口官方统计（注册表 model_usage_url）
+        entry = next((e for e in _REGISTRY.values()
+                      if frag in e["hosts"]), None)
+        mu_url = (entry or {}).get("model_usage_url")
+        if mu_url:
+            try:
+                start, end = _month_window()
+                url = (mu_url + "?startTime=" + urllib.parse.quote(start)
+                       + "&endTime=" + urllib.parse.quote(end))
+                data = _BALANCE_CLIENT.open_json(
+                    url, headers={"Authorization": key})
+                api_res.append(normalize_balance(data, "本月用量"))
+            except AuthRedirectError as e:
+                api_res.append({"label": "本月用量", "error": e.msg[:120]})
+            except Exception as e:
+                api_res.append({"label": "本月用量",
+                                "error": _shape_balance_error(e)})
         results.append({"provider": name, "supported": True, "apis": api_res})
     return results
 
