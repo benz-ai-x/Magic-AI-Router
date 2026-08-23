@@ -100,7 +100,7 @@ Suanpan 按请求特征划分的路由类别。当前实现两级：
 - **模型规则**（rule）——按模型名前缀匹配转发
 - **默认路由**（default）——未命中规则时的兜底
 
-> 历史版本曾有 background / long_context / think 三个场景路由，已在重构中移除（见 commit `755596e`、`9b3183b`）。`RouterConfig` 仅保留 `default` 字段。
+> 历史场景（background/long_context/think 等）已在重构中移除，见文末「已移除特性」。
 
 > 注意：代码 `RouteDecision.scenario` 字段含义更广——它记录"本次请求由哪条链路命中"（取值含 `inline` / `subagent` / `rule` / `default`），实为**路由来源**而非领域意义上的"路由场景"。该字段已落盘进 `usage.jsonl`，不宜改名。
 
@@ -129,4 +129,9 @@ Suanpan 按请求特征划分的路由类别。当前实现两级：
 > 响应头 `x-suanpan-fallback` 与 warning 日志宣告之（#50：可感知的
 > 容错，绝不静默误投）。
 
-> 历史版本曾有自定义路由、长上下文、后台任务、推理请求四个场景，已在重构中移除（见 commit `9b3183b`、`755596e`）。
+## 已移除特性（历史注记）
+
+以下场景路由已在重构中移除（见 commit `755596e`、`9b3183b`），
+`RouterConfig` 仅保留 `default` 字段：background / long_context /
+think / 自定义路由 / 后台任务 / 推理请求。重提它们 = 重新打开已决
+事项（见 ADR 与 CLAUDE.md）。
