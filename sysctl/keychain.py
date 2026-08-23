@@ -98,10 +98,16 @@ def delete_password(tunnel: dict) -> bool:
     """删除隧道密码。返回是否成功（条目本就不存在视为成功）。"""
     if not tunnel.get("ssh_host"):
         return True
+    ok = True
     try:
         for account in {_account(tunnel), _legacy_account(tunnel)}:
-            Security.SecItemDelete(_base_query(tunnel, account))
-        return True
+            # 区分状态码（#69 R7）：NotFound（条目本就不存在）视为成功；
+            # 其他非零状态（真实失败）如实上报，不恒报 True
+            status = Security.SecItemDelete(_base_query(tunnel, account))
+            if status not in (0, getattr(Security, "errSecItemNotFound", -25300)):
+                logger.warning("Keychain delete status %s", status)
+                ok = False
+        return ok
     except Exception as e:  # noqa: BLE001
         logger.warning("Keychain delete failed: %s", type(e).__name__)
         return False

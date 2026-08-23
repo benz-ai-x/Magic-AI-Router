@@ -232,7 +232,11 @@ async def handle_http(client_reader, client_writer, request_line, socks_addr, st
             for raw in header_lines:
                 name, value = split_header(raw)
                 if name == "connection":
-                    connection_tokens.update(v.lower() for v in value.split(","))
+                    # 多 token 剥空格（#69 S11c）："keep-alive, X-Hop" 的
+                    # " x-hop" 未 strip 时永不匹配 blocked，客户端声明的
+                    # 逐跳头被转发给 origin（RFC 7230 动态机制静默失效）
+                    connection_tokens.update(
+                        v.strip().lower() for v in value.split(","))
             blocked = ({"proxy-authorization", "proxy-connection",
                         "connection", "keep-alive", "te", "trailer", "upgrade"}
                        | connection_tokens)

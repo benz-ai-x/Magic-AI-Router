@@ -206,10 +206,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(413, {"error": "body too large"})
             return None
         try:
-            return json.loads(self.rfile.read(length))
+            data = json.loads(self.rfile.read(length))
         except (json.JSONDecodeError, ValueError):
             self._json(400, {"error": "invalid JSON"})
             return None
+        # 形状守卫（#69 S11d）：端点一律 .get() 消费 dict——非 dict body
+        # （数组/标量/字符串）统一 400，不裸抛进处理器线程
+        if not isinstance(data, dict):
+            self._json(400, {"error": "JSON body must be an object"})
+            return None
+        return data
 
     def do_GET(self):
         if not self._valid_host():

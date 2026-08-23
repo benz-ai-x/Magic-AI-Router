@@ -183,6 +183,10 @@ def _plan(roles=None):
     if exists:
         with open(settings_path) as f:
             settings = json.load(f)
+        # 形状守卫（#69 R7）：settings.json 为 JSON 数组/标量时后续
+        # .get("env") 裸抛 AttributeError——规整为空 dict 走「新建」分支
+        if not isinstance(settings, dict):
+            settings = {}
     env = dict(settings.get("env") or {})
 
     if roles is None:

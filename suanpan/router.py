@@ -76,7 +76,11 @@ def decide_route(
     system_text: str | None = None,
     config: AppConfig,
 ) -> RouteDecision:
-    source_model: str = body.get("model", "") or ""
+    # 形状规整（#69 R7）：非字符串 model（远程可触发 TypeError 500）
+    # 统一转字符串后走判定
+    source_model = body.get("model", "")
+    source_model = source_model if isinstance(source_model, str) else str(source_model)
+    source_model = source_model or ""
     sys_text = system_text if system_text is not None else extract_system_text(body)
     fallback_from: str | None = None
 

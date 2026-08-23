@@ -160,7 +160,11 @@ class ConfigStateStore:
                 errors.append("rules 必须是列表")
                 rules = []
             for r in rules or []:
-                target = (r or {}).get("route_to", "")
+                if not isinstance(r, dict):
+                    # 形状守卫（#69 S11）：元素非 dict（如 "abc"）时
+                    # schema 校验已记错，此处不得再对它 .get() 裸抛
+                    continue
+                target = r.get("route_to", "")
                 routes.add(str(target).split("/", 1)[0])
             router = sp_c.get("router")
             if router is not None and not isinstance(router, dict):

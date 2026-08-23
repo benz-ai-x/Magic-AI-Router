@@ -573,7 +573,12 @@ class TestTestTunnelEndpoint(unittest.TestCase):
             with self.subTest(body=bad):
                 status, data = self._post(bad)
                 self.assertEqual(status, 400)
-                self.assertFalse(json.loads(data)["ok"])
+                body = json.loads(data)
+                # #69 S11d：非 dict body（如 "str"）被 _read_json_body 统一
+                # 400 拒绝（error 键）；dict 但 index 非法走端点逻辑（ok 键）
+                self.assertTrue(
+                    ("ok" in body and not body["ok"]) or "error" in body,
+                    body)
 
     def test_no_tunnels_returns_400(self):
         with patch.object(config_server, "_read_mp", return_value={"tunnels": []}):

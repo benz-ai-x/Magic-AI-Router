@@ -219,7 +219,11 @@ def load_config_raw(path: Path | str) -> dict:
         return {}
     if isinstance(data, dict):
         # issue #8：装载即赋幂等 id；重复 id 等可行动错误上抛——
-        # 「任何错误返回 {}」的旧契约对迁移错误失真，读方按需捕获
+        # 「任何错误返回 {}」的旧契约对迁移错误失真，读方按需捕获。
+        # 形状守卫（#69 R7）：providers 非 dict（数组/标量）时
+        # assign_provider_ids 会 .items() 裸抛——规整为空 dict
+        if not isinstance(data.get("providers"), (dict, type(None))):
+            data["providers"] = {}
         assign_provider_ids(data)
     return data if isinstance(data, dict) else {}
 
