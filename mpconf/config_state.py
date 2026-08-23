@@ -176,7 +176,11 @@ class ConfigStateStore:
         if errors:
             return CommitPlan(False, errors)
         # merge 默认值必须在校验之后：merge_config 会把非法端口/负保留
-        # 静默重置为默认，前置会让 mp 侧数值约束在真实入口永不触发
+        # 静默重置为默认，前置会让 mp 侧数值约束在真实入口永不触发。
+        # 掩码意图须在 merge 前捕获——白名单会剥掉 local_client_token_set
+        # 信号（非注册字段）
+        _restore_local_token = bool(
+            isinstance(mp_c, dict) and mp_c.pop("local_client_token_set", False))
         if mp_c is not None:
             if mp_c.get("_load_error"):
                 return CommitPlan(False, [
@@ -197,6 +201,13 @@ class ConfigStateStore:
             mp_c = copy.deepcopy(mp_c)
             # 删除的隧道（id 在旧档、不在候选）：双账户清理 secret
             old_mp = self._read_mp_current() or {}
+            # 掩码恢复（#66 复核）：UI 回 local_client_token_set 布尔 +
+            # 无明文 → 按旧档恢复真实 token；明文永不从 UI 进磁盘
+            if _restore_local_token:
+                from mpconf.local_token import FIELD as _lt_field
+                old_tok = old_mp.get(_lt_field)
+                if old_tok:
+                    mp_c[_lt_field] = old_tok
             new_ids = {t.get("id") for t in mp_c.get("tunnels") or []
                        if isinstance(t, dict)}
             for t in old_mp.get("tunnels") or []:
