@@ -123,5 +123,46 @@ class TestOwnsPid(unittest.TestCase):
             self.assertFalse(reused.owns_pid(4242))
 
 
+
+
+class TestRealPsParse(unittest.TestCase):
+    """#65：真实 ps 输出进测试——替身注入曾让「要求 2 行」的解析错配
+    在生产裸奔（_holder_alive 恒 False，守卫从未生效）。"""
+
+    def test_ps_pid_info_parses_single_line_shape(self):
+        from sysctl.instance_owner import _ps_pid_info
+        start, exe = _ps_pid_info(os.getpid())
+        self.assertIsNotNone(start, "真实 ps 单行输出必须可解析")
+        self.assertIsNotNone(exe)
+        self.assertIn(":", start, "lstart 含 HH:MM:SS")
+
+    def test_ps_pid_info_dead_pid_returns_none(self):
+        from sysctl.instance_owner import _ps_pid_info
+        start, exe = _ps_pid_info(99999999)
+        self.assertIsNone(start)
+        self.assertIsNone(exe)
+
+    def test_live_owner_lock_blocks_second_acquire(self):
+        """活实例持锁时第二次 acquire 必须拒绝——守卫真正生效
+        （解析修复前锁恒被抢走）。同进程模拟第二实例：手工种一条
+        「他者」锁记录（pid=当前进程但 start 不同=不可接管）再竞争。"""
+        import tempfile
+        from pathlib import Path
+        from sysctl.instance_owner import InstanceOwner, _ps_pid_info
+        with tempfile.TemporaryDirectory() as d:
+            lock = Path(d) / "lock.json"
+            start, exe = _ps_pid_info(os.getpid())
+            # 真实当前进程持锁（真 ps 解析出的 start 与 holder-alive
+            # 校验路径同形）——二次 acquire 必须被拒
+            import json
+            lock.write_text(json.dumps(
+                {"pid": os.getpid(), "start": start, "exe": exe,
+                 "nonce": "n"}))
+            second = InstanceOwner(lock_path=str(lock))
+            self.assertFalse(second.acquire(),
+                             "活实例（真 ps 可解析）持锁时必须拒绝二次 acquire")
+
+
+
 if __name__ == "__main__":
     unittest.main()

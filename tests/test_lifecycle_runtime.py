@@ -20,11 +20,20 @@ from services.lifecycle_runtime import LifecycleRuntime, _should_prevent_sleep
 
 
 def _make_coordinator():
+    from sysctl.instance_owner import InstanceOwner
+    import tempfile
+    import os
+    # #65 修复后真实 acquire 落到真实 ps——隔离锁路径 + 可控 pid_info，
+    # 避免跨用例共享真实锁（残留会让后续用例 acquire 恒 False）
+    lock = os.path.join(tempfile.mkdtemp(), "owner.lock")
+    owner = InstanceOwner(lock_path=lock,
+                          pid_info=lambda p: ("START", "/exe"), pid=1)
     return LifecycleRuntime(
         config_fn=lambda: {"prevent_sleep": False},
         ssh_monitor=MagicMock(),
         paused_fn=lambda: False,
         on_menu_dirty=lambda: None,
+        instance_owner=owner,
     )
 
 
