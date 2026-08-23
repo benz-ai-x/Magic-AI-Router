@@ -48,72 +48,81 @@ bash scripts/notarize.sh
 
 ## 架构
 
+单一归属原则（每域一个归宿模块；逐模块清单是防漂移守卫 `tests/test_docs_drift.py` 钉住的契约面）：
+
 ```
 app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有）
-util.py ── resource_path（frozen 平铺 / dev 按域包子目录查找）+ truncate + build_stamp + version_display
+util.py ── resource_path（frozen 平铺 / dev 按域包子目录查找）+ 版本戳
+
 mpconf/ ── 配置栈
-  config.py ── 配置 I/O（load/save/merge/migrate）；http_listen_port 字段 + 读时兼容旧 "host:port"
-  config_store.py ── 路径注册表 PATHS + 原子写管线（mkstemp+chmod 0600+os.replace）；所有托管配置文件的唯一安全写入口
-  netloc.py ── host:port 解析/格式化/loopback 校验的唯一所有者
-  provider_auth.py ── 供应商认证纯逻辑（resolve_api_key + build_outbound_headers）
-  config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare 全量校验 / commit（journal+MP+SP+Keychain+回调次序）/ recover 幂等重放
+  config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串）
+  config_store.py ── PATHS 注册表 + 原子写管线（唯一安全写入口）
+  netloc.py ── host:port 解析/格式化/loopback 校验唯一所有者
+  provider_auth.py ── 供应商认证纯逻辑 + PROVIDER_REGISTRY 注册表 +
+    restore_masked_key（掩码 keep 语义）
+  config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
+    全量校验（含 schema + 端口冲突）/ commit（journal+MP+SP+Keychain+
+    回调次序）/ recover 幂等重放 / update_mp 菜单写径
+  local_token.py ── 本地客户端 token（掩码布尔契约，明文不出 UI）
 
 tunnel/ ── SSH 隧道核心
-  proxy.py ── asyncio HTTP→SOCKS5 代理（明文 HTTP 逐请求归属：跨 origin 安全重连，绝不静默误投）+ SSHMonitor + ProxyRuntime
-  http_framer.py ── 明文 HTTP 增量 framer：起始行/头部/CL/chunked 定界，未定界即安全关闭
-  async_runtime.py ── daemon 线程 + asyncio 循环 + 代际计数停止（ProxyRuntime/Suanpan 共用）
-  connection_coordinator.py ── SSH 连接/重试/host-key 流程编排
-  subprocess_monitor.py ── 子进程生命周期基类（SSHMonitor/CaptureMonitor 继承）
-  retry_scheduler.py ── SSH 重试退避调度
-  host_key.py ── SSH known_hosts 管理
-  host_key_flow.py ── SSH 主机密钥信任流程
-  ssh_launch.py ── SSH 调用策略单一归宿：argv 构建（host-key 三件套 / sshpass-via-fd / -i）+ 一次性探针 probe() + stderr→中文失败分类；SSHMonitor 与 test_tunnel 的共用上游
+  proxy.py ── asyncio HTTP→SOCKS5 代理（明文逐请求归属）+ SSHMonitor
+  async_runtime.py ── daemon 线程 + asyncio 循环 + 代际停止
+  http_framer.py ── 明文 HTTP 增量定界（未定界即安全关闭）
+  connection_coordinator.py ── 连接/重试编排（持 _lifecycle_lock）
+  subprocess_monitor.py ── 子进程生命周期基类（状态全集声明）
+  retry_scheduler.py · host_key.py · host_key_flow.py ── 重试退避 /
+    known_hosts 管理 / 主机密钥信任流程
+  ssh_launch.py ── SSH 调用策略单一归宿：argv 构建 + probe() +
+    stderr→中文失败分类
 
 shellui/ ── 界面
-  menu_builder.py ── 菜单栏 UI 构建 + 状态图标
+  menu_builder.py ── 菜单栏 UI + 状态图标
   webview_window.py ── WKWebView 窗口（ObjC 薄 adapter）
   log_window.py ── 日志窗
-  bridge_protocol.py ── 设置窗 JS↔Python 消息协议（纯 Python 核心，可单测）
-  config_ui.html ── 自包含 Web 配置面板（三层架构：LAYER 1 纯逻辑可 node:test / VIEWS 注册表 / 渲染层）
+  bridge_protocol.py ── 设置窗 JS↔Python 协议（纯 Python 可单测）
+  config_ui.html ── 自包含 Web 配置面板（三层架构）
 
 capture/ ── 抓包
-  capture.py ── mitmdump 子进程管理（抓包模式）
+  capture.py ── mitmdump 子进程管理
   capture_controller.py ── 抓包启停 + 信任缓存控制
-  capture_store.py ── 抓包目录/文件管理（跨进程共享）
-  resources.py ── 资源契约：resolve_capture_resources（mitmdump 三级链 + addon 校验 + 目录 preflight）+ smoke_capture_boot/SMOKE_*（启动冒烟判据单一归宿）
+  capture_store.py ── 抓包目录/文件管理 + 命名知识唯一所有者
+    （含 cleanup_expired_captures 保留策略）
+  resources.py ── 资源契约三级链 + 冒烟判据单一归宿
   ai_capture_addon.py ── mitmproxy addon：6 家 AI 请求抽取落 JSONL
   ca_trust.py ── 根 CA 信任检测 + 引导窗
-  mitmdump_entry.py ── 抓包构建入口（mitmproxy mitmdump 包装）
+  mitmdump_entry.py ── frozen mitmdump 构建入口
   chromium_proxy.py ── Chromium 启动代理配置
 
 sysctl/ ── 系统集成
-  system_proxy.py ── networksetup 包装：事务式 + 崩溃恢复
+  system_proxy.py ── networksetup 事务式 + 崩溃恢复
   sys_proxy_controller.py ── 系统代理收敛状态机
   sleep_blocker.py ── 防睡眠
-  login_item.py ── 登录启动 LaunchAgent（bundle ID 见 build.sh）
-  port_check.py ── 端口占用检测（占用仅是线索；SIGTERM→SIGKILL 升级在此）
-  instance_owner.py ── 实例所有权锁：pid+启动时间双匹配抗 PID 复用；O_EXCL 原子创建/陈旧接管/release
-  keychain.py ── macOS Keychain 读写
+  login_item.py ── 登录启动 LaunchAgent
+  port_check.py ── 端口占用检测（SIGTERM→SIGKILL 升级）
+  instance_owner.py ── 实例所有权锁：pid+启动时间双匹配抗 PID 复用
+  keychain.py ── macOS Keychain 读写（Security 框架可选导入）
 
 services/ ── 服务
-  config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token + body 上限）
+  config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token）
   suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
-  claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json，经 config_store.atomic_write；env 契约见 ADR-003）
-  lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约、tick/sync_sleep/stop_all、capture_state 单投影
-  authenticated_http.py ── 认证出站 adapter：跨 origin 重定向一律拒绝、HTTPS→HTTP 降级必拒、同 origin 放行、1MB 响应上限
-  balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围 / 缓存 / 路由来源）+ 供应商连通性探测（经 authenticated_http 出站）
+  claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json）
+  lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约 +
+    capture_state 单投影 + _on_sp_saved 双形态
+  authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限
+  balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围）
   stats.py ── 运行统计
 
 suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM 后端）
-  config.py ── Pydantic 配置 schema + YAML 加载/回写 + API key 掩码契约（api_key_set 布尔，真实 key 不出进程；见 ADR-002）
+  config.py ── Pydantic schema + 掩码契约 + null 节归一 + 文法消费
   main.py ── FastAPI app factory + 路由 handler
-  middleware.py ── APIKey + BodyLimit 中间件
-  proxy.py ── 流式代理转发 + RetryPolicy 重试（pre-send 证明或幂等才有界重试；非幂等 POST 送达后不明即不重放）
-  compat.py ── 供应商请求 body 归一化（system 扁平化 / document 块剥离 / beta 字段剥离）
-  usage_extractor.py ── UsageExtractor SSE 用量提取（CRLF 兼容 + max-merge 跨供应商）
-  router.py ── 路由决策（内联覆盖 → SUBAGENT 标签 → 规则 → 默认）
-  usage_log.py ── 追加写 JSONL + 50MB 轮转 + 内存滚动总计（写失败吞并计数，0700/0600+拒 symlink）
-  prewarmer.py ── 启动预热 best-effort adapter：有界并发 + 总预算 + 可取消
+  middleware.py ── APIKey（常量时间比较）+ BodyLimit 中间件
+  proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread
+  compat.py ── 供应商 body 归一化（anthropic_native 旗标驱动）
+  usage_extractor.py ── SSE 用量提取
+  router.py ── 路由决策 + parse_route_target 文法所有者 + fallback_from 可感知
+  usage_log.py ── 追加写 JSONL + 轮转
+  prewarmer.py ── 启动预热 best-effort adapter
   __main__.py ── `python3 -m suanpan` 独立启动入口
 ```
 
@@ -135,9 +144,12 @@ suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM �
 
 ## 注意事项
 
-- 菜单栏状态图标用 `MenubarIcon.png` 染色（绿=已连接 / 黄=连接中 / 灰=未连接）
+**硬约束（违反即出错）**
 - PyObjC 方法名不能以单下划线开头（会被当成 ObjC selector）
-- 打包后的 .app 设置 LSUIElement=true，不显示 Dock 图标
-- Suanpan 网关依赖为延迟导入——未安装时 app 正常启动，网关功能不可用并提示安装命令
 - Config server（:9528）和 AI 路由网关（:9527）是两个独立端口，不可合并
 - 测试口径：`python3 -m pytest --cov`（omit 清单见 `.coveragerc`）+ `node --test tests/js/*.test.mjs`（glob 形式——node ≥26 目录模式报 MODULE_NOT_FOUND）；覆盖率数字以运行为准，不在此缓存
+
+**形态事实（环境即真源，改代码即改）**
+- 菜单栏状态图标用 `MenubarIcon.png` 染色（绿=已连接 / 黄=连接中 / 灰=未连接）
+- 打包后的 .app 设置 LSUIElement=true，不显示 Dock 图标
+- Suanpan 网关依赖为延迟导入——未安装时 app 正常启动，网关功能不可用并提示安装命令
