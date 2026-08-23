@@ -335,7 +335,7 @@ class MagicProxyApp(rumps.App):
 
     # ── suanpan ──────────────────────────────────────────
     # SuanpanRuntime 的公开方法组装直接写在 App 的菜单回调里，不再多一层
-    # 间接（#43 重构落地）。
+    # 间接（LifecycleRuntime 升格落地）。
 
     def toggle_suanpan(self, _):
         sp = self._suanpan

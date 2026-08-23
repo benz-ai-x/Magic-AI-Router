@@ -12,7 +12,7 @@ dist-mitmdump/
 .build-venv-main/
 build_time.txt
 
-# AppGenesisForge 运行态产物（可重建，不入库；ADR-021 codemap .agf/ 等）
+# AppGenesisForge 运行态产物（可重建，不入库）
 **/.agf/*
 !**/.agf/config.json
 progress/board.html*
