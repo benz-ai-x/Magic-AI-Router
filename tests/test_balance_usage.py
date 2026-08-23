@@ -872,6 +872,37 @@ class TestAllApiQuotaDisplay(unittest.TestCase):
             for q in api.get("quotas", []):
                 self.assertNotEqual(q.get("source"), "local")
 
+
+    def test_glm_model_usage_failure_shows_error_keeps_quota(self):
+        """model-usage 失败时本月用量块报可行动错误，配额行不受影响。"""
+        sp = {"providers": {"glm": {
+            "base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "api_key": "k"}}}
+
+        def side_effect(url, headers=None, **kw):
+            if "model-usage" in url:
+                import urllib.error
+                raise urllib.error.URLError(
+                    ConnectionRefusedError(61, "refused"))
+            for key, payload in {
+                self.GLM_QUOTA_URL: self.GLM_PRO_QUOTA,
+                self.GLM_ACCOUNT_URL: {"data": {"balance": 1.0,
+                                                "totalSpendAmount": 9.0}},
+            }.items():
+                if url.startswith(key):
+                    return json.dumps(payload).encode()
+            raise AssertionError(f"unmocked URL: {url}")
+
+        with patch.object(AuthenticatedHttpClient, "open",
+                          side_effect=side_effect):
+            result = balance_usage.fetch_balance(sp)
+        apis = result[0]["apis"]
+        monthly = next(a for a in apis if a.get("label") == "本月用量")
+        self.assertIn("拒绝", monthly["error"])
+        plan = apis[0]
+        self.assertEqual([q["period"] for q in plan["quotas"]],
+                         ["5小时", "每周"])
+
     def test_kimi_advanced_no_monthly_row(self):
         """Kimi Advanced（totalQuota={}）月度行不显示——API 没有就不实现。"""
         sp = {"providers": {"kimi": {

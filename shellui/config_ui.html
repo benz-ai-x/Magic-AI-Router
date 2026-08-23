@@ -574,9 +574,8 @@ function balanceRowModel(b){
   (b.apis||[]).forEach(a=>{(a.error||Array.isArray(a.quotas)?quotaApis:moneyApis).push(a);});
   return{name:b.provider,state:'ok',quotaApis,moneyApis};
 }
-// 配额行展示：本地聚合（非供应商 API 口径）的行标注来源；数字复用 fmtNum 紧凑格式。
-// 「全读 API」后无本地聚合行——period 直显（原「（网关）」本地标注
-// 随本地回退删除而失效）
+// 配额行展示：period 直显（全 API 口径，无本地聚合行）；数字复用
+// fmtNum 紧凑格式；带 calls 的行（GLM 月度统计）附调用次数。
 function quotaPeriodLabel(q){return q.period;}
 function quotaNumsText(q){
   const used=q.used!=null?fmtNum(q.used):'—';

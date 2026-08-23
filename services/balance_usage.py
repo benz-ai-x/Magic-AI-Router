@@ -39,7 +39,7 @@ PROVIDER_BALANCE_APIS = [
     if entry["balance_apis"]
 ]
 
-_MONTHLY_PERIOD = "每月"  # canonical label; fetch_balance suppression matches it exactly
+_MONTHLY_PERIOD = "每月"  # canonical label（GLM model-usage / Kimi totalQuota 共用）
 _UNIT_NAMES = {3: "5小时", 5: _MONTHLY_PERIOD, 6: "每周"}
 _WEEK_HOURS = 24 * 7
 _MONTH_HOURS = 24 * 30
@@ -147,7 +147,7 @@ def normalize_balance(raw, label):
             period = _UNIT_NAMES.get(lim.get("unit"), f"unit{lim.get('unit')}")
             if lim.get("type") == "TIME_LIMIT":
                 # 工具时长配额（usageDetails: search-prime/web-reader/zread），
-                # 不是 token 用量——period 标口径，且不抑制本地月度 token 行
+                # 不是 token 用量——period 标「·工具」与 model-usage 月度行区分
                 period += "·工具"
             p = lim.get("percentage")
             if isinstance(p, (int, float)):
@@ -402,12 +402,13 @@ def fetch_balance(sp_raw):
         if mu_url:
             try:
                 start, end = _month_window()
-                import urllib.parse as _up
-                url = (mu_url + "?startTime=" + _up.quote(start)
-                       + "&endTime=" + _up.quote(end))
+                url = (mu_url + "?startTime=" + urllib.parse.quote(start)
+                       + "&endTime=" + urllib.parse.quote(end))
                 data = _BALANCE_CLIENT.open_json(
                     url, headers={"Authorization": key})
                 api_res.append(normalize_balance(data, "本月用量"))
+            except AuthRedirectError as e:
+                api_res.append({"label": "本月用量", "error": e.msg[:120]})
             except Exception as e:
                 api_res.append({"label": "本月用量",
                                 "error": _shape_balance_error(e)})
