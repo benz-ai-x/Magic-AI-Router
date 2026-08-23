@@ -184,6 +184,12 @@ def save_config(config, path=None):
     return atomic_write(path or get_path("mp"), json.dumps(config, indent=2))
 
 
+# mp 文件的「注册的额外字段」——merge 白名单外但属于合法持久化 schema
+# 的键（#66 S2：白名单只拷 DEFAULT_CONFIG 曾把 local_client_token 抹掉，
+# Claude Code 侧 ANTHROPIC_AUTH_TOKEN 与 Docker 卷契约随之静默失效）。
+EXTRA_CONFIG_FIELDS: set = set()
+
+
 def merge_config(cfg):
     """Merge raw config with defaults, coerce types, validate ranges."""
     if not isinstance(cfg, dict):
@@ -201,6 +207,15 @@ def merge_config(cfg):
             except ValueError:
                 pass  # fall through; the range check below resets to default
         for k in DEFAULT_CONFIG:
+            if k in cfg:
+                merged[k] = cfg[k]
+        # 注册的额外字段随白名单外保留（schema 单主化——mp 文件不再
+        # 有两个半主）。懒注册：local_token 的 import 顺序不可控，
+        # merge 内确定性注册一次（幂等）
+        if not EXTRA_CONFIG_FIELDS:
+            from mpconf.local_token import FIELD as _lt_field
+            EXTRA_CONFIG_FIELDS.add(_lt_field)
+        for k in EXTRA_CONFIG_FIELDS:
             if k in cfg:
                 merged[k] = cfg[k]
         merged["tunnels"] = []
