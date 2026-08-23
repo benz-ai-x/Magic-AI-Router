@@ -34,7 +34,7 @@ class SubprocessMonitor:
 
     def __init__(self, *, line_sink=None):
         self.process = None
-        self._status = "stopped"
+        self._status = self._STATUS_STOPPED
         self._error_msg = ""
         self._cmd_str = ""
         self._log_lines = deque(maxlen=100)
@@ -106,7 +106,7 @@ class SubprocessMonitor:
             )
         except OSError as exc:
             self.process = None
-            self._status = "error"
+            self._status = self._STATUS_ERROR
             self._error_msg = str(exc)
             logger.warning("%s could not start: %s", self._PROCESS_NAME, exc)
             return False
@@ -149,14 +149,14 @@ class SubprocessMonitor:
         holds while blocked in read().
         """
         if self.process is None:
-            self._status = "stopped"
+            self._status = self._STATUS_STOPPED
             return
         proc = self.process
         log_thread = self._log_thread
         proc.terminate()
         if not blocking:
             self.process = None
-            self._status = "stopped"
+            self._status = self._STATUS_STOPPED
             threading.Thread(
                 target=self._reap_process, args=(proc, log_thread), daemon=True,
             ).start()
@@ -171,7 +171,7 @@ class SubprocessMonitor:
                 logger.warning("%s did not exit after SIGKILL", self._PROCESS_NAME)
         self._wait_log_thread()
         self.process = None
-        self._status = "stopped"
+        self._status = self._STATUS_STOPPED
 
     def _wait_log_thread(self):
         if self._log_thread and self._log_thread.is_alive():
@@ -199,7 +199,7 @@ class SubprocessMonitor:
 
         ret = self.process.poll()
         if ret is not None:
-            self._status = "error"
+            self._status = self._STATUS_ERROR
             self._wait_log_thread()
             with self._log_lock:
                 lines = list(self._log_lines)
