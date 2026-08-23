@@ -238,3 +238,47 @@ class TestStartBackground(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThreadContract(unittest.TestCase):
+    """#68：注释声称「ConnectionCoordinator owns its locking」——让它成真。
+    daemon 线程 stop() 与主线程 tick check() 的无保护竞态曾以
+    AttributeError 落在 rumps 定时器回调内。"""
+
+    def test_concurrent_restart_and_check_no_crash(self):
+        """daemon 线程 restart（桥接重连路径）与主线程 check_ssh 并发——
+        锁归状态机所有者后，任何交错都不抛 AttributeError。"""
+        import threading
+        conn = _make_coordinator()
+        # SSH monitor 真对象（subprocess_monitor 的 process 字段是竞态点）
+        stop = threading.Event()
+        errors = []
+
+        def restarter():
+            while not stop.is_set():
+                try:
+                    conn.restart(lambda: None)
+                except Exception as exc:
+                    errors.append(exc)
+                    return
+
+        def checker():
+            while not stop.is_set():
+                try:
+                    conn.check_ssh()
+                except AttributeError as exc:
+                    errors.append(exc)
+                    return
+
+        t1 = threading.Thread(target=restarter, daemon=True)
+        t2 = threading.Thread(target=checker, daemon=True)
+        t1.start()
+        t2.start()
+        stop_after = threading.Timer(0.6, stop.set)
+        stop_after.start()
+        t1.join(3)
+        t2.join(3)
+        conn.stop_all()
+        self.assertEqual(errors, [],
+                         f"并发 restart/check 抛出异常（#68 无锁竞态）: {errors}")
+

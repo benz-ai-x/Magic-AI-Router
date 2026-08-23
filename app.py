@@ -298,8 +298,12 @@ class MagicProxyApp(rumps.App):
                 cfg = load_config()
             except IdentityMigrationError as exc:
                 # 与 __init__ 的处置一致：迁移可行动错误不得在菜单回调里
-                # 裸抛——保持现有连接并给出指引
-                rumps.alert(
+                # 裸抛——保持现有连接并给出指引。桥接重连在 daemon 线程
+                # （#68）：NSAlert 必须回主线程（host_key_flow 同款
+                # AppHelper.callAfter 正解）。
+                from PyObjCTools import AppHelper
+                AppHelper.callAfter(
+                    rumps.alert,
                     "Magic AI Router",
                     f"配置包含重复的隧道 id，已保持现有连接。\n\n{exc}\n\n"
                     "请打开配置文件修正重复 id 后重试。")
@@ -565,8 +569,8 @@ class MagicProxyApp(rumps.App):
         Arrives on the main thread via WKScriptMessageHandler. The reconnect
         path blocks up to ~10 s (subprocess joins) — dispatch to a daemon
         thread so the window and menu stay responsive; the cross-thread call
-        is safe (ConnectionCoordinator owns its locking, and on_sp_saved
-        already crosses threads the same way).
+        is safe（#68：ConnectionCoordinator 的 _lifecycle_lock 已归状态机
+        所有者——注释从民俗变机制；on_sp_saved 同样跨线程）。
         """
         kind = action.get("type")
         if kind == ACTION_RECONNECT_PROXY:

@@ -17,6 +17,7 @@ Properties: ssh, paused, proxy_running, current_tunnel, socks5_port
 from __future__ import annotations
 
 import logging
+import threading
 
 from tunnel.proxy import ProxyRuntime, SSHMonitor
 from tunnel.retry_scheduler import RetryScheduler
@@ -39,6 +40,11 @@ class ConnectionCoordinator:
         self._ssh = SSHMonitor(line_sink=ssh_log_sink)
         self._proxy_runtime = ProxyRuntime(stats)
         self._retry = RetryScheduler()
+        # 状态机所有者的锁（#68）：桥接重连 daemon 线程与主线程 tick 并发
+        # 打进 stop/check/restart——锁归模块，不归调用方纪律（app.py 的
+        # 「owns its locking」注释曾证伪）。RLock：restart 内联调
+        # start_ssh / _start_background，同线程重入合法。
+        self._lifecycle_lock = threading.RLock()
         self._proxy_running = False
         self._paused = False
         self._get_config = get_config
@@ -95,9 +101,10 @@ class ConnectionCoordinator:
         self.start_ssh()
 
     def start_ssh(self):
-        self._retry.cancel()
-        self._paused = False
-        self._host_key.start_check()
+        with self._lifecycle_lock:
+            self._retry.cancel()
+            self._paused = False
+            self._host_key.start_check()
 
     def handle_retry(self):
         """Check retry scheduler; connect if due. Call before setting status icon."""
@@ -106,60 +113,65 @@ class ConnectionCoordinator:
 
     def check_ssh(self):
         """Check SSH status and handle errors. Call after setting status icon."""
-        if self._paused:
-            return
-        if self._ssh.status not in ("connecting", "connected", "stopped"):
-            return
-        self._ssh.check(self.socks5_port)
-        if self._ssh.status == "connected":
-            self._retry.reset()
-        elif self._ssh.status == "error":
-            if self._ssh.is_host_key_changed and not self._host_key.change_prompted:
-                self._host_key.begin_replacement()
-            else:
-                self._retry.handle_error()
+        with self._lifecycle_lock:
+            if self._paused:
+                return
+            if self._ssh.status not in ("connecting", "connected", "stopped"):
+                return
+            self._ssh.check(self.socks5_port)
+            if self._ssh.status == "connected":
+                self._retry.reset()
+            elif self._ssh.status == "error":
+                if self._ssh.is_host_key_changed and not self._host_key.change_prompted:
+                    self._host_key.begin_replacement()
+                else:
+                    self._retry.handle_error()
 
     def restart(self, reload_config_fn):
         """Full stop + config reload + restart."""
-        self._retry.cancel()
-        self._host_key.cancel()
-        self._ssh.stop()
-        self._proxy_running = False
-        self._proxy_runtime.stop()
-        reload_config_fn()
-        self._start_background()
-        self.start_ssh()
+        with self._lifecycle_lock:
+            self._retry.cancel()
+            self._host_key.cancel()
+            self._ssh.stop()
+            self._proxy_running = False
+            self._proxy_runtime.stop()
+            reload_config_fn()
+            self._start_background()
+            self.start_ssh()
 
     def cancel(self):
         """Cancel an in-flight SSH connection attempt."""
-        self._retry.cancel()
-        self._host_key.cancel()
-        self._ssh.stop()
-        self._proxy_running = False
-        self._proxy_runtime.stop()
-        logger.info("connection cancelled by user")
+        with self._lifecycle_lock:
+            self._retry.cancel()
+            self._host_key.cancel()
+            self._ssh.stop()
+            self._proxy_running = False
+            self._proxy_runtime.stop()
+            logger.info("connection cancelled by user")
 
     def toggle_pause(self):
         """Pause/resume proxy. Returns new paused state."""
-        self._paused = not self._paused
-        if self._paused:
-            # timeout=0: signal the worker and return immediately — joining
-            # here blocks the menu callback for up to 5 s (#40).
-            self._proxy_runtime.stop(timeout=0)
-            self._proxy_running = False
-        else:
-            self._start_background()
-            if self._ssh.status in ("stopped", "error"):
-                self.start_ssh()
-        return self._paused
+        with self._lifecycle_lock:
+            self._paused = not self._paused
+            if self._paused:
+                # timeout=0: signal the worker and return immediately —
+                # joining here blocks the menu callback for up to 5 s (#40).
+                self._proxy_runtime.stop(timeout=0)
+                self._proxy_running = False
+            else:
+                self._start_background()
+                if self._ssh.status in ("stopped", "error"):
+                    self.start_ssh()
+            return self._paused
 
     def stop_all(self):
         """Stop SSH + proxy for quit (non-blocking)."""
-        self._retry.cancel()
-        self._host_key.cancel()
-        self._ssh.stop(blocking=False)
-        self._proxy_runtime.stop()
-        self._proxy_running = False
+        with self._lifecycle_lock:
+            self._retry.cancel()
+            self._host_key.cancel()
+            self._ssh.stop(blocking=False)
+            self._proxy_runtime.stop()
+            self._proxy_running = False
 
     # ── internals ───────────────────────────────────────
 
