@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 
 import httpx
-import structlog
+import logging
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -20,7 +20,7 @@ from suanpan.router import RouteDecision, strip_marker
 from suanpan.usage_extractor import UsageExtractor
 from suanpan.usage_log import UsageEntry, UsageLogger
 
-_log = structlog.get_logger()
+_log = logging.getLogger("magic-proxy.suanpan.proxy")
 
 # ── RetryPolicy（issue #7）────────────────────────────────────────────
 # 无法证明请求未送达时，非幂等请求绝不自动重放：ReadError /
@@ -74,8 +74,8 @@ async def _send_with_retry(
             if not retry:
                 raise
             attempt += 1
-            _log.warning("transport_retry", url=str(req.url),
-                         error=type(e).__name__, reason=reason, attempt=attempt)
+            _log.warning("transport_retry url=%s error=%s reason=%s attempt=%s",
+                         req.url, type(e).__name__, reason, attempt)
 
 
 async def drain_and_log(
@@ -169,8 +169,8 @@ def _annotate_fallback(out_headers, decision, provider_name):
     绝不静默误投。意图串已在 router 捕获时消毒（无 CR/LF/控制字符）。"""
     if decision.fallback_from:
         out_headers["x-suanpan-fallback"] = decision.fallback_from
-        _log.warning("route_fallback", intent=decision.fallback_from,
-                     provider=provider_name, scenario=decision.scenario)
+        _log.warning("route_fallback intent=%s provider=%s scenario=%s",
+                     decision.fallback_from, provider_name, decision.scenario)
 
 
 async def forward_request(
@@ -212,14 +212,15 @@ async def forward_request(
                            for h in ("idempotency-key", "x-idempotency-key")))
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error", provider=provider_name, error=error)
+        _log.error("upstream_error provider=%s error=%s", provider_name, error)
         return make_502(provider_name, source_model, target_model, decision.scenario, error, started, logger)
 
     # 5xx → 502 (no retry, no backend switch)
     if upstream_resp.status_code >= 500:
         await upstream_resp.aclose()
         error = f"HTTP {upstream_resp.status_code}"
-        _log.error("upstream_5xx", provider=provider_name, status=upstream_resp.status_code)
+        _log.error("upstream_5xx provider=%s status=%s",
+                   provider_name, upstream_resp.status_code)
         return make_502(provider_name, source_model, target_model, decision.scenario, error, started, logger)
 
     # Success (2xx or 4xx) — stream response to client
@@ -287,7 +288,7 @@ async def forward_count_tokens(
             raise
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error", provider=provider_name, error=error)
+        _log.error("upstream_error provider=%s error=%s", provider_name, error)
         return JSONResponse(
             {"error": "backend request failed", "provider": provider_name,
              "last_error": error},

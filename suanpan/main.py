@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -19,7 +18,6 @@ from suanpan.proxy import (
 from suanpan.router import NoRouteMatched, decide_route
 from suanpan.usage_log import UsageLogger
 
-_log = structlog.get_logger()
 
 
 def create_app(config: AppConfig, config_path: str = "./suanpan.yaml") -> FastAPI:
