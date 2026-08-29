@@ -3,6 +3,18 @@
 All notable changes to Magic-AI-Router are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [v0.7.1] — 2026-08-29 — 隧道断线四连修（#85–#88）
+
+### Fixed
+- **重试耗尽永久躺平（#85）**：退避表耗尽后曾直接放弃且无自愈路径（实测断线 2h18m 靠手动恢复）→ 无限退避（60s 封顶）+ `check_ssh` 放行 error 状态持续调度；暂停态不重连语义保留。断线自动恢复 ≤60s
+- **SSH 参数调优（#87）**：`ServerAliveInterval` 30→20（判死 90s→60s，闪断恢复快 30s）+ `IPQoS=none`（防中间设备按 DSCP 针对性丢包）+ `ConnectionAttempts=3`（建连自带重试）
+
+### Added
+- **唤醒立即重连（#86）**：新模块 `tunnel/reconnect_trigger.py`——NSWorkspace 唤醒事件 → 跳过退避立即重建（connected 视为僵尸链路主动拆建，恢复 ~2 分钟 → ≤5s）；事件去抖 ≥2s。Wi-Fi 切换即时恢复需可选依赖 `pyobjc-framework-SystemConfiguration`（未装时由 #85 兜底 ≤60s）
+
+### Changed
+- **日志降噪（#88）**：SOCKS5 连接失败按分钟聚合（首条完整 + 滚动汇总）——曾占日志 82% 的 Errno 61 刷屏压到每分钟 ≤2 条；stats 计数语义不变
+
 ## [v0.7.0] — 2026-08-23 — 两轮架构评审全量落地（19 issue，可靠性/一致性大修）
 
 ### Fixed
