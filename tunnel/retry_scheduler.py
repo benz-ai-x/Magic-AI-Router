@@ -10,13 +10,19 @@ import threading
 logger = logging.getLogger("magic-proxy.retry")
 
 DEFAULT_DELAYS = (5, 15, 45)  # seconds
+DEFAULT_MAX_DELAY = 60        # seconds — 退避封顶（#85：耗尽表后按此节奏无限重试）
 
 
 class RetryScheduler:
-    """Owns retry state: counter, timer, generation, lock."""
+    """Owns retry state: counter, timer, generation, lock.
 
-    def __init__(self, delays=DEFAULT_DELAYS):
+    #85：永不放弃——表内按表退避，表外按 max_delay 封顶无限重试；
+    停止重试只能经 cancel()（用户暂停/停止/重启）。
+    """
+
+    def __init__(self, delays=DEFAULT_DELAYS, max_delay=DEFAULT_MAX_DELAY):
         self._delays = delays
+        self._max_delay = max_delay
         self._retries = 0
         self._timer = None
         self._due = False
@@ -28,22 +34,20 @@ class RetryScheduler:
         return self._retries
 
     def handle_error(self):
-        """Schedule a retry if attempts remain. Called when SSH exits with error."""
+        """Schedule a retry (always — backoff capped at max_delay)."""
         with self._lock:
             if self._timer and self._timer.is_alive():
                 return
-            if self._retries >= len(self._delays):
-                logger.warning("SSH gave up after %d attempts", self._retries)
-                return
-            delay = self._delays[self._retries]
+            delay = (self._delays[self._retries]
+                     if self._retries < len(self._delays)
+                     else self._max_delay)
             self._retries += 1
             generation = self._generation
             self._timer = threading.Timer(
                 delay, self._mark_due, args=(generation,))
             self._timer.daemon = True
             self._timer.start()
-        logger.info("SSH retry %d/%d scheduled in %ds",
-                    self._retries, len(self._delays), delay)
+        logger.info("SSH retry #%d scheduled in %ds", self._retries, delay)
 
     def _mark_due(self, generation):
         with self._lock:

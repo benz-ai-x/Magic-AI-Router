@@ -137,10 +137,20 @@ class TestStart(unittest.TestCase):
 class TestCheckSshOutcomes(unittest.TestCase):
     def test_ignores_status_not_in_watchlist(self):
         conn = _make_coordinator()
-        conn._ssh._status = "error"  # not in (connecting, connected, stopped)
+        conn._ssh._status = "paused-like-unknown"  # 状态全集外 → 忽略
         with patch.object(conn._ssh, "check") as mock_check:
             conn.check_ssh()
         mock_check.assert_not_called()
+
+    def test_error_status_keeps_scheduling_retry(self):
+        """#85：error 态每拍继续调度重试（timer 存活时 handle_error 自去重）。"""
+        conn = _make_coordinator()
+        conn._ssh._status = "error"
+        conn._ssh._error_msg = "connection timed out"
+        with patch.object(conn._retry, "handle_error") as handle:
+            conn.check_ssh()
+            conn.check_ssh()  # 第二拍：仍要继续调度，不躺平
+        self.assertEqual(handle.call_count, 2)
 
     def test_connected_resets_retry(self):
         conn = _make_coordinator()
@@ -217,6 +227,15 @@ class TestRetryConnect(unittest.TestCase):
         with patch.object(conn._ssh, "start") as start:
             conn._retry_connect()
         start.assert_called_once()
+
+    def test_noop_when_paused(self):
+        """#85：暂停即停止重连——due 触发也不得拉起 SSH。"""
+        conn = _make_coordinator()
+        conn._paused = True
+        conn._ssh._status = "stopped"
+        with patch.object(conn._ssh, "start") as start:
+            conn._retry_connect()
+        start.assert_not_called()
 
 
 class TestStartBackground(unittest.TestCase):

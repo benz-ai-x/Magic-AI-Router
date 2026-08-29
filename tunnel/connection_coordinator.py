@@ -123,7 +123,10 @@ class ConnectionCoordinator:
         try:
             if self._paused:
                 return
-            if self._ssh.status not in ("connecting", "connected", "stopped"):
+            # #85：error 也放行——每拍继续 handle_error（timer 存活时自去重），
+            # 耗尽退避表后按封顶节奏无限重试，不再永久躺平等手动。
+            if self._ssh.status not in ("connecting", "connected",
+                                        "stopped", "error"):
                 return
             self._ssh.check(self.socks5_port)
             if self._ssh.status == "connected":
@@ -194,6 +197,8 @@ class ConnectionCoordinator:
         self._proxy_running = self._proxy_runtime.start(proxy_config)
 
     def _retry_connect(self):
+        if self._paused:  # #85：暂停即停止重连（menu 语义）
+            return
         if self._ssh.status in ("connected", "connecting"):
             return
         tunnel = self.current_tunnel
