@@ -123,7 +123,10 @@ class ConnectionCoordinator:
         try:
             if self._paused:
                 return
-            if self._ssh.status not in ("connecting", "connected", "stopped"):
+            # #85：error 也放行——每拍继续 handle_error（timer 存活时自去重），
+            # 耗尽退避表后按封顶节奏无限重试，不再永久躺平等手动。
+            if self._ssh.status not in ("connecting", "connected",
+                                        "stopped", "error"):
                 return
             self._ssh.check(self.socks5_port)
             if self._ssh.status == "connected":
@@ -135,6 +138,23 @@ class ConnectionCoordinator:
                     self._retry.handle_error()
         finally:
             self._lifecycle_lock.release()
+
+    def handle_reconnect_trigger(self):
+        """#86：唤醒等外部事件 → 立即重连（跳过退避）。
+
+        只做提前触发，不改状态机语义：connected 视为僵尸链路主动重建
+        （不等 ServerAlive 判死）；connecting 让现有流程收敛；其余直接
+        走 start_ssh（内部 cancel 重试计数 + host-key 检查）。
+        """
+        with self._lifecycle_lock:
+            if self._paused:
+                return
+            status = self._ssh.status
+            if status == "connecting":
+                return
+            if status == "connected":
+                self._ssh.stop()
+            self.start_ssh()
 
     def restart(self, reload_config_fn):
         """Full stop + config reload + restart."""
@@ -194,6 +214,8 @@ class ConnectionCoordinator:
         self._proxy_running = self._proxy_runtime.start(proxy_config)
 
     def _retry_connect(self):
+        if self._paused:  # #85：暂停即停止重连（menu 语义）
+            return
         if self._ssh.status in ("connected", "connecting"):
             return
         tunnel = self.current_tunnel

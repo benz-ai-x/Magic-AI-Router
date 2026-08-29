@@ -136,7 +136,10 @@ def build_tunnel_command(tunnel, socks5_port, password=""):
     ssh_args = (
         ["-D", str(socks5_port), "-N", "-o", "ExitOnForwardFailure=yes"]
         + _host_key_args()
-        + ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3"])
+        + ["-o", "ServerAliveInterval=20", "-o", "ServerAliveCountMax=3",
+           # #87：跨国链路——更快判死（60s）、不标 DSCP（防中间设备针对性丢包）、
+           # 建连自带 3 次重试（缓解瞬时 connect 超时）
+           "-o", "IPQoS=none", "-o", "ConnectionAttempts=3"])
     if tunnel.get("ssh_compression", True):
         ssh_args.append("-C")
     ssh_args.extend(["-p", port, _destination(tunnel)])

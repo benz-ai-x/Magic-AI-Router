@@ -902,3 +902,43 @@ class TestDualOriginEndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bytes(client_writer.data).count(b"ok"), 3)
 
 
+
+
+class TestSocks5FailLogThrottle(unittest.TestCase):
+    """#88：SOCKS5 连接失败日志按分钟聚合——首条完整、窗口内抑制计数、滚动补汇总。"""
+
+    def _make(self, window=60.0):
+        now = [1000.0]
+        throttle = proxy.Socks5FailLogThrottle(window=window, clock=lambda: now[0])
+        return throttle, now
+
+    def test_first_failure_logs_full_detail(self):
+        throttle, _ = self._make()
+        with self.assertLogs("magic-proxy.proxy", level="ERROR") as logs:
+            throttle.record("a.test", 443, "[Errno 61] refused")
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("a.test:443", logs.output[0])
+        self.assertIn("[Errno 61] refused", logs.output[0])
+
+    def test_same_window_failures_are_suppressed(self):
+        throttle, now = self._make()
+        with self.assertLogs("magic-proxy.proxy", level="ERROR") as logs:
+            throttle.record("a.test", 443, "[Errno 61] refused")
+            now[0] += 1
+            throttle.record("b.test", 443, "[Errno 61] refused")
+            now[0] += 1
+            throttle.record("c.test", 443, "[Errno 61] refused")
+        self.assertEqual(len(logs.output), 1, "窗口内只留首条完整记录")
+
+    def test_window_roll_emits_summary_then_new_full(self):
+        throttle, now = self._make(window=60.0)
+        with self.assertLogs("magic-proxy.proxy", level="ERROR"):
+            throttle.record("a.test", 443, "[Errno 61] refused")
+            now[0] += 1
+            throttle.record("b.test", 443, "[Errno 61]")  # 抑制 ×1
+        now[0] += 60  # 跨过窗口
+        with self.assertLogs("magic-proxy.proxy", level="ERROR") as logs:
+            throttle.record("d.test", 443, "[Errno 61]")
+        self.assertEqual(len(logs.output), 2, "汇总 + 新窗口首条")
+        self.assertIn("1", logs.output[0])  # 汇总带抑制计数
+        self.assertIn("d.test:443", logs.output[1])

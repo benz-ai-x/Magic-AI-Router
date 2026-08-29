@@ -95,8 +95,10 @@ class TestBuildTunnelCommand(unittest.TestCase):
                 "-o", "StrictHostKeyChecking=yes",
                 "-o", f"UserKnownHostsFile={host_key.KNOWN_HOSTS_PATH}",
                 "-o", "GlobalKnownHostsFile=/dev/null",
-                "-o", "ServerAliveInterval=30",
+                "-o", "ServerAliveInterval=20",
                 "-o", "ServerAliveCountMax=3",
+                "-o", "IPQoS=none",
+                "-o", "ConnectionAttempts=3",
                 "-C",
                 "-p", "22", "u@srv",
             ])

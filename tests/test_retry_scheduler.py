@@ -27,16 +27,15 @@ class TestHandleError(unittest.TestCase):
         # due flag resets after consumption
         self.assertFalse(rs.consume_due())
 
-    def test_gives_up_after_max_attempts(self):
-        rs = RetryScheduler(delays=(0.01, 0.01))
-        rs.handle_error()
+    def test_keeps_scheduling_after_table_exhausted(self):
+        """#85：耗尽退避表后按 max_delay 封顶继续调度，永不放弃。"""
+        rs = RetryScheduler(delays=(0.01,), max_delay=0.02)
+        rs.handle_error()  # 表内第 1 次
         time.sleep(0.05)
         rs.consume_due()
-        rs.handle_error()
+        rs.handle_error()  # 表已耗尽 -> 封顶延迟仍要调度
         time.sleep(0.05)
-        rs.consume_due()
-        # Third call exceeds len(delays)=2 -> no further retry scheduled
-        rs.handle_error()
+        self.assertTrue(rs.consume_due(), "表耗尽后仍应调度重试（#85）")
         self.assertEqual(rs.retries, 2)
 
     def test_no_duplicate_timer_while_pending(self):
