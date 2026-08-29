@@ -28,6 +28,7 @@ from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_conne
 from mpconf.config_state import ConfigStateStore
 from services.stats import Stats
 from tunnel.connection_coordinator import ConnectionCoordinator
+from tunnel.reconnect_trigger import ReconnectTrigger, WakeEventSource
 from services.lifecycle_runtime import LifecycleRuntime
 from util import build_stamp, version_display, resource_path
 
@@ -95,6 +96,11 @@ class MagicProxyApp(rumps.App):
             get_config=lambda: self._config,
             get_tunnel_password=self._tunnel_password,
         )
+        # #86：唤醒事件 → 立即重连（跳过退避）。事件源装不上则静默
+        # 降级——网络中断场景由 #85 的无限退避兜底。
+        self._reconnect_trigger = ReconnectTrigger(
+            self._conn.handle_reconnect_trigger)
+        WakeEventSource(self._reconnect_trigger.notify).start()
 
         # Non-blocking quit→relaunch state machine for proxied app launches
         self._relaunch_waiter = None

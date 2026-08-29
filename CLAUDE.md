@@ -71,7 +71,8 @@ tunnel/ ── SSH 隧道核心
   http_framer.py ── 明文 HTTP 增量定界（未定界即安全关闭）
   connection_coordinator.py ── 连接/重试编排（持 _lifecycle_lock）
   subprocess_monitor.py ── 子进程生命周期基类（状态全集声明）
-  retry_scheduler.py ── SSH 重试退避调度
+  retry_scheduler.py ── SSH 重试退避调度（无限退避封顶 60s，永不放弃）
+  reconnect_trigger.py ── 唤醒事件→立即重连触发器（去抖 + NSWorkspace 源）
   host_key.py ── SSH known_hosts 管理
   host_key_flow.py ── SSH 主机密钥信任流程
   ssh_launch.py ── SSH 调用策略单一归宿：argv 构建 + probe() +

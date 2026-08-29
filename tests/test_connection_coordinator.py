@@ -192,6 +192,55 @@ class TestCheckSshOutcomes(unittest.TestCase):
         handle.assert_called_once()
 
 
+class TestHandleReconnectTrigger(unittest.TestCase):
+    """#86：唤醒事件 → 立即重连；只做提前触发，不改状态机语义。"""
+
+    def test_noop_when_paused(self):
+        conn = _make_coordinator()
+        conn._paused = True
+        with patch.object(conn, "start_ssh") as start:
+            conn.handle_reconnect_trigger()
+        start.assert_not_called()
+
+    def test_connected_rebuilds_tunnel(self):
+        """唤醒后 TCP 多为僵尸链路——connected 也要主动重建，不等判死。"""
+        conn = _make_coordinator()
+        conn._ssh._status = "connected"
+        with patch.object(conn._ssh, "stop") as stop, \
+             patch.object(conn, "start_ssh") as start:
+            conn.handle_reconnect_trigger()
+        stop.assert_called_once()
+        start.assert_called_once()
+
+    def test_stopped_starts_without_stop(self):
+        conn = _make_coordinator()
+        conn._ssh._status = "stopped"
+        with patch.object(conn._ssh, "stop") as stop, \
+             patch.object(conn, "start_ssh") as start:
+            conn.handle_reconnect_trigger()
+        stop.assert_not_called()
+        start.assert_called_once()
+
+    def test_error_starts_without_stop(self):
+        conn = _make_coordinator()
+        conn._ssh._status = "error"
+        with patch.object(conn._ssh, "stop") as stop, \
+             patch.object(conn, "start_ssh") as start:
+            conn.handle_reconnect_trigger()
+        stop.assert_not_called()
+        start.assert_called_once()
+
+    def test_connecting_leaves_existing_flow(self):
+        """已有连接在途——让现有流程收敛，不杀重连。"""
+        conn = _make_coordinator()
+        conn._ssh._status = "connecting"
+        with patch.object(conn._ssh, "stop") as stop, \
+             patch.object(conn, "start_ssh") as start:
+            conn.handle_reconnect_trigger()
+        stop.assert_not_called()
+        start.assert_not_called()
+
+
 class TestRestart(unittest.TestCase):
     def test_restart_stops_reloads_and_restarts(self):
         conn = _make_coordinator()
