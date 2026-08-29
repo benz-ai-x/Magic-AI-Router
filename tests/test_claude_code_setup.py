@@ -361,6 +361,179 @@ class TestDefaultRolesFromSp(unittest.TestCase):
         self.assertEqual(set(data["labels"]), set(data["order"]))
 
 
+class TestEnvToRoles(unittest.TestCase):
+    """_env_to_roles() parses Claude Code env vars back into role dicts —
+    the inverse of _roles_to_env. Seed for the read-back policy: a synced
+    settings.json is the user's last confirmed choice, so the env layer is
+    authoritative (env → roles → env must be identity)."""
+
+    def test_parses_suffix_name_and_ctx(self):
+        env = {
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM_MAX/glm-5.3[1M]",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "GLM_MAX/glm-5.3",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "DeepSeek/deepseek-v4-pro",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "KIMI/k3[1M]",
+            "ANTHROPIC_MODEL": "GLM_PRO/glm-5.3[1M]",
+        }
+        roles = claude_code_setup._env_to_roles(env)
+        self.assertEqual(
+            roles["opus"],
+            {"model": "GLM_MAX/glm-5.3", "name": "GLM_MAX/glm-5.3",
+             "ctx_1m": True})
+        self.assertEqual(
+            roles["sonnet"],
+            {"model": "DeepSeek/deepseek-v4-pro", "ctx_1m": False})
+        self.assertEqual(roles["subagent"], {"model": "KIMI/k3", "ctx_1m": True})
+        self.assertEqual(
+            roles["default"], {"model": "GLM_PRO/glm-5.3", "ctx_1m": True})
+        self.assertNotIn("name", roles["subagent"],
+                         "subagent/default roles carry no *_MODEL_NAME var")
+
+    def test_round_trip_identity(self):
+        """env → roles → env is identity over the image of _roles_to_env —
+        i.e. for any env that layer can emit (it never omits a has_name
+        role's *_MODEL_NAME)."""
+        env = {
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM_MAX/glm-5.3[1M]",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "GLM_MAX/glm-5.3",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "DeepSeek/deepseek-v4-pro",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "DeepSeek/deepseek-v4-pro",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL": "KIMI/k3[1M]",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "快车道",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM_MAX/glm-5.3-flash[1M]",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "GLM_MAX/glm-5.3-flash",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "GLM_MAX/glm-5.3[1M]",
+            "ANTHROPIC_MODEL": "GLM_PRO/glm-5.3[1M]",
+        }
+        self.assertEqual(
+            claude_code_setup._roles_to_env(claude_code_setup._env_to_roles(env)),
+            env)
+
+    def test_foreign_blank_and_malformed_entries_ignored(self):
+        """Only _ROLES-owned keys are read; blank/non-str values skipped."""
+        env = {
+            "ANTHROPIC_DEFAULT_ORACLE_MODEL": "oracle/1",
+            "ANTHROPIC_MODEL": "  ",
+            "CLAUDE_CODE_SUBAGENT_MODEL": 3,
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:9527",
+        }
+        self.assertEqual(claude_code_setup._env_to_roles(env), {})
+
+    def test_non_dict_env(self):
+        self.assertEqual(claude_code_setup._env_to_roles(None), {})
+        self.assertEqual(claude_code_setup._env_to_roles("nope"), {})
+
+
+class TestDefaultRolesSeedPolicy(unittest.TestCase):
+    """default_roles() seeds the UI role table. Policy: when settings.json
+    already points at THIS gateway the live env values are the seed (the
+    user's last confirmed sync); otherwise rule-derived defaults. The payload
+    carries synced/drift so the UI can surface rule↔live divergence."""
+
+    GW = "http://127.0.0.1:9527"
+    SP = {
+        "rules": [
+            {"match_prefix": "claude-opus", "route_to": "GLM_MAX/glm-5.2"},
+            {"match_prefix": "claude-haiku", "route_to": "GLM_MAX/glm-5.2"},
+        ],
+        "router": {"default": "GLM_PRO/glm-5.3"},
+    }
+
+    def _default_roles(self, settings=None, sp=None, force_rules=False):
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = os.path.join(d, "settings.json")
+            if settings is not None:
+                with open(settings_path, "w") as f:
+                    json.dump(settings, f)
+            with patch("services.claude_code_setup.config_store.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.config_store.sp_load_raw",
+                       return_value=sp if sp is not None else self.SP), \
+                 patch.dict(config_store.PATHS,
+                            {"claude_settings": settings_path}):
+                return claude_code_setup.default_roles(force_rules=force_rules)
+
+    def test_no_settings_file_seeds_from_rules(self):
+        data = self._default_roles(settings=None)
+        self.assertEqual(data["roles"]["opus"]["model"], "GLM_MAX/glm-5.2")
+        self.assertFalse(data["synced"])
+        self.assertFalse(data["drift"])
+
+    def test_foreign_gateway_env_not_used_as_seed(self):
+        """settings.json pointing at ANOTHER endpoint carries that setup's
+        residue — it must not seed the table."""
+        settings = {"env": {
+            "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "other/legacy[1M]",
+        }}
+        data = self._default_roles(settings=settings)
+        self.assertEqual(data["roles"]["opus"]["model"], "GLM_MAX/glm-5.2")
+        self.assertFalse(data["synced"])
+        self.assertFalse(data["drift"])
+
+    def test_synced_env_seeds_roles_and_flags_drift(self):
+        """The reported bug: after sync + rule change the table re-derived
+        glm-5.2 while Claude Code actually runs glm-5.3 — live env must win."""
+        settings = {"env": {
+            "ANTHROPIC_BASE_URL": self.GW,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM_MAX/glm-5.3[1M]",
+            "ANTHROPIC_MODEL": "GLM_PRO/glm-5.3[1M]",
+        }}
+        data = self._default_roles(settings=settings)
+        self.assertEqual(data["roles"]["opus"]["model"], "GLM_MAX/glm-5.3")
+        self.assertTrue(data["roles"]["opus"]["ctx_1m"])
+        self.assertTrue(data["synced"])
+        self.assertTrue(data["drift"])
+
+    def test_synced_partial_env_falls_back_per_key(self):
+        """Roles absent from the env (hand-removed) fall back to rules."""
+        settings = {"env": {
+            "ANTHROPIC_BASE_URL": self.GW,
+            "ANTHROPIC_MODEL": "GLM_PRO/glm-5.3[1M]",
+        }}
+        data = self._default_roles(settings=settings)
+        self.assertEqual(data["roles"]["opus"]["model"], "GLM_MAX/glm-5.2")
+        self.assertEqual(data["roles"]["default"]["model"], "GLM_PRO/glm-5.3")
+        self.assertTrue(data["drift"])
+
+    def test_synced_env_matching_rules_reports_no_drift(self):
+        derived = claude_code_setup._default_roles_from_sp(self.SP)
+        settings = {"env": claude_code_setup._roles_to_env(derived)}
+        settings["env"]["ANTHROPIC_BASE_URL"] = self.GW
+        data = self._default_roles(settings=settings)
+        self.assertTrue(data["synced"])
+        self.assertFalse(data["drift"])
+
+    def test_force_rules_seeds_from_rules_but_still_reports_drift(self):
+        """?seed=rules (按路由规则重置) ignores the live-env seed; the drift
+        flag stays truthful so the UI can explain what the reset did."""
+        settings = {"env": {
+            "ANTHROPIC_BASE_URL": self.GW,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM_MAX/glm-5.3[1M]",
+        }}
+        data = self._default_roles(settings=settings, force_rules=True)
+        self.assertEqual(data["roles"]["opus"]["model"], "GLM_MAX/glm-5.2")
+        self.assertTrue(data["synced"])
+        self.assertTrue(data["drift"])
+
+    def test_malformed_settings_degrades_to_rule_seed(self):
+        """#69 R7 shape guard applies to the read-back path too."""
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = os.path.join(d, "settings.json")
+            with open(settings_path, "w") as f:
+                f.write('["not", "a", "dict"]')
+            with patch("services.claude_code_setup.config_store.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.config_store.sp_load_raw",
+                       return_value=self.SP), \
+                 patch.dict(config_store.PATHS,
+                            {"claude_settings": settings_path}):
+                data = claude_code_setup.default_roles()
+        self.assertEqual(data["roles"]["opus"]["model"], "GLM_MAX/glm-5.2")
+        self.assertFalse(data["synced"])
+        self.assertFalse(data["drift"])
+
+
 class TestRolesToEnv(unittest.TestCase):
     """_roles_to_env() converts role dicts to Claude Code env vars."""
 

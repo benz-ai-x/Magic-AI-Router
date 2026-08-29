@@ -6,8 +6,10 @@ PATHS["claude_settings"] (tests can redirect; production never does).
 
 Entry points:
 - setup(roles=None) -> {"ok", "action", "msg"}.
-- default_roles() -> {role: {"model", "ctx_1m"}} — derived from Suanpan
-  routing rules; the seed for the UI's role table.
+- default_roles(force_rules=False) -> UI role-table seed + synced/drift.
+  Read-back policy: a settings.json already pointing at this gateway seeds
+  from its live env (the user's last confirmed sync); otherwise Suanpan
+  routing rules derive the seed.
 
 - roles: optional dict of role → {"model": str, "ctx_1m": bool,
   "name": optional display name for *_MODEL_NAME vars}.  When None,
@@ -109,10 +111,83 @@ def _default_roles_from_sp(sp: dict) -> dict:
     return roles
 
 
-def default_roles() -> dict:
-    """Derive default role mappings from the current Suanpan config.
+def _env_to_roles(env) -> dict:
+    """Inverse of _roles_to_env: parse Claude Code env vars back to roles.
 
-    Seed for the UI's role table (config_server GET /api/cc-default-roles).
+    Round-trip contract: _roles_to_env(_env_to_roles(env)) == env for every
+    key _roles_to_env can emit.  The [1M] suffix maps back to ctx_1m;
+    *_MODEL_NAME vars map to the role's display name.  Only _ROLES-owned
+    keys are read — model vars of other tools are never picked up.
+    """
+    roles = {}
+    if not isinstance(env, dict):
+        return roles
+    for key, label, env_var, has_name in _ROLES:
+        raw = env.get(env_var)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        model = raw.strip()
+        ctx_1m = model.endswith("[1M]")
+        if ctx_1m:
+            model = model[:-len("[1M]")]
+        if not model:
+            continue
+        role = {"model": model, "ctx_1m": ctx_1m}
+        if has_name:
+            name = env.get(env_var + "_NAME")
+            if isinstance(name, str) and name.strip():
+                role["name"] = name.strip()
+        roles[key] = role
+    return roles
+
+
+def _read_current_roles():
+    """Parse the live Claude Code env into (roles, synced).
+
+    synced means settings.json's ANTHROPIC_BASE_URL already points at this
+    gateway (the same basis _plan uses for first_write) — then the model env
+    is our own last write, not another setup's residue.  Missing files,
+    read errors and non-dict shapes (#69 R7) degrade to ({}, False): the
+    seed falls back to rule derivation.
+    """
+    try:
+        listen = config_store.suanpan_listen()
+        settings_path = config_store.get_path("claude_settings")
+        if not settings_path or not os.path.exists(settings_path):
+            return {}, False
+        with open(settings_path) as f:
+            settings = json.load(f)
+        if not isinstance(settings, dict):
+            return {}, False
+        env = settings.get("env")
+        if not isinstance(env, dict):
+            env = {}
+        synced = env.get("ANTHROPIC_BASE_URL") == f"http://{listen}"
+        return _env_to_roles(env), synced
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}, False
+
+
+def _seed_projection(roles: dict) -> dict:
+    """Comparable projection of a role mapping: {key: (model, ctx_1m)}.
+
+    Display names are cosmetic and never rule-derived, so they don't count
+    as drift — only the actual routing targets do.
+    """
+    return {k: (r.get("model"), bool(r.get("ctx_1m")))
+            for k, r in roles.items()
+            if isinstance(r, dict) and r.get("model")}
+
+
+def default_roles(force_rules: bool = False) -> dict:
+    """Derive the UI role-table seed plus sync/drift status.
+
+    Seed policy (read-back): when ~/.claude/settings.json already points at
+    THIS gateway its live env values are the user's last confirmed sync and
+    seed the table (roles absent from env fall back to rule derivation per
+    key); otherwise — no file, unreadable, or pointing elsewhere — the
+    Suanpan routing rules derive the seed (first-setup guidance).
+    force_rules=True (UI「按路由规则重置」) skips the read-back.
 
     #44: the payload carries the table metadata (order / labels / readonly)
     derived from _ROLES so config_ui.html needs no parallel role list —
@@ -120,7 +195,11 @@ def default_roles() -> dict:
     by a dedicated UI control (ccRenderDefault), not the table, so it is
     excluded from `order` and `labels`.
     """
-    roles = _default_roles_from_sp(config_store.sp_load_raw())
+    derived = _default_roles_from_sp(config_store.sp_load_raw())
+    current, synced = _read_current_roles()
+    roles = derived
+    if synced and not force_rules:
+        roles = {**derived, **current}
     table = [(key, label, has_name)
              for key, label, _env_var, has_name in _ROLES
              if key != "default"]
@@ -129,6 +208,8 @@ def default_roles() -> dict:
         "order": [key for key, _label, _has in table],
         "labels": {key: label for key, label, _has in table},
         "readonly": [key for key, _label, has_name in table if not has_name],
+        "synced": synced,
+        "drift": synced and _seed_projection(derived) != _seed_projection(current),
     }
 
 

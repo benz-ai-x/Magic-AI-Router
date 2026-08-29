@@ -284,7 +284,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, fetch_usage(
                 config_store.sp_load_raw(), usage_range))
         elif path == "/api/cc-default-roles":
-            self._json(200, claude_code_setup.default_roles())
+            # ?seed=rules：UI「按路由规则重置」——跳过实值回读，强制规则推导种子
+            seed = parse_qs(
+                parsed_url.query, keep_blank_values=True
+            ).get("seed", [""])[0]
+            if seed not in ("", "rules"):
+                self._json(400, {"error": "invalid seed"})
+                return
+            self._json(200, claude_code_setup.default_roles(
+                force_rules=seed == "rules"))
         elif path == "/api/provider-templates":
             # #51：UI 供应商模板单一真源 = PROVIDER_REGISTRY（Python 侧）
             from mpconf.provider_auth import PROVIDER_REGISTRY

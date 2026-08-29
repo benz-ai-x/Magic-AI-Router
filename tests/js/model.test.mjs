@@ -323,6 +323,34 @@ test("ccRoleRows falls back to key when label missing", () => {
     [{ key: "opus", label: "opus", readonly: false }]);
 });
 
+// ── ccDriftInfo ───────────────────────────────────────
+test("ccDriftInfo shows the banner only when synced AND drifting", () => {
+  assert.equal(L.ccDriftInfo({ synced: true, drift: true }).show, true);
+  assert.equal(L.ccDriftInfo({ synced: true, drift: false }).show, false);
+  // never synced → a fresh draft has nothing to diverge from
+  assert.equal(L.ccDriftInfo({ synced: false, drift: true }).show, false);
+});
+
+test("ccDriftInfo tolerates payloads without the flags", () => {
+  assert.equal(L.ccDriftInfo(undefined).show, false);
+  assert.equal(L.ccDriftInfo({}).show, false);
+  assert.equal(L.ccDriftInfo({ order: ["opus"] }).show, false);
+});
+
+test("ccDriftInfo carries non-empty explanatory text when shown", () => {
+  const info = L.ccDriftInfo({ synced: true, drift: true });
+  assert.equal(typeof info.text, "string");
+  assert.ok(info.text.includes("重置"), "text must point at the reset action");
+  assert.equal(info.reset, true, "reset action offered by default");
+});
+
+test("ccDriftInfo after an acknowledged reset swaps text, drops the button", () => {
+  const info = L.ccDriftInfo({ synced: true, drift: true }, { acked: true });
+  assert.equal(info.show, true);
+  assert.equal(info.reset, false);
+  assert.ok(info.text.includes("保存并同步"), "text points at the save action");
+});
+
 // ── ccRoleEntry ───────────────────────────────────────
 test("ccRoleEntry creates the sentinel when missing", () => {
   const roles = {};

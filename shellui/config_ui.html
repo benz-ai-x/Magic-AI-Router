@@ -638,6 +638,17 @@ function ccRoleRows(meta){
   return order.map(key=>({key,label:labels[key]||key,readonly:readonly.has(key)}));
 }
 
+// Drift banner decision from the same payload: show only when settings.json
+// already points at this gateway (synced) AND the rule-derived defaults
+// diverge from the live env (drift).  {acked} is the post-「按路由规则重置」
+// state — text switches to the save hint and the reset button drops.
+function ccDriftInfo(meta,opts){
+  const o=opts||{};
+  if(!(meta&&meta.synced&&meta.drift))return{show:false,text:'',reset:false};
+  if(o.acked)return{show:true,text:'已按路由规则重置；「保存并同步」后写入 Claude Code',reset:false};
+  return{show:true,text:'路由规则推导值与 Claude Code 当前生效配置不一致：表格已按当前生效配置回显，也可按路由规则重置',reset:true};
+}
+
 // #44: single sentinel builder for the role state — the three handlers
 // used to each rebuild {model:'',ctx_1m:true} inline.
 function ccRoleEntry(roles,key){
@@ -878,7 +889,7 @@ function renderView(){
   associateLabels();
   if(v.enter)v.enter();
   if(activeView==='rules'){
-    ccRenderRoles();ccRenderDefault();
+    ccRenderRoles();ccRenderDefault();ccRenderDrift();
     associateLabels();
     if(!Object.keys(ccRoles).length)ccInitRoles(); // fetches then re-renders
   }
@@ -1427,6 +1438,9 @@ function rulesHTML(){
       <div class="section-bar"><h2 class="section-title">同步到 Claude Code</h2></div>
       <div class="route-slot" style="padding:0">
         <p class="module-intro" style="margin:0;padding:12px 20px 8px">显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。右上角「保存并同步」会同时保存网关配置并写入 Claude Code</p>
+        <div id="cc-drift-banner" hidden style="display:flex;align-items:center;gap:12px;margin:0 20px 8px;padding:8px 12px;border:1px solid color-mix(in oklch,var(--warn),transparent 70%);border-radius:8px;background:color-mix(in oklch,var(--warn),transparent 92%)">
+          <span id="cc-drift-text" style="flex:1;font-size:13px;color:var(--warn)"></span>
+        </div>
         <table class="rules-table">
           <thead><tr><th style="width:80px">模型角色</th><th>显示名称</th><th>实际请求模型</th><th style="width:80px;text-align:center">声明支持 1M</th></tr></thead>
           <tbody id="cc-roles-body"></tbody>
@@ -1651,6 +1665,8 @@ Object.assign(VIEWS.status,{
 // _ROLES is the single source of truth (#44); the UI has no parallel list.
 let ccRoles={};
 let ccRoleMeta={};
+// 用户已点「按路由规则重置」——横幅文案切到保存提示；重新加载种子时复位。
+let ccDriftAck=false;
 
 async function ccInitRoles(){
   try{
@@ -1662,8 +1678,40 @@ async function ccInitRoles(){
     ccRoles=d.roles||{};
     ccRoleMeta=d;
   }catch(e){ccRoles={};ccRoleMeta={};}
+  ccDriftAck=false;
   baselineRoles=cloneData(ccRoles);
-  ccRenderRoles();ccRenderDefault();recomputeDirty();
+  ccRenderRoles();ccRenderDefault();ccRenderDrift();recomputeDirty();
+}
+
+// 漂移横幅：synced+drift 时展示（ccDriftInfo 纯函数定文案/按钮）。
+// DOM 每次进 rules 视图重建，所以 renderView 与 ccInitRoles 都要重画。
+function ccRenderDrift(){
+  const el=document.getElementById('cc-drift-banner');
+  if(!el)return;
+  const info=ccDriftInfo(ccRoleMeta,{acked:ccDriftAck});
+  el.hidden=!info.show;
+  if(!info.show)return;
+  const text=document.getElementById('cc-drift-text');
+  if(text)text.textContent='⚠️ '+info.text;
+  // 按钮按需注入（重置后消失）；id 钉住避免重复 append
+  let btn=document.getElementById('cc-drift-reset');
+  if(info.reset&&!btn){
+    btn=document.createElement('button');
+    btn.className='btn btn-sm';btn.id='cc-drift-reset';
+    btn.textContent='按路由规则重置';btn.onclick=ccResetSeed;
+    el.appendChild(btn);
+  }else if(!info.reset&&btn){btn.remove();}
+}
+
+async function ccResetSeed(){
+  try{
+    const r=await fetch('/api/cc-default-roles?seed=rules',{headers:apiHeaders(null)});
+    const d=(await r.json())||{};
+    d.order=(d.order||[]).filter(k=>/^[\w-]+$/.test(k));
+    ccRoles=d.roles||{};ccRoleMeta=d;
+  }catch(e){return;}
+  ccDriftAck=true;
+  ccRenderRoles();ccRenderDefault();ccRenderDrift();recomputeDirty();
 }
 
 function ccRenderRoles(){

@@ -221,6 +221,26 @@ class TestCcDefaultRolesEndpoint(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(data), roles)
 
+    def test_cc_default_roles_seed_rules_param(self):
+        """?seed=rules forces the rule-derived seed (按路由规则重置) — the
+        live-env read-back is skipped via force_rules=True."""
+        payload = {"roles": {}, "synced": True, "drift": True}
+        with patch.object(config_server.claude_code_setup, "default_roles",
+                          return_value=payload) as mock_roles:
+            status, data = _request(
+                self.port, "GET",
+                "/api/cc-default-roles?seed=rules", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), payload)
+        mock_roles.assert_called_once_with(force_rules=True)
+
+    def test_cc_default_roles_rejects_unknown_seed(self):
+        status, data = _request(
+            self.port, "GET",
+            "/api/cc-default-roles?seed=live", token=self.token)
+        self.assertEqual(status, 400)
+        self.assertIn("seed", json.loads(data)["error"])
+
 
 # ── config_server: PUT 403 path (lines 173-174) ───────────────────────
 
