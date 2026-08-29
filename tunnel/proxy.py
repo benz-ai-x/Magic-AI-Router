@@ -3,6 +3,8 @@ import asyncio
 import logging
 import socket
 import struct
+import threading
+import time
 from urllib.parse import urlsplit
 
 from services.stats import Stats
@@ -35,6 +37,41 @@ async def _read_headers(reader):
         if line in (b"\r\n", b""):
             return lines
         lines.append(line)
+
+
+class Socks5FailLogThrottle:
+    """SOCKS5 连接失败日志按时间窗聚合（#88）。
+
+    隧道不可用期间客户端请求会持续产出同质错误（曾占日志 82%）。
+    窗口内首条完整记录，其余抑制计数；下一窗口首条失败时补一条
+    上窗汇总。时钟可注入以便测试。stats/502 行为不受影响。
+    """
+
+    def __init__(self, window=60.0, clock=time.monotonic):
+        self._window = window
+        self._clock = clock
+        self._window_start = None
+        self._suppressed = 0
+        self._lock = threading.Lock()  # 代理单 asyncio 循环，锁为保守兜底
+
+    def record(self, host, port, error):
+        now = self._clock()
+        with self._lock:
+            if (self._window_start is None
+                    or now - self._window_start >= self._window):
+                if self._suppressed:
+                    logger.error(
+                        "SOCKS5 connect failed: 上一窗口另有 %d 条同类错误已抑制",
+                        self._suppressed)
+                    self._suppressed = 0
+                self._window_start = now
+                logger.error("SOCKS5 connect to %s:%s failed: %s",
+                             host, port, error)
+                return
+            self._suppressed += 1
+
+
+_socks5_fail_log = Socks5FailLogThrottle()
 
 
 def _parse_authority(authority, default_port=None):
@@ -173,7 +210,7 @@ async def handle_connect(client_reader, client_writer, host, port, socks_addr, s
         try:
             remote_reader, remote_writer = await socks5_connect(host, port, socks_addr)
         except Exception as e:
-            logger.error("SOCKS5 connect to %s:%s failed: %s", host, port, e)
+            _socks5_fail_log.record(host, port, e)
             client_writer.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             await client_writer.drain()
             client_writer.close()
@@ -266,8 +303,7 @@ async def handle_http(client_reader, client_writer, request_line, socks_addr, st
                 try:
                     rr, rw = await socks5_connect(host, port, socks_addr)
                 except Exception as e:
-                    logger.error("SOCKS5 connect to %s:%s failed: %s",
-                                 host, port, e)
+                    _socks5_fail_log.record(host, port, e)
                     client_writer.write(
                         b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
                         b"Connection: close\r\n\r\n")
