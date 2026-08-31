@@ -173,6 +173,8 @@ async def bidirectional_relay(ra, wa, rb, wb, stats):
                 data = await asyncio.wait_for(src.read(RELAY_BUF), timeout=RELAY_IDLE_TIMEOUT)
                 if not data:
                     break
+                if dst.is_closing():
+                    break  # 写端已断:再写只会刷 asyncio socket.send() 告警
                 dst.write(data)
                 record(len(data))
                 bytes_since_drain += len(data)

@@ -16,15 +16,19 @@ class TestAuthorityParsing(unittest.TestCase):
 
 
 class _Writer:
-    def __init__(self):
+    def __init__(self, closing=False):
         self.data = bytearray()
         self.closed = False
+        self._closing = closing
 
     def write(self, data):
         self.data.extend(data)
 
     async def drain(self):
         pass
+
+    def is_closing(self):
+        return self._closing
 
     def close(self):
         self.closed = True
@@ -181,6 +185,16 @@ class TestBidirectionalRelay(unittest.IsolatedAsyncioTestCase):
         snap = stats.snapshot()
         self.assertEqual(snap["total_up"], 3)    # ra → wb = upload
         self.assertEqual(snap["total_down"], 4)  # rb → wa = download
+
+    async def test_stops_pumping_when_destination_is_closing(self):
+        # 写端 transport 已断(is_closing)后必须停止转发:
+        # 继续写会触发 asyncio "socket.send() raised exception." 告警刷屏
+        ra = _reader(b"")
+        rb = _reader(b"x" * 4096)
+        wa = _Writer(closing=True)
+        wb = _Writer()
+        await proxy.bidirectional_relay(ra, wa, rb, wb, proxy.Stats())
+        self.assertEqual(bytes(wa.data), b"")
 
     async def test_empty_streams_complete_without_error(self):
         ra = _reader(b"")
