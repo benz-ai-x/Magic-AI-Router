@@ -33,7 +33,7 @@ def entry():
 @pytest.fixture(autouse=True)
 def _restore_paths():
     """PATHS 快照恢复——entry 的重定向绝不泄漏到其他测试。"""
-    from mpconf import config_store
+    from shared import config_store
     saved_paths = dict(config_store.PATHS)
     yield
     config_store.PATHS.clear()
@@ -78,7 +78,7 @@ class TestBootstrapDefaultConfig:
 
 class TestRedirectPaths:
     def test_updates_all_three_keys(self, entry, tmp_path):
-        from mpconf import config_store
+        from shared import config_store
         sp, mp, claude = (str(tmp_path / n) for n in
                           ("suanpan.yaml", "magic-proxy.json", "settings.json"))
         entry.redirect_paths(sp, mp, claude)
@@ -251,7 +251,7 @@ class TestMakeConfigServer:
         assert kwargs["token"] == entry.config_token(mp)
 
     def test_redirects_paths_before_construct(self, entry, tmp_path):
-        from mpconf import config_store
+        from shared import config_store
         mp = str(tmp_path / "magic-proxy.json")
         sp = str(tmp_path / "suanpan.yaml")
         entry.make_config_server(mp, sp, port=0)

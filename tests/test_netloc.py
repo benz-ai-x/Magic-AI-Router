@@ -6,7 +6,7 @@ Seam: three pure functions. Every listen parse in the repo converges here
 """
 import unittest
 
-from mpconf.netloc import LOOPBACK_HOSTS, format_listen, parse_listen, require_loopback
+from shared.netloc import LOOPBACK_HOSTS, format_listen, parse_listen, require_loopback
 
 
 class TestParseListen(unittest.TestCase):

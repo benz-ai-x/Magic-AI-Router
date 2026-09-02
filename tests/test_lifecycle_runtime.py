@@ -172,10 +172,10 @@ class TestQuitOrder(unittest.TestCase):
 class TestPortHelpers(unittest.TestCase):
     def test_read_suanpan_port_falls_back_on_error(self):
         from services import lifecycle_runtime as lr
-        with patch.object(lr.config_store, "suanpan_listen",
+        with patch.object(lr.sp_config, "suanpan_listen",
                           side_effect=RuntimeError("boom")):
             self.assertEqual(lr._read_suanpan_port(), 9527)
-        with patch.object(lr.config_store, "suanpan_listen",
+        with patch.object(lr.sp_config, "suanpan_listen",
                           return_value="127.0.0.1:9530"):
             self.assertEqual(lr._read_suanpan_port(), 9530)
 

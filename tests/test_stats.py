@@ -1,7 +1,7 @@
 """Tests for stats.py — traffic statistics + rate calculation."""
 import unittest
 
-from services.stats import Stats
+from shared.stats import Stats
 
 
 class TestStatsTick(unittest.TestCase):

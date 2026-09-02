@@ -78,20 +78,20 @@ class TestConfigSaveOSError(unittest.TestCase):
 
 
 # ── keychain.py: OSError paths ─────────────────────────────────────
-from sysctl import keychain
+from shared import keychain
 class TestKeychainOSError(unittest.TestCase):
-    @patch("sysctl.keychain.Security.SecItemAdd", side_effect=OSError("keychain busy"))
+    @patch("shared.keychain.Security.SecItemAdd", side_effect=OSError("keychain busy"))
     def test_set_password_oserror(self, _):
         result = keychain.set_password({"ssh_host": "h"}, "pw")
         self.assertFalse(result)
 
-    @patch("sysctl.keychain.Security.SecItemCopyMatching",
+    @patch("shared.keychain.Security.SecItemCopyMatching",
            side_effect=OSError("keychain busy"))
     def test_get_password_oserror(self, _):
         result = keychain.get_password({"ssh_host": "h"})
         self.assertEqual(result, "")
 
-    @patch("sysctl.keychain.Security.SecItemDelete", side_effect=OSError("keychain busy"))
+    @patch("shared.keychain.Security.SecItemDelete", side_effect=OSError("keychain busy"))
     def test_delete_password_oserror(self, _):
         keychain.delete_password({"ssh_host": "h"})  # should not raise
 

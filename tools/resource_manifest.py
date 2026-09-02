@@ -16,13 +16,14 @@ RESOURCE_MANIFEST = [
 # 运行时 import 的域包模块（PyInstaller 经 add-data 装入根平铺——
 # frozen 下按扁平名 import；漏装即 ModuleNotFoundError）
 RUNTIME_MODULES = [
-    "app.py", "util.py", "services/stats.py",
+    "app.py", "util.py", "shared/stats.py",
     "tunnel/proxy.py", "tunnel/async_runtime.py", "tunnel/http_framer.py",
-    "tunnel/connection_coordinator.py", "tunnel/subprocess_monitor.py",
+    "tunnel/connection_coordinator.py", "shared/subprocess_monitor.py",
     "tunnel/retry_scheduler.py", "tunnel/host_key.py", "tunnel/host_key_flow.py",
     "tunnel/ssh_launch.py",
-    "mpconf/config.py", "mpconf/config_store.py", "mpconf/config_state.py",
-    "mpconf/netloc.py", "mpconf/provider_auth.py",
+    "mpconf/config.py", "shared/config_store.py", "mpconf/config_state.py",
+    "shared/netloc.py", "shared/provider_auth.py",
+    "shared/defaults.py", "shared/identity.py",
     "shellui/menu_builder.py", "shellui/webview_window.py",
     "shellui/log_window.py", "shellui/bridge_protocol.py",
     "capture/capture.py", "capture/capture_controller.py",
@@ -31,10 +32,11 @@ RUNTIME_MODULES = [
     "capture/mitmdump_entry.py",
     "sysctl/system_proxy.py", "sysctl/sys_proxy_controller.py",
     "sysctl/sleep_blocker.py", "sysctl/login_item.py", "sysctl/port_check.py",
-    "sysctl/keychain.py", "sysctl/instance_owner.py",
+    "shared/keychain.py", "sysctl/instance_owner.py",
     "services/config_server.py", "services/suanpan_runtime.py",
     "services/claude_code_setup.py", "services/lifecycle_runtime.py",
     "services/balance_usage.py", "services/authenticated_http.py",
+    "services/sp_config.py",
 ]
 
 # 运行时 resource_path 消费的资源名（必须与上面 dest 平铺名一致）

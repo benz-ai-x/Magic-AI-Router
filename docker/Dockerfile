@@ -1,9 +1,10 @@
 # Suanpan 网关 Docker 镜像（issue #22）——Linux 无 GUI 部署形态。
 #
 # 只含网关：不带 Magic Proxy 隧道/抓包/macOS GUI 依赖（rumps/pyobjc/
-# mitmproxy 均不装）。sysctl/ 与 capture/ 仅因 mpconf.config 的模块级
-# import 链被带入（keychain 的 Security 为可选导入，Linux 下为 None，
-# 见 docs/docker-deploy.md「Linux 兼容」）。
+# mitmproxy 均不装）。tunnel/ 与 capture/ 因 services.config_server 的
+# import 链被带入（ssh_launch 探针 / capture_store 命名知识）；shared/
+# keychain 的 Security 为可选导入，Linux 下为 None（见
+# docs/docker-deploy.md「Linux 兼容」）。
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -16,6 +17,7 @@ COPY requirements-suanpan.txt /app/requirements-suanpan.txt
 RUN pip install --no-cache-dir -r /app/requirements-suanpan.txt
 
 COPY suanpan/ /app/suanpan/
+COPY shared/ /app/shared/
 COPY mpconf/ /app/mpconf/
 COPY services/ /app/services/
 COPY sysctl/ /app/sysctl/

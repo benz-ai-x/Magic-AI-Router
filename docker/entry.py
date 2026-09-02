@@ -58,7 +58,7 @@ def bootstrap_default_config(sp_path: str, data_dir: str) -> bool:
         "router: {}\n"
         "rules: []\n"
     )
-    from mpconf import config_store
+    from shared import config_store
     ok = config_store.atomic_write(sp_path, default_yaml, mode=0o600)
     if not ok:
         raise OSError(f"无法创建默认配置 {sp_path}")
@@ -67,7 +67,7 @@ def bootstrap_default_config(sp_path: str, data_dir: str) -> bool:
 
 def redirect_paths(sp_path: str, mp_path: str, claude_settings_path: str) -> None:
     """重定向 config_store.PATHS 三键（文档化的单一运行时重定向点）。"""
-    from mpconf import config_store
+    from shared import config_store
     config_store.PATHS.update({
         "sp": sp_path,
         "mp": mp_path,

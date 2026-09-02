@@ -29,7 +29,7 @@ from unittest.mock import MagicMock, patch
 
 from tunnel import proxy
 from tunnel import async_runtime
-from tunnel import subprocess_monitor
+from shared import subprocess_monitor
 from sysctl import sys_proxy_controller
 from sysctl import system_proxy
 from sysctl import sleep_blocker
@@ -301,7 +301,7 @@ class TestSubprocessMonitorStderrCrash(unittest.TestCase):
     """Lines 128-129: exception handler in _read_stderr."""
 
     def test_stderr_reader_crash_is_caught(self):
-        from tunnel.subprocess_monitor import SubprocessMonitor
+        from shared.subprocess_monitor import SubprocessMonitor
 
         class _M(SubprocessMonitor):
             _PROCESS_NAME = "test"
@@ -329,7 +329,7 @@ class TestSubprocessMonitorWaitLogThreadJoin(unittest.TestCase):
     """Line 174: _wait_log_thread.join(timeout=1) when thread is alive."""
 
     def test_wait_log_thread_joins_live_thread(self):
-        from tunnel.subprocess_monitor import SubprocessMonitor
+        from shared.subprocess_monitor import SubprocessMonitor
 
         class _M(SubprocessMonitor):
             _PROCESS_NAME = "test"
@@ -356,7 +356,7 @@ class TestSubprocessMonitorSigkillTimeout(unittest.TestCase):
     """Lines 166-167: blocking stop where SIGKILL + wait also times out."""
 
     def test_sigkill_timeout_logs_warning(self):
-        from tunnel.subprocess_monitor import SubprocessMonitor
+        from shared.subprocess_monitor import SubprocessMonitor
 
         class _M(SubprocessMonitor):
             _PROCESS_NAME = "test"
@@ -432,7 +432,7 @@ class TestSubprocessMonitorReapProcess(unittest.TestCase):
 class TestSubprocessMonitorProbeNotImplemented(unittest.TestCase):
 
     def test_base_probe_ready_raises(self):
-        from tunnel.subprocess_monitor import SubprocessMonitor
+        from shared.subprocess_monitor import SubprocessMonitor
         m = SubprocessMonitor()
         with self.assertRaises(NotImplementedError):
             m._probe_ready(8080)
@@ -446,7 +446,7 @@ class TestSubprocessMonitorNonBlockingStopRealProc(unittest.TestCase):
     thread runs _reap_process to completion."""
 
     def test_non_blocking_stop_terminates_real_subprocess(self):
-        from tunnel.subprocess_monitor import SubprocessMonitor
+        from shared.subprocess_monitor import SubprocessMonitor
 
         class _M(SubprocessMonitor):
             _PROCESS_NAME = "test"

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-from mpconf import config_store
+from shared import config_store
 from services.suanpan_runtime import SuanpanRuntime, DEFAULT_LISTEN
 
 

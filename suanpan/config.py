@@ -8,12 +8,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from mpconf import netloc
+from shared import netloc
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from mpconf.provider_auth import build_outbound_headers as _build_outbound
-from mpconf.provider_auth import resolve_api_key as _resolve_key
+from shared.provider_auth import build_outbound_headers as _build_outbound
+from shared.provider_auth import resolve_api_key as _resolve_key
+from shared.identity import IdentityMigrationError
 
 
 class ProviderConfig(BaseModel):
@@ -177,8 +178,6 @@ def dump_config(config: AppConfig) -> str:
 # 标记"已保存"；UI 未修改时回传 api_key 为空/缺失 + api_key_set 为 true，
 # 保存端据此保留旧 key。掩码字符（•）不再是任何一层的判断依据。
 
-
-from mpconf.config import IdentityMigrationError  # noqa: E402
 
 
 def assign_provider_ids(cfg: dict) -> int:

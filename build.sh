@@ -125,21 +125,21 @@ python -m PyInstaller \
     --add-data "assets/MenubarIcon-gray.png:." \
     --add-data "assets/MenubarIcon-yellow.png:." \
     --add-data "util.py:." \
-    --add-data "services/stats.py:." \
+    --add-data "shared/stats.py:." \
     --add-data "tunnel/proxy.py:." \
     --add-data "tunnel/async_runtime.py:." \
     --add-data "tunnel/http_framer.py:." \
     --add-data "tunnel/connection_coordinator.py:." \
-    --add-data "tunnel/subprocess_monitor.py:." \
+    --add-data "shared/subprocess_monitor.py:." \
     --add-data "tunnel/retry_scheduler.py:." \
     --add-data "tunnel/host_key.py:." \
     --add-data "tunnel/host_key_flow.py:." \
     --add-data "tunnel/ssh_launch.py:." \
     --add-data "mpconf/config.py:." \
-    --add-data "mpconf/config_store.py:." \
+    --add-data "shared/config_store.py:." \
     --add-data "mpconf/config_state.py:." \
-    --add-data "mpconf/netloc.py:." \
-    --add-data "mpconf/provider_auth.py:." \
+    --add-data "shared/netloc.py:." \
+    --add-data "shared/provider_auth.py:." \
     --add-data "shellui/menu_builder.py:." \
     --add-data "shellui/webview_window.py:." \
     --add-data "shellui/log_window.py:." \
@@ -156,13 +156,16 @@ python -m PyInstaller \
     --add-data "sysctl/sleep_blocker.py:." \
     --add-data "sysctl/login_item.py:." \
     --add-data "sysctl/port_check.py:." \
-    --add-data "sysctl/keychain.py:." \
+    --add-data "shared/keychain.py:." \
+    --add-data "shared/defaults.py:." \
+    --add-data "shared/identity.py:." \
     --add-data "sysctl/instance_owner.py:." \
     --add-data "services/config_server.py:." \
     --add-data "services/suanpan_runtime.py:." \
     --add-data "services/claude_code_setup.py:." \
     --add-data "services/lifecycle_runtime.py:." \
     --add-data "services/balance_usage.py:." \
+    --add-data "services/sp_config.py:." \
     --add-data "services/authenticated_http.py:." \
     --add-data "dist-mitmdump/mitmdump:mitmdump" \
     --collect-all suanpan \

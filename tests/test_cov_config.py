@@ -340,14 +340,14 @@ class TestMergeConfigHttpListenInvalid(unittest.TestCase):
 
 class TestSetupListenResolution(unittest.TestCase):
     def test_setup_uses_suanpan_listen(self):
-        """setup() resolves listen via config_store.suanpan_listen()."""
+        """setup() resolves listen via sp_config.suanpan_listen()."""
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("services.claude_code_setup.config_store.suanpan_listen",
+            with patch("services.claude_code_setup.sp_config.suanpan_listen",
                        return_value="127.0.0.1:8888"), \
-                 patch("services.claude_code_setup.config_store.sp_load_raw",
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
                        return_value={}), \
-                 patch.dict("mpconf.config_store.PATHS",
+                 patch.dict("shared.config_store.PATHS",
                             {"claude_settings": settings_path}):
                 result = claude_code_setup.setup()
             with open(settings_path) as f:
@@ -363,9 +363,9 @@ class TestSetupFallbackDefaultListen(unittest.TestCase):
         PATHS["sp"] doesn't exist), giving 127.0.0.1:9527."""
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("services.claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.sp_config.sp_load_raw",
                        return_value={}), \
-                 patch.dict("mpconf.config_store.PATHS",
+                 patch.dict("shared.config_store.PATHS",
                             {"claude_settings": settings_path}):
                 result = claude_code_setup.setup()
             self.assertTrue(result["ok"])
@@ -381,9 +381,9 @@ class TestSetupAtomicWriteFailure(unittest.TestCase):
         """Line 97: atomic_write returns False → action 'failed'."""
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
-            with patch("services.claude_code_setup.config_store.sp_load_raw",
+            with patch("services.claude_code_setup.sp_config.sp_load_raw",
                        return_value={}), \
-                 patch.dict("mpconf.config_store.PATHS",
+                 patch.dict("shared.config_store.PATHS",
                             {"claude_settings": settings_path}), \
                  patch("services.claude_code_setup.config_store.atomic_write",
                        return_value=False):

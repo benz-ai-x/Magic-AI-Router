@@ -96,7 +96,7 @@ class TestConnectionActions(unittest.TestCase):
             {"name": "t2", "ssh_user": "u", "ssh_host": "h2",
              "ssh_port": 22, "auth_type": "key"}]
         import json as _json_seed
-        from mpconf import config_store as _cs
+        from shared import config_store as _cs
         with open(_cs.PATHS["mp"], "w") as f:
             _json_seed.dump({"current_tunnel": 0, "tunnels": tunnels}, f)
         a = _make_app({"current_tunnel": 0, "tunnels": tunnels})
@@ -105,7 +105,7 @@ class TestConnectionActions(unittest.TestCase):
         switch(None)
         self.assertEqual(a._config["current_tunnel"], 1)
         import json as _json
-        from mpconf import config_store
+        from shared import config_store
         disk = _json.loads(open(config_store.PATHS["mp"]).read())
         self.assertEqual(disk.get("current_tunnel"), 1)
         a._conn.restart.assert_called_once()
@@ -215,7 +215,7 @@ class TestSleepLoginActions(unittest.TestCase):
         a.toggle_prevent_sleep(None)
         self.assertTrue(a._config["prevent_sleep"])
         import json as _json
-        from mpconf import config_store
+        from shared import config_store
         disk = _json.loads(open(config_store.PATHS["mp"]).read())
         self.assertIs(disk.get("prevent_sleep"), True)
         a._lifecycle.sync_sleep.assert_called_once()
@@ -228,7 +228,7 @@ class TestSleepLoginActions(unittest.TestCase):
             a.toggle_launch_at_login(None)
         self.assertTrue(a._config["launch_at_login"])
         import json as _json
-        from mpconf import config_store
+        from shared import config_store
         disk = _json.loads(open(config_store.PATHS["mp"]).read())
         self.assertIs(disk.get("launch_at_login"), True)
         self.assertIn("登录启动：开", notif.call_args[0][1])

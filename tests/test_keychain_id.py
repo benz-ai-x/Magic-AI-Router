@@ -6,7 +6,7 @@ legacy user@host:port（只读兼容，供迁移期读取旧 secret）。
 import unittest
 from unittest.mock import patch
 
-from sysctl import keychain
+from shared import keychain
 
 
 def _tun(**kw):

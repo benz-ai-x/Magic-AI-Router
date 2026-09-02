@@ -8,7 +8,7 @@ transaction logic.
 import logging
 
 from sysctl import system_proxy
-from capture.capture_store import DEFAULT_CAPTURE_PORT
+from shared.defaults import DEFAULT_CAPTURE_PORT
 
 logger = logging.getLogger("magic-proxy.sys_proxy_ctrl")
 

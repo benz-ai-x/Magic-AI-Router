@@ -19,7 +19,7 @@ from services.authenticated_http import (
 )
 from datetime import datetime, timedelta, timezone
 
-from mpconf.provider_auth import (
+from shared.provider_auth import (
     PROVIDER_REGISTRY as _REGISTRY,
     build_outbound_headers,
     resolve_api_key,
@@ -29,7 +29,7 @@ _BALANCE_CLIENT = AuthenticatedHttpClient(timeout=10)
 
 logger = logging.getLogger("magic-proxy.balance_usage")
 
-# 供应商 → 余额 API 的单一真源是 mpconf.provider_auth.PROVIDER_REGISTRY
+# 供应商 → 余额 API 的单一真源是 shared.provider_auth.PROVIDER_REGISTRY
 # （#51：与 UI 模板共消费——新增供应商只改注册表一处）。
 # (host 片段, [(url, auth-style, label), ...]) ——注册表视图
 PROVIDER_BALANCE_APIS = [

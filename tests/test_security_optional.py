@@ -9,7 +9,7 @@ def test_keychain_importable_without_security_framework():
     import sys
     code = (
         "import sys; sys.modules['Security'] = None;"
-        "from sysctl import keychain;"
+        "from shared import keychain;"
         "assert keychain.Security is None;"
         "t = {'ssh_host': 'h', 'ssh_user': 'u'};"
         "assert keychain.get_password(t) == '';"

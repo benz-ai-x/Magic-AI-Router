@@ -6,7 +6,7 @@ methods delegate) and balance_usage.py (dict path, no pydantic needed).
 import os
 import unittest
 
-from mpconf.provider_auth import build_outbound_headers, resolve_api_key
+from shared.provider_auth import build_outbound_headers, resolve_api_key
 
 
 class TestResolveApiKey(unittest.TestCase):
@@ -115,7 +115,7 @@ class TestProviderRegistry(unittest.TestCase):
     rationale）。"""
 
     def test_registry_covers_balance_providers(self):
-        from mpconf.provider_auth import PROVIDER_REGISTRY
+        from shared.provider_auth import PROVIDER_REGISTRY
         for name in ("deepseek", "glm", "kimi"):
             self.assertIn(name, PROVIDER_REGISTRY)
             entry = PROVIDER_REGISTRY[name]
@@ -126,14 +126,14 @@ class TestProviderRegistry(unittest.TestCase):
                 self.assertTrue(url.startswith("https://"))
 
     def test_registry_drives_ui_template_fields(self):
-        from mpconf.provider_auth import PROVIDER_REGISTRY
+        from shared.provider_auth import PROVIDER_REGISTRY
         for name, entry in PROVIDER_REGISTRY.items():
             self.assertIn("label", entry)
             self.assertIn("base_url", entry)
             self.assertIsInstance(entry["anthropic_native"], bool)
 
     def test_balance_matching_uses_registry_hosts(self):
-        from mpconf.provider_auth import PROVIDER_REGISTRY
+        from shared.provider_auth import PROVIDER_REGISTRY
         # 注册表 host 片段能在 base_url 里命中（与旧 PROVIDER_BALANCE_APIS
         # 同语义：子串匹配）
         for name, entry in PROVIDER_REGISTRY.items():

@@ -3,7 +3,7 @@ import time
 from unittest.mock import patch
 
 from tunnel.proxy import ProxyRuntime
-from services.stats import Stats
+from shared.stats import Stats
 
 
 async def _fake_proxy(config, stats, control):

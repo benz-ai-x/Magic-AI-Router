@@ -79,14 +79,14 @@ class TestVersionSingleSource:
 
 
 class TestConfigStoreDocstringContract:
-    """mpconf/config_store.py must use the current ADR-002 vocabulary."""
+    """shared/config_store.py must use the current ADR-002 vocabulary."""
 
     def test_no_masking_wording(self):
-        text = (ROOT / "mpconf/config_store.py").read_text(encoding="utf-8")
+        text = (ROOT / "shared/config_store.py").read_text(encoding="utf-8")
         assert "key masking" not in text, \
-            "mpconf/config_store.py still uses the pre-ADR-002 'key masking' wording"
+            "shared/config_store.py still uses the pre-ADR-002 'key masking' wording"
         assert "api_key_set" in text, \
-            "mpconf/config_store.py docstring should name the api_key_set contract"
+            "shared/config_store.py docstring should name the api_key_set contract"
 
 
 class TestClaudeCodeEnvContractDocumented:

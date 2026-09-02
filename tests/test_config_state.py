@@ -670,7 +670,7 @@ class TestLocalTokenSurvivesSave(unittest.TestCase):
                                       "local_client_token": "tok-secret"}))
             # 注入侧：明文不得出 config_server._read_mp
             from services.config_server import _read_mp
-            from mpconf import config_store
+            from shared import config_store
             with __import__("unittest.mock", fromlist=["patch"]).patch.dict(
                     config_store.PATHS, {"mp": str(mp)}):
                 served = _read_mp()

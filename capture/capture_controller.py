@@ -10,8 +10,8 @@ import logging
 import time
 
 from capture import ca_trust
-from mpconf import netloc
-from capture.capture_store import DEFAULT_CAPTURE_PORT
+from shared import netloc
+from shared.defaults import DEFAULT_CAPTURE_PORT
 from util import truncate as _truncate
 from capture.resources import CaptureResourcesError, resolve_capture_resources
 
