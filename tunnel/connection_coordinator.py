@@ -22,7 +22,7 @@ import threading
 from tunnel.proxy import ProxyRuntime, SSHMonitor
 from tunnel.retry_scheduler import RetryScheduler
 from tunnel.host_key_flow import HostKeyFlow
-from services.stats import Stats
+from shared.stats import Stats
 
 logger = logging.getLogger("magic-proxy.connection")
 

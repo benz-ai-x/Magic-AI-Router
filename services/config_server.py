@@ -16,8 +16,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 
-from sysctl import keychain
-from mpconf import config_store
+from shared import keychain
+from shared import config_store
+from services import sp_config
 from mpconf.config_state import ConfigStateStore
 from tunnel import ssh_launch
 from services import claude_code_setup
@@ -261,7 +262,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "config_ui.html not found"})
         elif path == "/api/state":
             mp = _read_mp()
-            sp = config_store.sp_load_masked()
+            sp = sp_config.sp_load_masked()
             # Read-only runtime status injected for the config UI;
             # READONLY_DECORATED_FIELDS（config_state 单点声明）的剥除
             # 保证它永不回写文件。
@@ -273,7 +274,7 @@ class _Handler(BaseHTTPRequestHandler):
                 mp["capture_active"] = False
             self._json(200, {"mp": mp, "sp": sp})
         elif path == "/api/balance":
-            self._json(200, fetch_balance(config_store.sp_load_raw()))
+            self._json(200, fetch_balance(sp_config.sp_load_raw()))
         elif path == "/api/usage":
             usage_range = parse_qs(
                 parsed_url.query, keep_blank_values=True
@@ -282,7 +283,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "invalid range"})
                 return
             self._json(200, fetch_usage(
-                config_store.sp_load_raw(), usage_range))
+                sp_config.sp_load_raw(), usage_range))
         elif path == "/api/cc-default-roles":
             # ?seed=rules：UI「按路由规则重置」——跳过实值回读，强制规则推导种子
             seed = parse_qs(
@@ -295,7 +296,7 @@ class _Handler(BaseHTTPRequestHandler):
                 force_rules=seed == "rules"))
         elif path == "/api/provider-templates":
             # #51：UI 供应商模板单一真源 = PROVIDER_REGISTRY（Python 侧）
-            from mpconf.provider_auth import PROVIDER_REGISTRY
+            from shared.provider_auth import PROVIDER_REGISTRY
             templates = [
                 {"id": name, "label": entry["label"],
                  "base_url": entry["base_url"],
@@ -319,7 +320,7 @@ class _Handler(BaseHTTPRequestHandler):
         if data is None:
             return
         if path == "/api/fetch-models":
-            self._json(200, fetch_models(config_store.sp_load_raw(), str(data.get("provider", ""))))
+            self._json(200, fetch_models(sp_config.sp_load_raw(), str(data.get("provider", ""))))
         elif path == "/api/cc-sync-preview":
             roles = data.get("roles")  # {key: {model, ctx_1m}} or None
             self._json(200, claude_code_setup.preview(roles=roles))
@@ -333,7 +334,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, self._capture_clean())
         else:
             self._json(200, test_provider(
-                config_store.sp_load_raw(), str(data.get("provider", "")),
+                sp_config.sp_load_raw(), str(data.get("provider", "")),
                 data.get("model")))
 
     def _test_tunnel(self, data):
@@ -438,6 +439,19 @@ class ConfigServer:
     def port(self):
         """实际监听端口（start 后回写——port=0 时 url 不再撒谎，#71 S8）。"""
         return self._port
+
+    def agent_instructions(self) -> str:
+        """AI 助手指令文本（#70 S13）——文档知识与 API 面在此同一归宿。
+
+        agent.md 由本服务供出，指令里的 curl 形状即本服务的 API 契约——
+        文案随 API 演进只改一处。原生侧（app.py）只做剪贴板与通知。
+        """
+        return (
+            "我在用 Magic AI Router（macOS 菜单栏应用）。\n"
+            f"请先读 {self.url}agent.md 了解产品功能和配置方法。\n"
+            "当前配置 API（需要 token）：\n"
+            f'  curl -H "Authorization: Bearer {self.token}" {self.url}api/state\n'
+            "你可以通过这个 API 读取和修改我的配置，帮我完成设置。")
 
     def start(self):
         """Start the server. Returns True on success, False if port unavailable."""

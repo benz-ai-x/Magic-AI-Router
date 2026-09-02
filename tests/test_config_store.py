@@ -7,6 +7,7 @@ Seams under test:
 - （#46 后 sp 写径唯一归宿 ConfigStateStore——save 测试随 sp_save 删除）
 - suanpan_listen: validated listen with schema-default fallback chain
 """
+from services import sp_config
 import os
 import stat
 import sys
@@ -14,7 +15,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from mpconf import config_store
+from shared import config_store
 class TestPathsRegistry(unittest.TestCase):
     def test_defaults_point_at_home(self):
         self.assertEqual(config_store.DEFAULT_PATHS["mp"],
@@ -90,7 +91,7 @@ class TestSpOrchestration(unittest.TestCase):
             p = os.path.join(d, "sp.yaml")
             self._commit(p, {"providers": {"A": {
                 "base_url": "http://a.example"}}})
-            cfg = config_store.sp_load(path=p)
+            cfg = sp_config.sp_load(path=p)
             self.assertIn("A", cfg.providers)
             # 0600 — the YAML holds API keys
             self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600)
@@ -110,9 +111,9 @@ class TestSpOrchestration(unittest.TestCase):
             p = os.path.join(d, "sp.yaml")
             self._commit(p, {"providers": {"A": {
                 "base_url": "http://a.example", "api_key": "sk-1234567890"}}})
-            raw = config_store.sp_load_raw(path=p)
+            raw = sp_config.sp_load_raw(path=p)
             self.assertEqual(raw["providers"]["A"]["api_key"], "sk-1234567890")
-            masked = config_store.sp_load_masked(path=p)
+            masked = sp_config.sp_load_masked(path=p)
             self.assertIsNone(masked["providers"]["A"]["api_key"])
             self.assertTrue(masked["providers"]["A"]["api_key_set"])
 
@@ -124,10 +125,10 @@ class TestSuanpanListen(unittest.TestCase):
             # 直接落盘（读侧兼容旧 listen 字符串才是本测的对象）
             with open(p, "w") as f:
                 f.write('listen: "127.0.0.1:9999"\nproviders: {}\n')
-            self.assertEqual(config_store.suanpan_listen(path=p), "127.0.0.1:9999")
+            self.assertEqual(sp_config.suanpan_listen(path=p), "127.0.0.1:9999")
 
     def test_missing_file_falls_back_to_schema_default(self):
-        self.assertEqual(config_store.suanpan_listen(path="/nonexistent/sp.yaml"),
+        self.assertEqual(sp_config.suanpan_listen(path="/nonexistent/sp.yaml"),
                          "127.0.0.1:9527")
 
     def test_corrupt_file_falls_back(self):
@@ -135,11 +136,11 @@ class TestSuanpanListen(unittest.TestCase):
             p = os.path.join(d, "sp.yaml")
             with open(p, "w") as f:
                 f.write("listen: [not, a, string]")
-            self.assertEqual(config_store.suanpan_listen(path=p), "127.0.0.1:9527")
+            self.assertEqual(sp_config.suanpan_listen(path=p), "127.0.0.1:9527")
 
     def test_missing_suanpan_deps_falls_back(self):
         with patch.dict(sys.modules, {"suanpan.config": None}):
-            self.assertEqual(config_store.suanpan_listen(), "127.0.0.1:9527")
+            self.assertEqual(sp_config.suanpan_listen(), "127.0.0.1:9527")
 
 
 class TestSpImportErrorTolerance(unittest.TestCase):
@@ -147,11 +148,11 @@ class TestSpImportErrorTolerance(unittest.TestCase):
 
     def test_load_raw_returns_empty(self):
         with patch.dict(sys.modules, {"suanpan.config": None}):
-            self.assertEqual(config_store.sp_load_raw(), {})
+            self.assertEqual(sp_config.sp_load_raw(), {})
 
     def test_load_masked_returns_empty(self):
         with patch.dict(sys.modules, {"suanpan.config": None}):
-            self.assertEqual(config_store.sp_load_masked(), {})
+            self.assertEqual(sp_config.sp_load_masked(), {})
 
     # sp_save 的 ImportError 容错随函数删除（#46）：写径唯一归宿
     # ConfigStateStore，其 pydantic 缺席行为在 test_config_state 钉住

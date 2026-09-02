@@ -13,7 +13,7 @@ from typing import NamedTuple
 
 import yaml
 
-from mpconf.provider_auth import restore_masked_key
+from shared.provider_auth import restore_masked_key
 
 logger = logging.getLogger("magic-proxy.config_state")
 
@@ -92,7 +92,7 @@ def _valid_http_origin(url) -> bool:
 
 class ConfigStateStore:
     def __init__(self, mp_path=None, sp_path=None, keychain=None):
-        from mpconf import config_store as _cs
+        from shared import config_store as _cs
         self.mp_path = mp_path or _cs.get_path("mp")
         self.sp_path = sp_path or _cs.get_path("sp")
         self._keychain = keychain
@@ -297,7 +297,7 @@ class ConfigStateStore:
         parent = os.path.dirname(path) or "."
         if not os.path.isdir(parent):
             os.makedirs(parent, mode=0o700)  # 首创建目录权限
-        from mpconf import config_store
+        from shared import config_store
         if not config_store.atomic_write(path, text):  # 唯一安全写入口
             raise OSError(f"atomic_write failed: {path}")
 

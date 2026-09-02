@@ -120,8 +120,8 @@ class TestConfigServerRoutes(unittest.TestCase):
 # ── proxy.py: SSHMonitor password auth + socks5 errors ────────────
 from tunnel import proxy
 class TestSSHMonitorPasswordAuth(unittest.TestCase):
-    @patch("tunnel.subprocess_monitor.subprocess.Popen")
-    @patch("tunnel.subprocess_monitor.subprocess.run")
+    @patch("shared.subprocess_monitor.subprocess.Popen")
+    @patch("shared.subprocess_monitor.subprocess.run")
     def test_start_password_auth(self, mock_run, mock_popen):
         mock_popen.return_value = MagicMock(pid=12345)
         mock_run.return_value = MagicMock(returncode=0, stdout="")

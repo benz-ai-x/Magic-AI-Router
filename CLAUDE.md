@@ -48,18 +48,28 @@ bash scripts/notarize.sh
 
 ## 架构
 
-单一归属原则（每域一个归宿模块；逐模块清单是防漂移守卫 `tests/test_docs_drift.py` 钉住的契约面）：
+单一归属原则（每域一个归宿模块；逐模块清单是防漂移守卫 `tests/test_docs_drift.py` 钉住的契约面）。分层 DAG 只向下（叶子 shared/ → 域 → services/shellui → app/docker；同层只许同域，唯一白名单见守卫内 `_ALLOWED_SAME_LAYER`）——`tests/test_arch_imports.py` 钉死：
 
 ```
 app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有）
 util.py ── resource_path（frozen 平铺 / dev 按域包子目录查找）+ 版本戳
 
-mpconf/ ── 配置栈
-  config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串）
-  config_store.py ── PATHS 注册表 + 原子写管线（唯一安全写入口）
+shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 迁入）
   netloc.py ── host:port 解析/格式化/loopback 校验唯一所有者
   provider_auth.py ── 供应商认证纯逻辑 + PROVIDER_REGISTRY 注册表 +
     restore_masked_key（掩码 keep 语义）
+  keychain.py ── macOS Keychain 读写（Security 框架可选导入）
+  stats.py ── 运行统计
+  config_store.py ── PATHS 注册表 + 原子写管线（唯一安全写入口）
+  subprocess_monitor.py ── 子进程生命周期基类（状态全集声明；SSH 与
+    mitmdump 两类子进程共用）
+  defaults.py ── 跨域默认值（抓包默认端口/目录——mpconf/sysctl/capture
+    三方共需的配置面）
+  identity.py ── IdentityMigrationError（mpconf 隧道 id 与 suanpan
+    provider id 共享的稳定 id 迁移可行动错误）
+
+mpconf/ ── 配置栈
+  config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串）
   config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
     全量校验（含 schema + 端口冲突）/ commit（journal+MP+SP+Keychain+
     回调次序）/ recover 幂等重放 / update_mp 菜单写径
@@ -70,7 +80,6 @@ tunnel/ ── SSH 隧道核心
   async_runtime.py ── daemon 线程 + asyncio 循环 + 代际停止
   http_framer.py ── 明文 HTTP 增量定界（未定界即安全关闭）
   connection_coordinator.py ── 连接/重试编排（持 _lifecycle_lock）
-  subprocess_monitor.py ── 子进程生命周期基类（状态全集声明）
   retry_scheduler.py ── SSH 重试退避调度（无限退避封顶 60s，永不放弃）
   reconnect_trigger.py ── 唤醒事件→立即重连触发器（去抖 + NSWorkspace 源）
   host_key.py ── SSH known_hosts 管理
@@ -103,17 +112,17 @@ sysctl/ ── 系统集成
   login_item.py ── 登录启动 LaunchAgent
   port_check.py ── 端口占用检测（SIGTERM→SIGKILL 升级）
   instance_owner.py ── 实例所有权锁：pid+启动时间双匹配抗 PID 复用
-  keychain.py ── macOS Keychain 读写（Security 框架可选导入）
 
 services/ ── 服务
-  config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token）
+  config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token +
+    agent_instructions 指令模板归宿）
   suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
+  sp_config.py ── suanpan 配置读取桥（sp_load*/suanpan_listen，lazy import）
   claude_code_setup.py ── Claude Code 自动配置（写 ~/.claude/settings.json）
   lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约 +
     capture_state 单投影 + _on_sp_saved 双形态
   authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围）
-  stats.py ── 运行统计
 
 suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM 后端）
   config.py ── Pydantic schema + 掩码契约 + null 节归一 + 文法消费

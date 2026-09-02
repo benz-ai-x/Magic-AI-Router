@@ -31,7 +31,9 @@ from capture.capture_controller import CaptureController
 from services.suanpan_runtime import SuanpanRuntime
 from services.config_server import ConfigServer
 from sysctl.sys_proxy_controller import SystemProxyController
-from mpconf import config_store, netloc
+from shared import config_store
+from services import sp_config
+from shared import netloc
 
 logger = logging.getLogger("magic-proxy.lifecycle")
 
@@ -65,7 +67,7 @@ def report_port_occupancy(config_port=9528, suanpan_port=9527):
 def _read_suanpan_port():
     """Read the gateway port via 配置存储; fallback to 9527."""
     try:
-        return netloc.parse_listen(config_store.suanpan_listen(), default_port=9527)[1]
+        return netloc.parse_listen(sp_config.suanpan_listen(), default_port=9527)[1]
     except Exception:
         return 9527
 

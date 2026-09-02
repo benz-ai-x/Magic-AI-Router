@@ -7,8 +7,7 @@ import stat
 from datetime import datetime
 
 
-DEFAULT_CAPTURE_DIR = os.path.expanduser("~/.magic-proxy-captures")
-DEFAULT_CAPTURE_PORT = 8080
+from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 MARKER = ".magic-proxy-capture-store"
 
 logger = logging.getLogger("magic-proxy.capture_store")

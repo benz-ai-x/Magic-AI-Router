@@ -7,10 +7,10 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from services.stats import Stats
+from shared.stats import Stats
 from tunnel import http_framer, ssh_launch
 from tunnel.http_framer import Framing, split_header
-from tunnel.subprocess_monitor import SubprocessMonitor
+from shared.subprocess_monitor import SubprocessMonitor
 from tunnel.async_runtime import AsyncRuntime
 
 logger = logging.getLogger("magic-proxy.proxy")

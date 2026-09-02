@@ -14,7 +14,7 @@ Entry points:
 - roles: optional dict of role → {"model": str, "ctx_1m": bool,
   "name": optional display name for *_MODEL_NAME vars}.  When None,
   derives from Suanpan routing rules (backward compatible).
-- The gateway listen always comes from config_store.suanpan_listen()
+- The gateway listen always comes from sp_config.suanpan_listen()
   (the canonical ADR-002 resolver).
 - Backs up existing ~/.claude/settings.json to .bak on the FIRST write only
   (re-runs never clobber the user's pre-gateway backup) and reports replaced
@@ -25,7 +25,8 @@ import json
 import logging
 import os
 
-from mpconf import config_store
+from shared import config_store
+from services import sp_config
 logger = logging.getLogger("magic-proxy.claude_code_setup")
 
 # Suanpan prefix rules that map to Claude Code tier roles.
@@ -151,7 +152,7 @@ def _read_current_roles():
     seed falls back to rule derivation.
     """
     try:
-        listen = config_store.suanpan_listen()
+        listen = sp_config.suanpan_listen()
         settings_path = config_store.get_path("claude_settings")
         if not settings_path or not os.path.exists(settings_path):
             return {}, False
@@ -195,7 +196,7 @@ def default_roles(force_rules: bool = False) -> dict:
     by a dedicated UI control (ccRenderDefault), not the table, so it is
     excluded from `order` and `labels`.
     """
-    derived = _default_roles_from_sp(config_store.sp_load_raw())
+    derived = _default_roles_from_sp(sp_config.sp_load_raw())
     current, synced = _read_current_roles()
     roles = derived
     if synced and not force_rules:
@@ -256,7 +257,7 @@ def _plan(roles=None):
     drift from what the write actually does (#3 验收 9). The loaded settings
     document is never mutated — setup() swaps in plan["new_env"] wholesale.
     """
-    listen = config_store.suanpan_listen()
+    listen = sp_config.suanpan_listen()
     gateway_url = f"http://{listen}"
     settings_path = config_store.get_path("claude_settings")
     exists = bool(settings_path) and os.path.exists(settings_path)
@@ -271,7 +272,7 @@ def _plan(roles=None):
     env = dict(settings.get("env") or {})
 
     if roles is None:
-        roles = _default_roles_from_sp(config_store.sp_load_raw())
+        roles = _default_roles_from_sp(sp_config.sp_load_raw())
     model_env = _roles_to_env(roles)
 
     already = (

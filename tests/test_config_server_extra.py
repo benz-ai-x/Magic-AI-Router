@@ -2,8 +2,8 @@
 import unittest
 
 from services import config_server
-from mpconf import config_store
-from mpconf.provider_auth import restore_masked_key as _restore_key
+from shared import config_store
+from shared.provider_auth import restore_masked_key as _restore_key
 
 
 class TestRestoreKey(unittest.TestCase):

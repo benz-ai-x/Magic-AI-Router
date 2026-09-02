@@ -134,7 +134,7 @@ def create_app(config: AppConfig, config_path: str = "./suanpan.yaml") -> FastAP
 
 
 def run_from_config_path(path: str | Path = "./suanpan.yaml") -> None:
-    from mpconf import netloc
+    from shared import netloc
     config = load_config(path)
     app = create_app(config, config_path=str(path))
     host, port = netloc.parse_listen(config.listen_address(), default_port=9527)

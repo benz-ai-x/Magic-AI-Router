@@ -13,20 +13,21 @@ import rumps
 
 from capture import ca_trust
 from capture import chromium_proxy
-from sysctl import keychain
+from shared import keychain
 from sysctl import login_item
-from mpconf import netloc
+from shared import netloc
+from shared.identity import IdentityMigrationError
 from sysctl import port_check
 from shellui.bridge_protocol import (ACTION_COPY_AGENT_INSTRUCTIONS,
     ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY)
-from capture.capture import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
+from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
-    DEFAULT_CONFIG, IdentityMigrationError, load_config, merge_config)
+    DEFAULT_CONFIG, load_config, merge_config)
 from shellui.log_window import LogBuffer, show_log_window
 from shellui.webview_window import show_config_window
 from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
 from mpconf.config_state import ConfigStateStore
-from services.stats import Stats
+from shared.stats import Stats
 from tunnel.connection_coordinator import ConnectionCoordinator
 from tunnel.reconnect_trigger import ReconnectTrigger, WakeEventSource
 from services.lifecycle_runtime import LifecycleRuntime
@@ -574,17 +575,9 @@ class MagicProxyApp(rumps.App):
             rumps.alert(title="Magic AI Router", message=f"打开设置失败:\n\n{e!r}")
 
     def _copy_agent_instructions(self):
-        """原生侧拼装 AI 助手指令（#70 S13）：token 不出原生进程——
-        JS 侧 URLSearchParams 在 #10 删 query 认证后恒空，复制出的
-        指令带空 Bearer 必 401。此处持 expected_token 直接上剪贴板。"""
-        token = self._config_server.token
-        url = self._config_server.url
-        text = (
-            "我在用 Magic AI Router（macOS 菜单栏应用）。\n"
-            f"请先读 {url}agent.md 了解产品功能和配置方法。\n"
-            "当前配置 API（需要 token）：\n"
-            f'  curl -H "Authorization: Bearer {token}" {url}api/state\n'
-            "你可以通过这个 API 读取和修改我的配置，帮我完成设置。")
+        """复制 AI 助手指令上剪贴板——文案归 config_server.agent_instructions
+        （#70 S13：token 不出原生进程，持 expected_token 直接拼装）。"""
+        text = self._config_server.agent_instructions()
         proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
         proc.communicate(text.encode())
         self._notify("已复制 AI 助手指令", "含 token 的 curl 已就绪")

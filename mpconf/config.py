@@ -10,10 +10,10 @@ import json
 import logging
 import os
 
-from sysctl import keychain
-from mpconf import netloc
-from capture.capture_store import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
-from mpconf.config_store import DEFAULT_PATHS, atomic_write, get_path
+from shared import keychain
+from shared import netloc
+from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
+from shared.config_store import DEFAULT_PATHS, atomic_write, get_path
 
 logger = logging.getLogger("magic-proxy.config")
 
@@ -46,9 +46,7 @@ DEFAULT_CONFIG = {
 }
 
 
-class IdentityMigrationError(ValueError):
-    """稳定 id 迁移的可行动错误（重复身份/重复 id）——绝不与文件损坏
-    混同：不触发 .bak 隔离，原样上抛（issue #8）。"""
+from shared.identity import IdentityMigrationError
 
 
 def stable_tunnel_id(user: str, host: str, port) -> str:

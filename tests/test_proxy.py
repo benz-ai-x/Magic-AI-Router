@@ -256,8 +256,8 @@ class TestHandleClient(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSSHMonitorStart(unittest.TestCase):
-    @patch("tunnel.subprocess_monitor.subprocess.Popen")
-    @patch("tunnel.subprocess_monitor.subprocess.run")
+    @patch("shared.subprocess_monitor.subprocess.Popen")
+    @patch("shared.subprocess_monitor.subprocess.run")
     def test_start_key_auth(self, mock_run, mock_popen):
         mock_popen.return_value = MagicMock(pid=12345)
         mock_run.return_value = MagicMock(returncode=0, stdout="")
@@ -542,8 +542,8 @@ class TestRelayDrainAndEOF(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSSHMonitorPasswordAuth(unittest.TestCase):
-    @patch("tunnel.subprocess_monitor.subprocess.Popen")
-    @patch("tunnel.subprocess_monitor.subprocess.run")
+    @patch("shared.subprocess_monitor.subprocess.Popen")
+    @patch("shared.subprocess_monitor.subprocess.run")
     def test_start_password_auth(self, mock_run, mock_popen):
         mock_popen.return_value = MagicMock(pid=12345)
         mock_run.return_value = MagicMock(returncode=0, stdout="")
@@ -719,8 +719,8 @@ class TestSSHMonitorPasswordCloseError(unittest.TestCase):
     @patch("tunnel.ssh_launch.os.close")
     @patch("tunnel.ssh_launch.os.write")
     @patch("tunnel.ssh_launch.os.pipe")
-    @patch("tunnel.subprocess_monitor.subprocess.Popen")
-    @patch("tunnel.subprocess_monitor.subprocess.run")
+    @patch("shared.subprocess_monitor.subprocess.Popen")
+    @patch("shared.subprocess_monitor.subprocess.run")
     def test_password_auth_close_error_swallowed(self, mock_run, mock_popen,
                                                  mock_pipe, mock_write, mock_close):
         mock_pipe.return_value = (100, 101)

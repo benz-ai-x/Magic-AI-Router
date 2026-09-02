@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mpconf.local_token import get_local_token
-from mpconf.provider_auth import build_outbound_headers
+from shared.provider_auth import build_outbound_headers
 
 
 class TestTokenLifecycle(unittest.TestCase):
@@ -60,9 +60,9 @@ class TestPreviewMasking(unittest.TestCase):
             from mpconf.local_token import get_local_token
             from services.claude_code_setup import preview
             tok = get_local_token(cfg_path)
-            with patch("services.claude_code_setup.config_store.suanpan_listen",
+            with patch("services.claude_code_setup.sp_config.suanpan_listen",
                        return_value="127.0.0.1:9527"), \
-                 patch("services.claude_code_setup.config_store.sp_load_raw",
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
                        return_value={}), \
                  patch("services.claude_code_setup.config_store.get_path",
                        side_effect=lambda k: cfg_path if k == "mp" else settings_path), \

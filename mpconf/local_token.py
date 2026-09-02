@@ -27,7 +27,7 @@ def _write(path: str, cfg: dict) -> None:
     # #46 T1c：唯一安全写入口（mkstemp 唯一临时名 + chmod 0600 + 原子
     # 替换 + 失败清理）——旧手写管线用固定 path+".tmp" 名，并发写互相
     # 截断且失败无清理。
-    from mpconf import config_store
+    from shared import config_store
     ok = config_store.atomic_write(
         path, json.dumps(cfg, indent=2, ensure_ascii=False))
     if not ok:
