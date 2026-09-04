@@ -3,6 +3,24 @@
 All notable changes to Magic-AI-Router are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [v0.7.3] — 2026-09-05 — 分层架构 DAG + 双语 README / 开源基建
+
+### Changed
+- **分层 DAG 落地（#91）**：新增 `shared/` 跨域叶子层（netloc / provider_auth / keychain / stats / config_store / subprocess_monitor / defaults / identity），消除全部 6 条域间横向依赖边（含 tunnel→services 核心域反依赖编排层）；`config_store` strip 成纯持久化原语（PATHS + 原子写），sp_* 编排桥拆出 `services/sp_config.py`；`IdentityMigrationError` 归位 `shared/identity.py`（消 suanpan/config 底部延迟导入）。零行为变化，1631 测试全绿
+- **评审收尾（#92）**：文档尾巴（entry.py / docker-deploy.md import 链）+ mpconf/config.py 中部导入归位 + 字面量 `9527` 三处收敛 `shared/defaults.py DEFAULT_GATEWAY_PORT`
+
+### Added
+- **层次守卫 `tests/test_arch_imports.py`（#91）**：分层 DAG 钉死成测试契约——只许向下 import、同层只许同域；唯一白名单 `mpconf→suanpan`（config_state 双文件事务边界，带理由）。新增横边在测试里红，不在三个月后的依赖迷宫里红
+- **开源基建**：README 双语重写（英文主 + `README.zh-CN.md`，GitHub SEO 关键词布局 + mermaid 架构图）、MIT LICENSE、CONTRIBUTING.md、社交预览图；GitHub 侧 description / 16 topics / Releases 补齐
+
+## [v0.7.2] — 2026-09-02 — relay 死写告警治理
+
+### Fixed
+- **relay 死写告警刷屏**：relay 写端断开后转发循环曾继续向已关闭 socket 死写，asyncio `socket.send()` 告警刷屏日志 → 写端断开即停止转发
+
+### Added
+- **CC 角色表种子读回**：Claude Code 同步页——已同步的机器按 live env 回显角色模型映射，配置与实际环境漂移时提示
+
 ## [v0.7.1] — 2026-08-29 — 隧道断线四连修（#85–#88）
 
 ### Fixed
