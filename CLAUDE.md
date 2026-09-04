@@ -65,8 +65,9 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
     mitmdump 两类子进程共用）
   defaults.py ── 跨域默认值（抓包默认端口/目录 + 网关默认端口——
     多域共需的配置面单一归宿）
-  identity.py ── IdentityMigrationError（mpconf 隧道 id 与 suanpan
-    provider id 共享的稳定 id 迁移可行动错误）
+  identity.py ── 稳定 id 跨域契约：IdentityMigrationError（迁移可行动
+    错误）+ stable_id 派生（mpconf 隧道 t- 与 suanpan provider p- 共用
+    同一 sha1 截断——已落盘 id 的兼容契约）
 
 mpconf/ ── 配置栈
   config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串）

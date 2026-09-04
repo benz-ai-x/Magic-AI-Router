@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from shared.provider_auth import build_outbound_headers as _build_outbound
 from shared.provider_auth import resolve_api_key as _resolve_key
-from shared.identity import IdentityMigrationError
+from shared.identity import IdentityMigrationError, stable_id
 
 
 class ProviderConfig(BaseModel):
@@ -186,7 +186,6 @@ def assign_provider_ids(cfg: dict) -> int:
 
     重复 id 抛可行动错误——不猜测 secret 归属（issue #8）。
     """
-    import hashlib
     seen, migrated = set(), 0
     for name, p in (cfg.get("providers") or {}).items():
         if not isinstance(p, dict):
@@ -198,7 +197,7 @@ def assign_provider_ids(cfg: dict) -> int:
                     f"供应商存在重复 id：{pid}（请修正配置文件后重试）")
             seen.add(pid)
             continue
-        p["id"] = "p-" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:10]
+        p["id"] = stable_id("p", name)
         seen.add(p["id"])
         migrated += 1
     return migrated

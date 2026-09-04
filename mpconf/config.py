@@ -13,7 +13,7 @@ import os
 from shared import keychain
 from shared import netloc
 from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
-from shared.identity import IdentityMigrationError
+from shared.identity import IdentityMigrationError, stable_id
 from shared.config_store import DEFAULT_PATHS, atomic_write, get_path
 
 logger = logging.getLogger("magic-proxy.config")
@@ -49,9 +49,7 @@ DEFAULT_CONFIG = {
 
 def stable_tunnel_id(user: str, host: str, port) -> str:
     """确定性 id：t-<sha1(user@host:port)[:10]>——同身份恒同 id（issue #8）。"""
-    import hashlib
-    basis = f"{user or ''}@{host or ''}:{port or 22}"
-    return "t-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:10]
+    return stable_id("t", f"{user or ''}@{host or ''}:{port or 22}")
 
 
 def assign_stable_ids(tunnels) -> int:
