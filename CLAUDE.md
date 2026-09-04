@@ -63,8 +63,8 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
   config_store.py ── PATHS 注册表 + 原子写管线（唯一安全写入口）
   subprocess_monitor.py ── 子进程生命周期基类（状态全集声明；SSH 与
     mitmdump 两类子进程共用）
-  defaults.py ── 跨域默认值（抓包默认端口/目录——mpconf/sysctl/capture
-    三方共需的配置面）
+  defaults.py ── 跨域默认值（抓包默认端口/目录 + 网关默认端口——
+    多域共需的配置面单一归宿）
   identity.py ── IdentityMigrationError（mpconf 隧道 id 与 suanpan
     provider id 共享的稳定 id 迁移可行动错误）
 

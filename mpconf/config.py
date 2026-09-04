@@ -13,6 +13,7 @@ import os
 from shared import keychain
 from shared import netloc
 from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
+from shared.identity import IdentityMigrationError
 from shared.config_store import DEFAULT_PATHS, atomic_write, get_path
 
 logger = logging.getLogger("magic-proxy.config")
@@ -44,9 +45,6 @@ DEFAULT_CONFIG = {
     "launch_at_login": False,
     "config_port": 9528,
 }
-
-
-from shared.identity import IdentityMigrationError
 
 
 def stable_tunnel_id(user: str, host: str, port) -> str:

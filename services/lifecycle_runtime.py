@@ -34,6 +34,7 @@ from sysctl.sys_proxy_controller import SystemProxyController
 from shared import config_store
 from services import sp_config
 from shared import netloc
+from shared.defaults import DEFAULT_GATEWAY_PORT
 
 logger = logging.getLogger("magic-proxy.lifecycle")
 
@@ -45,7 +46,8 @@ def _should_prevent_sleep(status, paused, flag):
 
 
 
-def report_port_occupancy(config_port=9528, suanpan_port=9527):
+def report_port_occupancy(config_port=9528,
+                           suanpan_port=DEFAULT_GATEWAY_PORT):
     """启动期端口占用报告（issue #3）：占用只是线索，启动期永不发信号。
 
     进程死亡即释放监听 socket——真正需要回收的旧实例只剩**陈旧锁**
@@ -65,11 +67,11 @@ def report_port_occupancy(config_port=9528, suanpan_port=9527):
 
 
 def _read_suanpan_port():
-    """Read the gateway port via 配置存储; fallback to 9527."""
+    """Read the gateway port via 配置存储; fallback to DEFAULT_GATEWAY_PORT."""
     try:
-        return netloc.parse_listen(sp_config.suanpan_listen(), default_port=9527)[1]
+        return netloc.parse_listen(sp_config.suanpan_listen(), default_port=DEFAULT_GATEWAY_PORT)[1]
     except Exception:
-        return 9527
+        return DEFAULT_GATEWAY_PORT
 
 
 class LifecycleRuntime:
