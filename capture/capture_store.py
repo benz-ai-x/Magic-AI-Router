@@ -8,9 +8,9 @@ from datetime import datetime
 
 
 try:
-    from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
+    from shared.defaults import DEFAULT_CAPTURE_DIR
 except ImportError:  # frozen：addon 子进程按 Resources/ 扁平布局加载本模块，无包层级
-    from defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
+    from defaults import DEFAULT_CAPTURE_DIR
 MARKER = ".magic-proxy-capture-store"
 
 logger = logging.getLogger("magic-proxy.capture_store")

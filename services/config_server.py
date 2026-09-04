@@ -17,7 +17,6 @@ from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 
 from shared import keychain
-from shared import config_store
 from services import sp_config
 from mpconf.config_state import ConfigStateStore
 from tunnel import ssh_launch

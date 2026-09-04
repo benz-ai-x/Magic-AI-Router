@@ -31,7 +31,6 @@ from capture.capture_controller import CaptureController
 from services.suanpan_runtime import SuanpanRuntime
 from services.config_server import ConfigServer
 from sysctl.sys_proxy_controller import SystemProxyController
-from shared import config_store
 from services import sp_config
 from shared import netloc
 from shared.defaults import DEFAULT_GATEWAY_PORT

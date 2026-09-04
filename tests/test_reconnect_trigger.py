@@ -1,7 +1,7 @@
 """Tests for tunnel/reconnect_trigger.py — 去抖触发器 + 唤醒事件源（#86）。"""
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from tunnel.reconnect_trigger import ReconnectTrigger, WakeEventSource
 

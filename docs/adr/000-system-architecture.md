@@ -30,7 +30,7 @@ AppGenesisForge（AGF）团队模板刚装入本项目，其 ADR-000 模板默�
 | 端口占用检查 | `lsof` + POSIX kill（subprocess） | `port_check.py:65 ["lsof","-nP",f"-iTCP@127.0.0.1:{port}","-sTCP:LISTEN","-F","pcn"]`；解析输出拿 PID + 进程名，SIGTERM→SIGKILL 安全 kill；被 `app.py` 两处依赖（高扇入） |
 | 外部终端启动（**已移除**） | —（原 `osascript` / `launcher.py`） | v0.3.0 前经 `osascript` + `launcher.py` 启动 iTerm2/Terminal.app；该功能连同 `launcher.py` + `tests/test_launcher.py` 已于 commit `8ff997a`（"删启动终端"）移除，此行仅留架构演进痕迹 |
 | 图标生成 | Pillow | `generate_icon.py` 用 PIL 画菜单栏状态图标模板 `MenubarIcon.png`（纯 alpha 蒙版，运行时由 `menu_builder.py` 染色）；应用图标为 `icons/magic-ai-router-macos-v2.icns` 静态美术稿（build.sh `APP_ICON`），非代码生成 |
-| 配置 | JSON 文件 `~/.magic-proxy.json` | 多隧道配置；`config.sample.json` 为模板；`auth_type` 为 `key`（默认）或 `password` |
+| 配置 | JSON 文件 `~/.magic-proxy.json` | 多隧道配置；默认配置由 `mpconf/config.py` 的 `DEFAULT_CONFIG` 生成（样例 `config.sample.json` 已删除——其 `http_listen` 旧字段格式易误导手编用户）；`auth_type` 为 `key`（默认）或 `password` |
 | AI 路由网关（Suanpan） | FastAPI + uvicorn + httpx + pydantic | `suanpan/` 子包（`:9527`）：`main.py` app factory + `middleware.py`（APIKey + BodyLimit 中间件）；`router.py` 按 内联覆盖 → SUBAGENT-MODEL 标签 → 模型规则 → 默认 链路路由；`proxy.py` 流式转发 + SSE 用量提取；统一多家 LLM 为 Anthropic Messages API。经 `suanpan_runtime.py` 线程化宿主，**延迟导入**（依赖未装时 app 正常启动） |
 | Suanpan 配置 | YAML 文件 `~/.suanpan.yaml` | 参考 `suanpan.example.yaml`；首次启动自动创建最小默认配置；Pydantic schema 在 `suanpan/config.py` |
 | 打包 | PyInstaller（`--windowed` → `.app`） | `build.sh` 跑 `python3 -m PyInstaller --windowed --name "Magic Proxy" --osx-bundle-identifier com.benzai.magic-ai-router app.py`，各模块经 `--add-data` 打入；`Magic Proxy.spec` 是其固化产物（`hiddenimports=[]`） |
@@ -113,7 +113,7 @@ generate_icon.py        # Pillow 生成菜单栏状态图标模板 MenubarIcon.p
 build.sh                # PyInstaller 打包（VERSION=0.4.0；requirements-dev.txt）
 build_dmg.sh            # hdiutil 打可拖拽安装 .dmg
 notarize.sh             # codesign + notarytool + stapler + spctl 公证链
-config.sample.json      # Magic Proxy 配置模板
+config.sample.json      # Magic Proxy 配置模板（已删除——默认配置改由 DEFAULT_CONFIG 生成）
 suanpan.example.yaml    # [v0.4.0] Suanpan 配置模板
 tests/                  # pytest 测试套（数量以 `pytest tests/` 为准）
 ~/.magic-proxy.json     # 运行时配置（多隧道）

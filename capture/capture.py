@@ -8,8 +8,9 @@ talks to it purely as an upstream HTTP CONNECT proxy.
 import logging
 import os
 import socket
-from capture.capture_store import (DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT,
+from capture.capture_store import (DEFAULT_CAPTURE_DIR,
     cleanup_expired_captures, prepare as prepare_capture_dir)
+from shared.defaults import DEFAULT_CAPTURE_PORT
 from shared.subprocess_monitor import SubprocessMonitor
 
 logger = logging.getLogger("magic-proxy.capture")
