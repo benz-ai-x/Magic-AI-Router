@@ -119,7 +119,7 @@ suanpan python3 /app/docker/entry.py <serve|sync-claude-code|config-ui|config-to
 
 ## Linux 兼容（Security 可选导入）
 
-`suanpan.config` → `mpconf.config` → `sysctl.keychain` 的模块级 import 链
+`services.config_server` → `shared/keychain` 的模块级 import 链
 最终会 `import Security`（PyObjC，仅 macOS）。`shared/keychain` 自身
 try/except 可选化：缺失即 `Security = None`，公开函数的全吞异常兜底把
 None 解引用转成 False/""——容器无需任何 stub。Docker 路径本就不调用

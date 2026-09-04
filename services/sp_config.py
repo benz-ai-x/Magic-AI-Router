@@ -8,6 +8,8 @@ shared/config_store 回归纯持久化原语（分层见 tests/test_arch_imports
 """
 import logging
 
+from shared.defaults import DEFAULT_GATEWAY_PORT
+
 from shared import config_store
 
 logger = logging.getLogger("magic-proxy.sp_config")
@@ -42,7 +44,7 @@ def suanpan_listen(path=None):
     try:
         from suanpan.config import AppConfig, load_config
     except ImportError:
-        return "127.0.0.1:9527"  # deps missing — last-resort default
+        return f"127.0.0.1:{DEFAULT_GATEWAY_PORT}"  # deps missing — last-resort default
     try:
         return load_config(path or config_store.get_path("sp")).listen_address()
     except Exception:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from shared import netloc
+from shared.defaults import DEFAULT_GATEWAY_PORT
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -69,7 +70,7 @@ class UsageLogConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    listen_port: int = 9527
+    listen_port: int = DEFAULT_GATEWAY_PORT
     api_key: str | None = None
     request_timeout_s: int = 3600
     body_limit_mb: int = 50

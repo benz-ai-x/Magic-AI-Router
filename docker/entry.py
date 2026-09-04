@@ -13,7 +13,7 @@
   跨容器重建保持稳定。容器内 suanpan_listen() 算出的
   http://127.0.0.1:<port> 恰等于宿主机侧 Claude Code 应使用的地址。
 
-Linux 容器内 PyObjC 的 ``Security`` 不存在：``sysctl.keychain`` 自身
+Linux 容器内 PyObjC 的 ``Security`` 不存在：``shared/keychain`` 自身
 try/except 可选化（Security=None + 全吞异常兜底），import 链裸奔即可，
 无需任何 stub。
 """
