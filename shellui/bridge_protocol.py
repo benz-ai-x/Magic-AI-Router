@@ -9,7 +9,9 @@ webview_window.py is only a thin ObjC adapter over BridgeCore.
 Protocol v1 (single "bridge" script-message channel, {type, payload} JSON):
   JS → PY  {type:"dirtyState",     payload:{dirty: bool}}
            {type:"pickKeyFile",    payload:{field: "sshKey"}}
-           {type:"reconnectProxy", payload:{}}
+           {type:"reconnectProxy", payload:{}}            — 无条件重连（用户显式点击）
+           {type:"reconnectProxy", payload:{if_connected: true}} — 守卫重连：仅当
+             隧道当前已连接才执行（保存端口转发后的自动应用；未连接绝不拉起）
            {type:"openPath",       payload:{kind: "captureDir"}}
   PY → JS  {type:"keyFilePicked", payload:{field, path}}
            delivered via window.__native.receive(<json>)
@@ -97,7 +99,10 @@ class BridgeCore:
         if mtype == "reconnectProxy":
             # Equivalent of the menu-bar 重新连接 item; the app-level handler
             # owns threading and the actual connection orchestration.
-            return [{"type": ACTION_RECONNECT_PROXY}]
+            # if_connected: 守卫变体——保存端口转发后的自动应用，未连接
+            # 的隧道绝不因此被拉起（显式点击路径不带此旗标）。
+            return [{"type": ACTION_RECONNECT_PROXY,
+                     "if_connected": bool(payload.get("if_connected"))}]
         if mtype == "openPath":
             kind = payload.get("kind")
             if kind in OPENABLE_KINDS:

@@ -188,6 +188,17 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .rules-table td{padding:8px 12px;border-bottom:1px solid var(--border)}
 .rules-table tbody tr:last-child td{border:0}
 .rule-num{color:var(--muted);font-family:var(--font-mono);font-size:13px}
+/* port forwards (tunnel detail) */
+.fw-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.fw-head h3{margin:0}
+.fw-hint{color:var(--muted);font-size:12px;margin:0 0 10px}
+.fw-table input.control{width:100%;min-width:0}
+.fw-table td{vertical-align:middle}
+.fw-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.fw-status{font-size:12px;color:var(--muted)}
+.fw-status.ok{color:var(--ok)}
+.fw-status.err{color:var(--danger)}
+.fw-empty td{padding:16px 12px;color:var(--muted);font-size:13px;text-align:center}
 /* statusbar */
 .statusbar{grid-area:status;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-top:1px solid var(--border);color:var(--muted);font-size:12px}
 .statusbar #status-left.dirty{color:var(--accent);font-weight:550}
@@ -285,7 +296,7 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
     </div>
     <div id="nav-container"></div>
     <div class="sidebar-spacer"></div>
-    <div class="priority-note"><strong>保存后生效</strong>隧道变更需菜单「重新连接」；AI 路由保存后自动重载。</div>
+    <div class="priority-note"><strong>保存后生效</strong>隧道变更需菜单「重新连接」；端口转发保存后自动重连；AI 路由保存后自动重载。</div>
     <div class="sidebar-ai-helper"><button class="btn btn-sm btn-ghost" onclick="copyAgentInstructions()">复制 AI 助手指令</button></div>
   </aside>
   <main class="workbench">
@@ -367,6 +378,13 @@ function viewSnapshot(view,state,roles){
       ssh_port:numberDefault(t.ssh_port,22),auth_type:t.auth_type||'key',
       ssh_key:t.ssh_key||'',ssh_compression:t.ssh_compression!==false,
       password:t.password||(t.has_password?'__saved_password__':''),
+      // collect 的缺省口径：空端口=0、空地址=127.0.0.1（与服务端 merge
+      // 归一同一语义），未触碰行不产生假 dirty
+      forwards:(t.forwards||[]).map(f=>({
+        local_port:numberDefault(f.local_port,0),
+        remote_host:f.remote_host||'127.0.0.1',
+        remote_port:numberDefault(f.remote_port,0),
+      })),
     })),
   };
   if(view==='proxy')return{
@@ -424,6 +442,20 @@ function validateConfig(S){
   (S.mp.tunnels||[]).forEach((t,i)=>{
     if(!t.ssh_host)errors.push(`隧道 ${i+1}: 未填写地址`);
     if(t.ssh_port&&(t.ssh_port<1||t.ssh_port>65535))errors.push(`隧道 ${i+1}: SSH 端口无效`);
+    // 端口转发行：范围 + 同隧道重复 + remote_host 文法（镜像 prepare 的
+    // 中文文案——prepare 是 422 兜底，这里是保存前第一道）
+    const tn=t.name||t.ssh_host||(`隧道 ${i+1}`);
+    const fwSeen={};
+    (t.forwards||[]).forEach(f=>{
+      // 与 prepare 同口径：端口须整数（拦小数），remote_host 字串化
+      // （数字形态仅在直改 state 时出现，String 兜底不抛 TypeError）
+      const lp=f.local_port,rp=f.remote_port,rh=String(f.remote_host||'127.0.0.1');
+      if(!Number.isInteger(lp)||lp<1||lp>65535)errors.push(`${tn}: 转发本地端口无效（须 1..65535）`);
+      else if(fwSeen[lp])errors.push(`${tn}: 转发本地端口 ${lp} 重复`);
+      else fwSeen[lp]=1;
+      if(!Number.isInteger(rp)||rp<1||rp>65535)errors.push(`${tn}: 转发远程端口无效（须 1..65535）`);
+      if(/\s/.test(rh)||rh.includes(':'))errors.push(`${tn}: 转发远程地址无效（暂不支持 IPv6）`);
+    });
   });
   if(S.mp.socks5_port&&(S.mp.socks5_port<1||S.mp.socks5_port>65535))errors.push('SOCKS5 端口无效');
   if(S.mp.http_listen_port&&(S.mp.http_listen_port<1||S.mp.http_listen_port>65535))errors.push('HTTP 监听端口无效');
@@ -439,6 +471,16 @@ function validateConfig(S){
     if(p==null||p==='')return;
     if(seen[p])errors.push(`端口冲突：${seen[p]} 与 ${label} 同为 ${p}`);
     else seen[p]=label;
+  });
+  // 转发本地端口对保留端口冲突；跨隧道同端口合法（同一时间只有一条
+  // 隧道活跃）——转发不写入 seen，镜像 prepare 同一判定
+  (S.mp.tunnels||[]).forEach(t=>{
+    const tn=t.name||t.ssh_host||'隧道';
+    (t.forwards||[]).forEach(f=>{
+      const lp=f.local_port;
+      if(lp&&seen[lp])
+        errors.push(`端口冲突：${seen[lp]} 与 ${tn} 端口转发本地端口 同为 ${lp}`);
+    });
   });
   Object.entries(S.sp.providers||{}).forEach(([k,p])=>{
     if(!k||!k.trim())errors.push('供应商名称不能为空');
@@ -691,6 +733,17 @@ function dirtyProjection(base,S,baseRoles,roles){
   });
   return{views,counts,total:[...counts.values()].reduce((s,n)=>s+n,0)};
 }
+function forwardsChanged(base,S){
+  // 守卫重连的精确判定：保存前后「同一身份的当前隧道」forwards 有变
+  // 才值得重启。单活语义下其他隧道根本没在跑——改它们的转发不打断
+  // 当前连接；切换当前隧道（身份变了，重启会连到另一台）与未保存的
+  // 新隧道一律走既有手动重连流，不在此自动重启。
+  const cur=st=>((st&&st.mp&&st.mp.tunnels)||[])[numberDefault(st&&st.mp&&st.mp.current_tunnel,0)]||null;
+  const sig=t=>((t&&t.forwards)||[]).map(f=>`${f.local_port}|${f.remote_host}|${f.remote_port}`).join(';');
+  const a=cur(base),b=cur(S);
+  if(!a||!b||!a.id||!b.id||a.id!==b.id)return false;
+  return sig(a)!==sig(b);
+}
 async function saveFlow(snap,deps,forceRulesSync){
   const{S,ccRoles,baselineState,baselineRoles}=snap;
   const proj=dirtyProjection(baselineState,S,baselineRoles,ccRoles);
@@ -705,6 +758,7 @@ async function saveFlow(snap,deps,forceRulesSync){
   }
   const mpChanged=proj.views.has('tunnel')||proj.views.has('proxy');
   const spChanged=proj.views.has('providers')||proj.views.has('rules');
+  const fwChanged=forwardsChanged(baselineState,S);
   let configSaved=false,syncMessage='';
   deps.setSaving(true,syncRules?(dirty?'保存并同步中…':'同步中…'):'保存中…');
   try{
@@ -742,6 +796,12 @@ async function saveFlow(snap,deps,forceRulesSync){
       if(mpChanged&&spChanged)msg+=' — 代理需重新连接（隧道页「重新连接」或菜单栏），AI 路由已自动重载';
       else if(mpChanged)msg+=' — 点击隧道页「重新连接」或菜单栏生效';
       else if(spChanged)msg+=' — AI 路由已自动重载';
+      if(fwChanged){
+        // 守卫重连（保存后自动应用端口转发）：原生侧只在隧道已连接时
+        // 执行重启，未连接的隧道绝不因此被拉起
+        if(deps.reconnectForwards)deps.reconnectForwards();
+        msg+='；端口转发变更已触发自动重连';
+      }
       if(syncMessage)msg+='；'+syncMessage;
       deps.toast(msg);
     }else deps.toast(syncMessage);
@@ -1005,6 +1065,9 @@ async function saveAll(forceRulesSync){
       commitRoles:rl=>{baselineRoles=rl;},
       stampSaved:at=>{lastSavedAt=at;},
       setSaving:setSavingState,
+      // 端口转发保存后的守卫重连（if_connected：原生侧仅在隧道已连接时
+      // 执行——浏览器直开无桥接时 no-op）
+      reconnectForwards:()=>nativeSend('reconnectProxy',{if_connected:true}),
       now:()=>new Date().toLocaleTimeString('zh-CN'),
     },
     forceRulesSync);
@@ -1025,6 +1088,18 @@ function toggleSwitch(el){
 }
 
 // ── tunnel view (master-detail only) ──────────────────
+function fwRows(t){
+  const fs=t.forwards||[];
+  if(!fs.length)return `<tr class="fw-empty"><td colspan="4">暂无端口转发规则——点「+ 添加转发」把远程端口映射到本机</td></tr>`;
+  return fs.map((f,fi)=>`<tr data-fwr="${fi}">
+    <td><input class="control mono" data-fwf="local_port" type="number" min="1" max="65535" value="${esc(f.local_port||'')}" placeholder="9000" aria-label="转发 ${fi+1} 本地端口"></td>
+    <td><input class="control mono" data-fwf="remote_host" value="${esc(f.remote_host||'')}" placeholder="127.0.0.1" aria-label="转发 ${fi+1} 远程地址"></td>
+    <td><input class="control mono" data-fwf="remote_port" type="number" min="1" max="65535" value="${esc(f.remote_port||'')}" placeholder="8000" aria-label="转发 ${fi+1} 远程端口"></td>
+    <td><div class="fw-actions"><button class="btn btn-sm" aria-label="测试转发 ${fi+1}" onclick="testForward(${fi},this)">测试</button>
+      <button class="btn btn-sm btn-danger" aria-label="删除转发 ${fi+1}" onclick="removeForward(${fi})">删除</button>
+      <span class="fw-status" id="fw-status-${fi}"></span></div></td>
+  </tr>`).join('');
+}
 function tunnelHTML(){
   const ts=S.mp.tunnels||[];
   if(!ts.length)return `<section class="view">
@@ -1037,7 +1112,7 @@ function tunnelHTML(){
   const t=ts[activeTunnel];
   const tname=t.name||t.ssh_host||'Server '+(activeTunnel+1);
   return `<section class="view">
-    <p class="module-intro">管理 SSH 隧道连接。保存后点击「重新连接」（或菜单栏）生效；「测试连接」对已保存的配置做轻量 SSH 探测。</p>
+    <p class="module-intro">管理 SSH 隧道连接。隧道变更保存后需「重新连接」生效（端口转发保存后自动重连）；「测试连接」探测已保存配置，转发行的「测试」探测当前填写值。</p>
     <div class="panel"><div class="md-layout">
       <div class="md-master">
         <div class="section-bar"><h2 class="section-title">隧道</h2><span class="count">${ts.length} 个隧道</span></div>
@@ -1070,6 +1145,13 @@ function tunnelHTML(){
               <div class="switch-line"><span class="switch-label">${t.ssh_compression!==false?'已启用':'已停用'}</span>
               <button class="switch" data-tf="compress" role="switch" aria-checked="${t.ssh_compression!==false}" aria-label="SSH 压缩" onclick="toggleSwitch(this)"></button></div></div>
           </div>
+          <div class="form-section"><div class="fw-head"><h3>端口转发</h3>
+            <button class="btn btn-sm" onclick="addForward()">+ 添加转发</button></div>
+            <p class="fw-hint">把远程服务器的端口映射到本机 127.0.0.1（ssh -L）；保存后自动重连生效。行内「测试」对当前填写的值做一次 SSH 探测（无需先保存）。</p>
+            <table class="rules-table fw-table"><thead><tr>
+              <th style="width:16%">本地端口</th><th style="width:44%">远程地址（服务器侧）</th><th style="width:14%">远程端口</th><th>操作</th>
+            </tr></thead><tbody>${fwRows(t)}</tbody></table>
+          </div>
         </div>
       </div>
     </div></div>
@@ -1077,8 +1159,10 @@ function tunnelHTML(){
 }
 function toggleAuth(sel){const c=sel.closest('.detail-body');c.querySelectorAll('[data-auth]').forEach(el=>el.style.display=el.dataset.auth===sel.value?'':'none');collectAndRecompute();}
 function selectTunnel(i){collectTunnel();recomputeDirty();activeTunnel=i;renderView();}
-function addTunnel(){collectTunnel();S.mp.tunnels.push({name:'',ssh_user:'',ssh_host:'',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true});activeTunnel=S.mp.tunnels.length-1;recomputeDirty();renderView();}
+function addTunnel(){collectTunnel();S.mp.tunnels.push({name:'',ssh_user:'',ssh_host:'',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]});activeTunnel=S.mp.tunnels.length-1;recomputeDirty();renderView();}
 function removeTunnel(i){if(!S.mp.tunnels.length)return;collectTunnel();S.mp.tunnels.splice(i,1);activeTunnel=Math.max(0,Math.min(i,S.mp.tunnels.length-1));recomputeDirty();renderView();}
+function addForward(){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t)return;(t.forwards=t.forwards||[]).push({local_port:0,remote_host:'127.0.0.1',remote_port:0});recomputeDirty();renderView();}
+function removeForward(fi){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t||!(t.forwards||[]).length)return;t.forwards.splice(fi,1);recomputeDirty();renderView();}
 function collectTunnel(){
   const ts=S.mp.tunnels;if(!ts.length)return;const t=ts[activeTunnel];if(!t)return;
   const d=document.querySelector('.md-detail .detail-body');if(!d)return;
@@ -1090,6 +1174,16 @@ function collectTunnel(){
   // 残留旧值会让 dirty 卡住并把幽灵密码静默写入。
   const pw=v('pw');t.password=pw||null;
   const cb=d.querySelector('[data-tf="compress"]');t.ssh_compression=cb&&cb.getAttribute('aria-checked')==='true';
+  // 端口转发行按 DOM 顺序读回（行序即数组序）；缺省口径与 viewSnapshot
+  // 同一语义：空端口=0、空地址=127.0.0.1
+  const fws=[];
+  d.querySelectorAll('.fw-table tbody tr[data-fwr]').forEach(tr=>{
+    const g=k=>{const el=tr.querySelector(`[data-fwf="${k}"]`);return el?el.value:'';};
+    fws.push({local_port:parseInt(g('local_port'),10)||0,
+      remote_host:g('remote_host').trim()||'127.0.0.1',
+      remote_port:parseInt(g('remote_port'),10)||0});
+  });
+  t.forwards=fws;
 }
 
 // ── tunnel connectivity test + reconnect (bridge) ─────
@@ -1122,6 +1216,25 @@ async function testTunnel(btn){
     else _setTunnelResult('❌ '+(d.error||'测试失败'),'var(--danger)');
     restore();
   }catch(e){_setTunnelResult('❌ 请求失败: '+e.message,'var(--danger)');restore();}
+}
+// 行内端口转发测试：探测的是表单当前值（collect 后的隧道 + t.forwards[fi]），
+// 未保存的新隧道/新行同样可测——后端 probe_forward 不依赖隧道当前状态。
+async function testForward(fi,btn){
+  collectTunnel();
+  const ts=S.mp.tunnels||[],i=activeTunnel;
+  if(!(i>=0&&i<ts.length)){toast('没有可测试的隧道',true);return;}
+  const f=((ts[i].forwards)||[])[fi];
+  if(!f){toast('转发行不存在',true);return;}
+  const st=document.getElementById('fw-status-'+fi);
+  const set=(txt,cls)=>{if(!st)return;st.textContent=txt||'';st.className='fw-status'+(cls?' '+cls:'');};
+  btn.disabled=true;btn.textContent='测试中…';set('测试中…','');
+  try{
+    const r=await fetch('/api/test-forward',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({tunnel:ts[i],forward:f})});
+    const d=await r.json();
+    if(d.ok)set('✓ 连通 · '+(d.latency_ms!=null?d.latency_ms+'ms':''),'ok');
+    else set('✗ '+(d.error||'测试失败'),'err');
+  }catch(e){set('✗ 请求失败: '+e.message,'err');}
+  btn.disabled=false;btn.textContent='测试';
 }
 // 重连 = 菜单栏「重新连接」等价动作（Python 端停隧道→重读配置→重启），
 // 经 bridge 触发；浏览器直开设置页时无桥接，回退提示。

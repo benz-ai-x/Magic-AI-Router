@@ -107,6 +107,82 @@ class TestPrepareValidation(unittest.TestCase):
         self.assertTrue(plan.ok, plan.errors)
         self.assertEqual(plan.errors, [])
 
+    def _fw(self, lp=9000, rh="127.0.0.1", rp=8000):
+        return {"local_port": lp, "remote_host": rh, "remote_port": rp}
+
+    def test_valid_forwards_accepted(self):
+        plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
+            {"name": "t1", "forwards": [self._fw()]}]})
+        self.assertTrue(plan.ok, plan.errors)
+
+    def test_forward_port_out_of_range_rejected(self):
+        plan = self._prepare(mp={"tunnels": [
+            {"name": "t1", "forwards": [self._fw(lp=70000)]}]})
+        self.assertFalse(plan.ok)
+        self.assertTrue(any("local_port" in e for e in plan.errors), plan.errors)
+
+    def test_forward_string_port_rejected_before_merge(self):
+        """保存候选必须规整：字符串端口只在 load 路径容错（merge 归一），
+        prepare 是写路径的严格半边。"""
+        plan = self._prepare(mp={"tunnels": [
+            {"name": "t1", "forwards": [self._fw(rp="8000")]}]})
+        self.assertFalse(plan.ok)
+        self.assertTrue(any("remote_port" in e for e in plan.errors), plan.errors)
+
+    def test_forward_bool_port_rejected(self):
+        plan = self._prepare(mp={"tunnels": [
+            {"name": "t1", "forwards": [self._fw(lp=True)]}]})
+        self.assertFalse(plan.ok)
+        self.assertTrue(any("local_port" in e for e in plan.errors), plan.errors)
+
+    def test_forward_bad_remote_host_rejected(self):
+        for rh in ("", "  ", "a b", "127.0.0.1:x", "::1"):
+            plan = self._prepare(mp={"tunnels": [
+                {"name": "t1", "forwards": [self._fw(rh=rh)]}]})
+            self.assertFalse(plan.ok, f"remote_host={rh!r} 不应通过")
+            self.assertTrue(any("remote_host" in e for e in plan.errors),
+                            plan.errors)
+
+    def test_forward_missing_remote_host_ok_defaults(self):
+        """remote_host 缺省合法（merge 回填 127.0.0.1）——None 不应报错。"""
+        plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
+            {"name": "t1", "forwards": [
+                {"local_port": 9000, "remote_port": 8000}]}]})
+        self.assertTrue(plan.ok, plan.errors)
+
+    def test_forward_non_list_rejected(self):
+        plan = self._prepare(mp={"tunnels": [
+            {"name": "t1", "forwards": "nope"}]})
+        self.assertFalse(plan.ok)
+        self.assertTrue(any("forwards" in e for e in plan.errors), plan.errors)
+
+    def test_forward_non_dict_row_rejected(self):
+        plan = self._prepare(mp={"tunnels": [
+            {"name": "t1", "forwards": ["nope"]}]})
+        self.assertFalse(plan.ok)
+        self.assertTrue(any("端口转发必须是对象" in e for e in plan.errors),
+                        plan.errors)
+
+    def test_forward_same_tunnel_duplicate_local_port_rejected(self):
+        plan = self._prepare(mp={"tunnels": [
+            {"name": "t1", "forwards": [self._fw(), self._fw(rp=8001)]}]})
+        self.assertFalse(plan.ok)
+        self.assertTrue(any("重复" in e for e in plan.errors), plan.errors)
+
+    def test_forward_cross_tunnel_same_local_port_allowed(self):
+        """同一时间只有一条隧道活跃——prod/staging 同构转发布局合法。"""
+        plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
+            {"name": "t1", "forwards": [self._fw()]},
+            {"name": "t2", "forwards": [self._fw(rp=9001)]}]})
+        self.assertTrue(plan.ok, plan.errors)
+
+    def test_forward_conflicts_with_reserved_port_rejected(self):
+        plan = self._prepare(mp={"tunnels": [
+            {"name": "t1", "forwards": [self._fw(lp=8888)]}],
+            "http_listen_port": 8888})
+        self.assertFalse(plan.ok)
+        self.assertTrue(any("端口冲突" in e for e in plan.errors), plan.errors)
+
 
 
 

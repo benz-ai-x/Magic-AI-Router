@@ -667,6 +667,139 @@ class TestTunnelProbeLogic(unittest.TestCase):
         self.assertEqual(target["ssh_port"], 2222)
 
 
+class TestTestForwardEndpoint(unittest.TestCase):
+    """POST /api/test-forward {index, forward}：行内测试按钮的后端面。"""
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def _post(self, body, token=True):
+        return _request(self.port, "POST", "/api/test-forward", body=body,
+                        token=self.token if token else None)
+
+    def test_requires_token(self):
+        status, _ = self._post('{"index": 0, "forward": {}}', token=False)
+        self.assertEqual(status, 401)
+
+    def test_bad_shape_returns_400(self):
+        for bad in ('{"index": "x", "forward": {}}',
+                    '{"index": true, "forward": {}}',
+                    '{}',
+                    '{"index": 0}',
+                    '{"forward": {}}',
+                    '{"index": 0, "forward": "x"}',
+                    '{"tunnel": "x", "forward": {}}',
+                    '{"tunnel": 5, "forward": {}}'):
+            with self.subTest(body=bad):
+                status, data = self._post(bad)
+                self.assertEqual(status, 400)
+                body = json.loads(data)
+                self.assertTrue(
+                    ("ok" in body and not body["ok"]) or "error" in body,
+                    body)
+
+    def test_no_tunnels_returns_400(self):
+        with patch.object(config_server, "_read_mp",
+                          return_value={"tunnels": []}):
+            status, data = self._post('{"index": 0, "forward": {}}')
+        self.assertEqual(status, 400)
+        self.assertFalse(json.loads(data)["ok"])
+
+    def test_index_out_of_range_returns_400(self):
+        cfg = {"tunnels": [{"ssh_host": "h"}]}
+        with patch.object(config_server, "_read_mp", return_value=cfg):
+            status, _ = self._post('{"index": 5, "forward": {}}')
+        self.assertEqual(status, 400)
+
+    def test_form_tunnel_body_delegates_without_index(self):
+        """设置窗新载荷 {tunnel, forward}：隧道与转发都取表单当前值——
+        未保存的新隧道同样可测，不落 _read_mp（无 index 可解析）。"""
+        tunnel = {"ssh_host": "new.example.com", "ssh_user": "u",
+                  "ssh_port": 2222, "auth_type": "key"}
+        forward = {"local_port": 9000, "remote_host": "10.0.0.5",
+                   "remote_port": 8000}
+        with patch.object(config_server, "_read_mp") as rm, \
+             patch.object(config_server, "test_forward",
+                          return_value={"ok": True, "latency_ms": 42}) as tf:
+            status, data = self._post(json.dumps({"tunnel": tunnel,
+                                                  "forward": forward}))
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), {"ok": True, "latency_ms": 42})
+        rm.assert_not_called()
+        tf.assert_called_once_with(tunnel, forward)
+
+    def test_legacy_index_body_still_resolves_saved_tunnel(self):
+        """旧载荷 {index, forward} 兼容：按已保存隧道解析（agent.md 契约）。"""
+        tunnel = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 22}
+        forward = {"local_port": 9000, "remote_host": "10.0.0.5",
+                   "remote_port": 8000}
+        with patch.object(config_server, "_read_mp",
+                          return_value={"tunnels": [tunnel]}), \
+             patch.object(config_server, "test_forward",
+                          return_value={"ok": True, "latency_ms": 42}) as tf:
+            status, data = self._post(json.dumps({"index": 0,
+                                                  "forward": forward}))
+        self.assertEqual(status, 200)
+        tf.assert_called_once_with(tunnel, forward)
+
+
+class TestForwardProbeLogic(unittest.TestCase):
+    """config_server.test_forward 的端点职责：输入守卫 + Keychain 取用 +
+    委托 ssh_launch.probe_forward（-W argv / 分类的测试在 test_ssh_launch.py）。"""
+
+    _KEY_TUNNEL = {
+        "ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222,
+        "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519",
+    }
+    _PW_TUNNEL = {"ssh_host": "example.com", "ssh_user": "u",
+                  "ssh_port": 22, "auth_type": "password"}
+
+    def test_invalid_tunnel_guarded_without_probe(self):
+        with patch.object(config_server.ssh_launch, "probe_forward") as pf:
+            result = config_server.test_forward(
+                {"ssh_host": "  ", "ssh_port": 22}, {"remote_port": 8000})
+        pf.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertIn("地址", result["error"])
+
+    def test_option_like_destination_is_rejected(self):
+        result = config_server.test_forward(
+            {"ssh_host": "-oProxyCommand=evil"}, {"remote_port": 8000})
+        self.assertFalse(result["ok"])
+        self.assertIn("无效", result["error"])
+
+    def test_password_auth_without_saved_password(self):
+        with patch.object(config_server.keychain, "get_password",
+                          return_value=""), \
+             patch.object(config_server.ssh_launch, "probe_forward") as pf:
+            result = config_server.test_forward(
+                self._PW_TUNNEL, {"remote_port": 8000})
+        pf.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertIn("密码", result["error"])
+
+    def test_delegates_with_form_values_and_password(self):
+        with patch.object(config_server.keychain, "get_password",
+                          return_value="sekrit"), \
+             patch.object(config_server.ssh_launch, "probe_forward",
+                          return_value={"ok": True,
+                                        "latency_ms": 120}) as pf:
+            result = config_server.test_forward(self._PW_TUNNEL, {
+                "local_port": 9000, "remote_host": "10.0.0.5",
+                "remote_port": 8000})
+        self.assertEqual(result, {"ok": True, "latency_ms": 120})
+        args, kwargs = pf.call_args
+        self.assertEqual(kwargs.get("password"), "sekrit")
+        # 隧道侧归一后传入；forward 的三个表单值原样透传（归一在 probe_forward）
+        self.assertEqual(args[0]["ssh_host"], "example.com")
+        self.assertEqual(args[1], "10.0.0.5")
+        self.assertEqual(args[2], 8000)
+
+
 class TestCaptureCleanEndpoint(unittest.TestCase):
     def setUp(self):
         self.server, self.port = _start_server()
