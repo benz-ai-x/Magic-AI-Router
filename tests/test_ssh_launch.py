@@ -451,3 +451,31 @@ class TestProbeForward(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBuildTunnelCommandForwardMode(unittest.TestCase):
+    """纯转发模式（socks5_port=None，多活的转发会话）：无 -D。"""
+
+    _T = {"ssh_host": "srv", "ssh_user": "u", "ssh_port": 22,
+          "auth_type": "key", "ssh_key": "~/.ssh/id_rsa",
+          "forwards": [{"local_port": 9000, "remote_host": "127.0.0.1",
+                        "remote_port": 8000}]}
+
+    def test_none_omits_dash_d(self):
+        sc = ssh_launch.build_tunnel_command(self._T, None)
+        try:
+            self.assertNotIn("-D", sc.cmd)
+            self.assertIn("-L", sc.cmd)
+            self.assertIn("ExitOnForwardFailure=yes", sc.cmd)
+            # 其余策略（host-key 三件套/keepalive/认证）与代理模式恒等
+            self.assertIn("-i", sc.cmd)
+        finally:
+            sc.close_password_fd()
+
+    def test_proxy_mode_still_carries_dash_d(self):
+        sc = ssh_launch.build_tunnel_command(self._T, 1080)
+        try:
+            self.assertIn("-D", sc.cmd)
+            self.assertIn("1080", sc.cmd)
+        finally:
+            sc.close_password_fd()

@@ -178,6 +178,16 @@ class TestMergeConfigForwards(unittest.TestCase):
             {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 80}])
         self.assertEqual(merged["tunnels"][1]["forwards"], [])
 
+    def test_forward_autostart_defaults_and_normalization(self):
+        merged = config.merge_config({"tunnels": [
+            {"ssh_host": "a"},                         # 缺省 False
+            {"ssh_host": "b", "forward_autostart": True},   # 显式开
+            {"ssh_host": "c", "forward_autostart": "yes"},  # 非 bool 归 False
+        ]})
+        self.assertIs(merged["tunnels"][0]["forward_autostart"], False)
+        self.assertIs(merged["tunnels"][1]["forward_autostart"], True)
+        self.assertIs(merged["tunnels"][2]["forward_autostart"], False)
+
     def test_default_list_not_shared_across_tunnels(self):
         """DEFAULT_TUNNEL.copy() 是浅拷贝——forwards 默认 [] 绝不能跨隧道
         共享同一 list 对象（后续 append 会串隧道）。"""

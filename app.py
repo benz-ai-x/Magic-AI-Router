@@ -148,6 +148,8 @@ class MagicProxyApp(rumps.App):
         else:
             self.check_both_ports()
             self._conn.start()
+            # 多活：forward_autostart 的转发会话随应用启动恢复
+            self._conn.apply_autostarts()
 
         rumps.Timer(self._on_tick, 1).start()
 
@@ -212,8 +214,11 @@ class MagicProxyApp(rumps.App):
     def _on_tick(self, _):
         self._stats.tick()
         self._conn.handle_retry()
+        self._conn.handle_retry_forwards()
 
-        # Set icon from pre-check status (matches original ordering)
+        # Set icon from pre-check status (matches original ordering)——
+        # 主图标永远反映代理会话（:8888 上游只依赖它）；转发会话的健康
+        # 在隧道子菜单逐条呈现
         s = self._conn.ssh.status
         self._menu_builder.set_status_icon(
             _status_color_for_connection(s, self._conn.paused))
@@ -227,10 +232,15 @@ class MagicProxyApp(rumps.App):
 
         # SSH check AFTER icon (matches original)
         self._conn.check_ssh()
+        self._conn.check_forwards()
 
-        # Services
+        # Services —— 防睡眠按聚合状态：任一会话在跑就不睡（暂停是代理
+        # 会话语义，转发会话仍在服务时不因代理暂停而允许睡眠）
         self._lifecycle.tick(self._config.get("capture_port", DEFAULT_CAPTURE_PORT))
-        self._lifecycle.sync_sleep(s, self._conn.paused,
+        sleep_status = "connected" if self._conn.any_connected else s
+        sleep_paused = (self._conn.paused
+                        and not self._conn.any_forward_session_connected)
+        self._lifecycle.sync_sleep(sleep_status, sleep_paused,
                              self._config.get("prevent_sleep", False))
 
         # Pending proxied-app relaunch (quit → wait → launch)
@@ -339,6 +349,43 @@ class MagicProxyApp(rumps.App):
                 return
             self.reconnect(None)
         return switch
+
+    # ── 多活转发会话（v0.9） ──────────────────────────────
+
+    def toggle_forward_session(self, tunnel_id):
+        """菜单「启动/停止端口转发」：无会话则启，有则停。"""
+        def act(_):
+            running = {tid for tid, _, _ in self._conn.forward_sessions()}
+            if tunnel_id in running:
+                self._conn.stop_forward(tunnel_id)
+            else:
+                ok, reason = self._conn.start_forward(tunnel_id)
+                if not ok:
+                    self._notify("无法启动端口转发", reason)
+            self._dirty()
+        return act
+
+    def make_reconnect_tunnel(self, tunnel_id):
+        """重连指定隧道：代理隧道走整体 restart（含降级逻辑），转发会话
+        单会话重建（重读磁盘配置）。"""
+        def reload_cfg():
+            try:
+                cfg = load_config()
+            except IdentityMigrationError:
+                return  # restart/restart_forward 对空重载安全（旧配置继续）
+            if cfg:
+                self._config = merge_config(cfg)
+
+        def act(_):
+            if tunnel_id == self._conn.proxy_tunnel_id:
+                self.reconnect(None)
+                return
+            threading.Thread(
+                target=self._conn.restart_forward,
+                args=(tunnel_id, reload_cfg),
+                name="BridgeReconnectForward", daemon=True).start()
+            self._dirty()
+        return act
 
     # ── suanpan ──────────────────────────────────────────
     # SuanpanRuntime 的公开方法组装直接写在 App 的菜单回调里，不再多一层
@@ -594,14 +641,29 @@ class MagicProxyApp(rumps.App):
         kind = action.get("type")
         if kind == ACTION_RECONNECT_PROXY:
             # if_connected 守卫（端口转发保存后的自动应用）：未连接的
-            # 隧道绝不因保存配置被拉起——restart 会无条件启停，必须在此
-            # 拦；显式点击路径不带旗标，行为不变。
-            if action.get("if_connected") and \
-                    self._conn.ssh.status != "connected":
-                logger.info(
-                    "端口转发自动重连跳过：隧道未连接（status=%s）",
-                    self._conn.ssh.status)
-                return
+            # 隧道绝不能因保存配置被拉起——restart 会无条件启停，必须在此
+            # 拦；显式点击路径不带旗标，行为不变。tunnel_id 指定转发会话
+            # 时按该会话自身的连接态守卫（多活）。
+            if action.get("if_connected"):
+                tunnel_id = action.get("tunnel_id")
+                if tunnel_id and tunnel_id != self._conn.proxy_tunnel_id:
+                    states = {tid: st for tid, _, st
+                              in self._conn.forward_sessions()}
+                    if states.get(tunnel_id) != "connected":
+                        logger.info(
+                            "转发会话自动重连跳过：%s 未连接（status=%s）",
+                            tunnel_id, states.get(tunnel_id))
+                        return
+                    threading.Thread(
+                        target=self.make_reconnect_tunnel(tunnel_id),
+                        args=(None,), name="BridgeReconnectForward",
+                        daemon=True).start()
+                    return
+                if self._conn.ssh.status != "connected":
+                    logger.info(
+                        "端口转发自动重连跳过：隧道未连接（status=%s）",
+                        self._conn.ssh.status)
+                    return
             threading.Thread(target=self.reconnect, args=(None,),
                              name="BridgeReconnect", daemon=True).start()
         elif kind == ACTION_OPEN_PATH and action.get("kind") == "captureDir":

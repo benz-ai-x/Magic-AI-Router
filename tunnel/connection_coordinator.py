@@ -3,16 +3,25 @@
 Owns the connection state machine that was previously scattered across MagicProxyApp.
 The App delegates start/stop/reconnect/pause to this module.
 
+多活模型（v0.9）：代理隧道（current_tunnel，携带 -D 的唯一会话，本类
+全部既有状态机照旧）+ 任意多条并行「转发会话」（_ForwardSession，纯
+-L 无 -D，各自持有 monitor/retry/host-key 三件套）。
+
 Interface:
   start()           — start proxy background + SSH connection sequence
   handle_retry()    — check retry scheduler, connect if due (call before icon)
   check_ssh()       — SSH status check + host-key handling (call after icon)
-  restart(cfg_fn)   — full stop + config reload + restart
+  handle_retry_forwards() / check_forwards() — 转发会话的同款 tick 半边
+  start_forward(id) / stop_forward(id) — 转发会话启停
+  restart_forward(id, cfg_fn)          — 重载配置后重建指定转发会话
+  apply_autostarts()                   — 按 forward_autostart 收敛补启
+  restart(cfg_fn)   — full stop + config reload + restart（旧代理降级续跑）
   cancel()          — cancel in-flight connection
-  toggle_pause()    — pause/resume; returns new paused state
+  toggle_pause()    — pause/resume; returns new paused state（仅代理会话）
   stop_all()        — stop everything for quit
 
-Properties: ssh, paused, proxy_running, current_tunnel, socks5_port
+Properties: ssh, paused, proxy_running, current_tunnel, socks5_port,
+            any_connected, forward_sessions
 """
 from __future__ import annotations
 
@@ -25,6 +34,54 @@ from tunnel.host_key_flow import HostKeyFlow
 from shared.stats import Stats
 
 logger = logging.getLogger("magic-proxy.connection")
+
+
+class _ForwardSession:
+    """一条转发隧道的运行会话（纯 -L，无 -D）。
+
+    monitor / retry / host-key 三件套按会话独立实例化——SSHMonitor 与
+    RetryScheduler 实例隔离干净；单活时代共享一个 HostKeyFlow 时两个
+    generation 会互吞告警，每会话一份后天然消失。
+    """
+
+    def __init__(self, tunnel_id, log_sink, tunnel_fn, password_fn):
+        self.tunnel_id = tunnel_id
+        self.monitor = SSHMonitor(line_sink=log_sink)
+        self.retry = RetryScheduler()
+        self._tunnel_fn = tunnel_fn      # () -> tunnel dict or None
+        self._password_fn = password_fn  # (tunnel) -> str
+        self.host_key = HostKeyFlow(
+            ssh_monitor=self.monitor,
+            get_tunnel=tunnel_fn,
+            get_socks5_port=lambda: None,  # 转发模式无 -D
+            get_password=lambda: (
+                password_fn(tunnel_fn()) if tunnel_fn() else ""),
+            on_connect=self._start_now,
+            on_reconnect=self.connect,
+        )
+
+    def connect(self):
+        """发起连接序列：重试计数清零 + host-key 信任检查（首连信任流）。"""
+        self.retry.cancel()
+        self.host_key.start_check()
+
+    def _start_now(self):
+        tunnel = self._tunnel_fn()
+        if tunnel:
+            self.monitor.start(tunnel, None, self._password_fn(tunnel))
+
+    def reconnect_now(self):
+        """#86 僵尸重建：connected 主动拆（不等 ServerAlive 判死）再连。"""
+        if self.monitor.status == "connecting":
+            return
+        if self.monitor.status == "connected":
+            self.monitor.stop()
+        self.connect()
+
+    def stop(self, blocking=True):
+        self.retry.cancel()
+        self.host_key.cancel()
+        self.monitor.stop(blocking=blocking)
 
 
 class ConnectionCoordinator:
@@ -57,11 +114,16 @@ class ConnectionCoordinator:
                 self._get_tunnel_password(self.current_tunnel)
                 if self.current_tunnel else ""
             ),
-            on_connect=lambda: self._ssh.start(
-                self.current_tunnel, self.socks5_port,
-                self._get_tunnel_password(self.current_tunnel)),
+            on_connect=self._start_proxy_ssh,
             on_reconnect=self.start_ssh,
         )
+        # 多活转发会话注册表：tunnel_id → _ForwardSession
+        self._forward_sessions = {}
+        self._ssh_log_sink = ssh_log_sink
+        # 代理会话实际启动时的隧道 id——restart 的降级判定必须用「跑着
+        # 的那条」而非配置里的 current_tunnel（切换流在 restart 前就已把
+        # current_tunnel 写成新值）
+        self._launched_proxy_id = None
 
     # ── config-derived properties ───────────────────────
 
@@ -93,6 +155,31 @@ class ConnectionCoordinator:
     def proxy_running(self):
         return self._proxy_running
 
+    @property
+    def any_connected(self):
+        """任一会话已连接（防睡眠等聚合判定的真相源）。"""
+        if self._ssh.status == "connected":
+            return True
+        return any(s.monitor.status == "connected"
+                   for s in self._forward_sessions.values())
+
+    @property
+    def any_forward_session_connected(self):
+        """是否有转发会话在服务（防睡眠的暂停豁免判定）。"""
+        return any(s.monitor.status == "connected"
+                   for s in self._forward_sessions.values())
+
+    @property
+    def proxy_tunnel_id(self):
+        t = self.current_tunnel
+        return t.get("id") if t else None
+
+    def forward_sessions(self):
+        """转发会话快照 [(tunnel_id, name, status)]——菜单/UI 投影用。"""
+        return [(s.tunnel_id, s.monitor.current_name or s.tunnel_id,
+                 s.monitor.status)
+                for s in self._forward_sessions.values()]
+
     # ── lifecycle ───────────────────────────────────────
 
     def start(self):
@@ -123,21 +210,143 @@ class ConnectionCoordinator:
         try:
             if self._paused:
                 return
-            # #85：error 也放行——每拍继续 handle_error（timer 存活时自去重），
-            # 耗尽退避表后按封顶节奏无限重试，不再永久躺平等手动。
-            if self._ssh.status not in ("connecting", "connected",
-                                        "stopped", "error"):
-                return
-            self._ssh.check(self.socks5_port)
-            if self._ssh.status == "connected":
-                self._retry.reset()
-            elif self._ssh.status == "error":
-                if self._ssh.is_host_key_changed and not self._host_key.change_prompted:
-                    self._host_key.begin_replacement()
-                else:
-                    self._retry.handle_error()
+            self._check_monitor(
+                self._ssh, self._retry, self._host_key, self.socks5_port)
         finally:
             self._lifecycle_lock.release()
+
+    @staticmethod
+    def _check_monitor(monitor, retry, host_key, probe_port):
+        """单会话健康检查的共享形状（代理/转发会话同款）。
+
+        #85：error 也放行——每拍继续 handle_error（timer 存活时自去重），
+        耗尽退避表后按封顶节奏无限重试，不再永久躺平等手动。
+        """
+        if monitor.status not in ("connecting", "connected",
+                                  "stopped", "error"):
+            return
+        monitor.check(probe_port)
+        if monitor.status == "connected":
+            retry.reset()
+        elif monitor.status == "error":
+            if monitor.is_host_key_changed and not host_key.change_prompted:
+                host_key.begin_replacement()
+            else:
+                retry.handle_error()
+
+    def handle_retry_forwards(self):
+        """转发会话的重试半边（tick 调用，先于图标）。"""
+        for session in list(self._forward_sessions.values()):
+            if session.retry.consume_due():
+                if session.monitor.status in ("stopped", "error"):
+                    session.connect()
+
+    def check_forwards(self):
+        """转发会话的健康检查半边（tick 调用，后于图标）。
+
+        隧道被删 / forwards 被清空的会话在此收敛停掉（check 即 reconcile）。
+        """
+        if not self._lifecycle_lock.acquire(blocking=False):
+            return
+        try:
+            for tunnel_id in list(self._forward_sessions):
+                session = self._forward_sessions[tunnel_id]
+                tunnel = self._tunnel_by_id(tunnel_id)
+                if tunnel is None or not tunnel.get("forwards"):
+                    del self._forward_sessions[tunnel_id]
+                    session.stop()
+                    logger.info("转发会话收敛停止：%s（无隧道或无转发规则）",
+                                tunnel_id)
+                    continue
+                self._check_monitor(
+                    session.monitor, session.retry, session.host_key,
+                    self._forward_probe_port(tunnel))
+        finally:
+            self._lifecycle_lock.release()
+
+    def _tunnel_by_id(self, tunnel_id):
+        for t in self._config.get("tunnels", []):
+            if isinstance(t, dict) and t.get("id") == tunnel_id:
+                return t
+        return None
+
+    @staticmethod
+    def _forward_probe_port(tunnel):
+        """转发会话就绪探测口：第一条 -L 的本地端口。"""
+        for f in tunnel.get("forwards") or []:
+            if isinstance(f, dict):
+                lp = f.get("local_port")
+                if isinstance(lp, int) and not isinstance(lp, bool) \
+                        and 1 <= lp <= 65535:
+                    return lp
+        return None
+
+    # ── 转发会话生命周期（多活） ─────────────────────────
+
+    def start_forward(self, tunnel_id):
+        """启动一条纯 -L 转发会话。返回 (ok, reason)。
+
+        拒绝条件：隧道不存在 / 无转发规则 / 是代理隧道自身（代理隧道
+        的 forwards 随其代理会话一起跑）。
+        """
+        with self._lifecycle_lock:
+            tunnel = self._tunnel_by_id(tunnel_id)
+            if tunnel is None:
+                return False, "隧道不存在"
+            if tunnel_id == self.proxy_tunnel_id:
+                return False, "代理隧道自身随「连接代理」启动"
+            if not tunnel.get("forwards"):
+                return False, "该隧道没有端口转发规则"
+            if tunnel_id in self._forward_sessions:
+                session = self._forward_sessions[tunnel_id]
+                if session.monitor.status in ("stopped", "error"):
+                    session.connect()
+                return True, ""
+            session = _ForwardSession(
+                tunnel_id, self._ssh_log_sink,
+                tunnel_fn=lambda tid=tunnel_id: self._tunnel_by_id(tid),
+                password_fn=self._get_tunnel_password)
+            self._forward_sessions[tunnel_id] = session
+            session.connect()
+            logger.info("转发会话启动：%s", tunnel.get("name", tunnel_id))
+            return True, ""
+
+    def stop_forward(self, tunnel_id, blocking=True):
+        """停掉一条转发会话（幂等）。"""
+        with self._lifecycle_lock:
+            session = self._forward_sessions.pop(tunnel_id, None)
+            if session is None:
+                return
+            session.stop(blocking=blocking)
+            logger.info("转发会话停止：%s", tunnel_id)
+
+    def restart_forward(self, tunnel_id, reload_config_fn):
+        """重载配置后重建指定转发会话（保存转发后的守卫重连路径）。"""
+        with self._lifecycle_lock:
+            session = self._forward_sessions.get(tunnel_id)
+            if session is None:
+                return False
+            was_alive = session.monitor.status == "connected"
+            session.stop()
+            reload_config_fn()
+            tunnel = self._tunnel_by_id(tunnel_id)
+            if tunnel is None or not tunnel.get("forwards"):
+                del self._forward_sessions[tunnel_id]
+                return True
+            if was_alive or tunnel.get("forward_autostart"):
+                session.connect()
+            return True
+
+    def apply_autostarts(self):
+        """按 forward_autostart 收敛补启（app 启动与配置重载后调用）。"""
+        for t in self._config.get("tunnels", []):
+            if not (isinstance(t, dict) and t.get("forward_autostart")):
+                continue
+            tid = t.get("id")
+            if tid and tid != self.proxy_tunnel_id \
+                    and tid not in self._forward_sessions \
+                    and t.get("forwards"):
+                self.start_forward(tid)
 
     def handle_reconnect_trigger(self):
         """#86：唤醒等外部事件 → 立即重连（跳过退避）。
@@ -145,20 +354,31 @@ class ConnectionCoordinator:
         只做提前触发，不改状态机语义：connected 视为僵尸链路主动重建
         （不等 ServerAlive 判死）；connecting 让现有流程收敛；其余直接
         走 start_ssh（内部 cancel 重试计数 + host-key 检查）。
+        多活：唤醒断了所有隧道的 TCP——转发会话同样僵尸重建。
         """
         with self._lifecycle_lock:
-            if self._paused:
-                return
-            status = self._ssh.status
-            if status == "connecting":
-                return
-            if status == "connected":
-                self._ssh.stop()
-            self.start_ssh()
+            if not self._paused:
+                status = self._ssh.status
+                if status != "connecting":
+                    if status == "connected":
+                        self._ssh.stop()
+                    self.start_ssh()
+            for session in list(self._forward_sessions.values()):
+                session.reconnect_now()
 
     def restart(self, reload_config_fn):
-        """Full stop + config reload + restart."""
+        """Full stop + config reload + restart（多活版）。
+
+        代理会话照旧整体重启；旧代理隧道降级续跑（有 forwards 则转纯
+        转发会话，无则彻底停）；既有转发会话按重载后配置收敛（隧道被
+        删/无 forwards 的停掉，autostart 的补启，其余保持运行不动——
+        改动某条隧道的 forwards 由 restart_forward 单会话重建，不在此
+        大换血）。
+        """
         with self._lifecycle_lock:
+            # 降级对象 = 实际跑着的代理隧道（非配置 current_tunnel——
+            # 切换流在 restart 前就已改写它）
+            old_proxy_id = self._launched_proxy_id
             self._retry.cancel()
             self._host_key.cancel()
             self._ssh.stop()
@@ -167,6 +387,15 @@ class ConnectionCoordinator:
             reload_config_fn()
             self._start_background()
             self.start_ssh()
+            # 旧代理隧道降级续跑：有 forwards 转 0-D 会话；无则清干净
+            if old_proxy_id and old_proxy_id != self.proxy_tunnel_id:
+                old_tunnel = self._tunnel_by_id(old_proxy_id)
+                if old_tunnel and old_tunnel.get("forwards"):
+                    if old_proxy_id not in self._forward_sessions:
+                        self.start_forward(old_proxy_id)
+                else:
+                    self.stop_forward(old_proxy_id)
+            self.apply_autostarts()
 
     def cancel(self):
         """Cancel an in-flight SSH connection attempt."""
@@ -174,6 +403,9 @@ class ConnectionCoordinator:
             self._retry.cancel()
             self._host_key.cancel()
             self._ssh.stop()
+            for session in list(self._forward_sessions.values()):
+                session.stop()
+            self._forward_sessions.clear()
             self._proxy_running = False
             self._proxy_runtime.stop()
             logger.info("connection cancelled by user")
@@ -199,6 +431,9 @@ class ConnectionCoordinator:
             self._retry.cancel()
             self._host_key.cancel()
             self._ssh.stop(blocking=False)
+            for session in list(self._forward_sessions.values()):
+                session.stop(blocking=False)
+            self._forward_sessions.clear()
             self._proxy_runtime.stop()
             self._proxy_running = False
 
@@ -218,7 +453,13 @@ class ConnectionCoordinator:
             return
         if self._ssh.status in ("connected", "connecting"):
             return
+        self._start_proxy_ssh()
+
+    def _start_proxy_ssh(self):
+        """启动代理会话的 ssh（host-key 首连与重试共用），并记录实际
+        启动的隧道 id——restart 降级判定的真相源。"""
         tunnel = self.current_tunnel
         if tunnel:
+            self._launched_proxy_id = tunnel.get("id")
             self._ssh.start(tunnel, self.socks5_port,
                             self._get_tunnel_password(tunnel))

@@ -31,6 +31,9 @@ DEFAULT_TUNNEL = {
     "ssh_key": "",
     "ssh_compression": True,
     "forwards": [],
+    # 多活（v0.9）：该隧道的转发会话随应用启动自动恢复（纯 -L，不占
+    # socks5 端口；代理隧道自身不受此字段影响）
+    "forward_autostart": False,
 }
 
 DEFAULT_CONFIG = {
@@ -265,6 +268,7 @@ def merge_config(cfg):
                 mt["ssh_port"] = 22
             # 浅拷贝防护：forwards 默认 [] 不跨隧道共享，逐行全新构造
             mt["forwards"] = normalize_forwards(mt.get("forwards"))
+            mt["forward_autostart"] = mt.get("forward_autostart") is True
             merged["tunnels"].append(mt)
     for key, default in (("socks5_port", 1080), ("capture_port", DEFAULT_CAPTURE_PORT),
                          ("config_port", 9528), ("http_listen_port", 8888)):
