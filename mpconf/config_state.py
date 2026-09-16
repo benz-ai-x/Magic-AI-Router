@@ -121,6 +121,38 @@ class ConfigStateStore:
                     not isinstance(retention, int)
                     or not 0 <= retention <= _RETENTION_MAX):
                 errors.append(f"retention_days 无效（须 0..{_RETENTION_MAX}）")
+            # 端口转发行校验（merge 前：保存候选必须规整——字符串端口的
+            # 读时兼容只发生在 load 路径的 normalize_forwards）
+            for _ti, _t in enumerate(mp_c.get("tunnels") or []):
+                if not isinstance(_t, dict):
+                    continue
+                _tname = _t.get("name") or f"#{_ti}"
+                _forwards = _t.get("forwards")
+                if _forwards is None:
+                    continue
+                if not isinstance(_forwards, list):
+                    errors.append(f"隧道 {_tname} 的 forwards 必须是列表")
+                    continue
+                for _fi, _f in enumerate(_forwards):
+                    if not isinstance(_f, dict):
+                        errors.append(
+                            f"隧道 {_tname} 的第 {_fi + 1} 条端口转发必须是对象")
+                        continue
+                    for _key in ("local_port", "remote_port"):
+                        _v = _f.get(_key)
+                        if (not isinstance(_v, int) or isinstance(_v, bool)
+                                or not 1 <= _v <= _SP_PORT_MAX):
+                            errors.append(
+                                f"隧道 {_tname} 第 {_fi + 1} 条转发的 "
+                                f"{_key} 无效（须 1..65535）")
+                    _rh = _f.get("remote_host")
+                    if _rh is None:
+                        _rh = "127.0.0.1"
+                    if (not isinstance(_rh, str) or not _rh.strip()
+                            or any(c.isspace() for c in _rh) or ":" in _rh):
+                        errors.append(
+                            f"隧道 {_tname} 第 {_fi + 1} 条转发的 remote_host "
+                            "无效（须主机名或 IPv4 地址，暂不支持 IPv6）")
 
         if sp_c is not None:
             lp = sp_c.get("listen_port")
@@ -201,6 +233,30 @@ class ConfigStateStore:
                     f"端口冲突：{_seen[_p]} 与 {_name} 同为 {_p}")
             else:
                 _seen[_p] = _name
+        # 端口转发本地端口：对保留端口冲突 + 同隧道内重复单独拦；跨隧道
+        # 同端口合法（同一时间只有一条隧道活跃——prod/staging 同构转发
+        # 布局是常见形态），故不并入 _port_refs 的全局重复判定
+        if mp_c is not None:
+            for _ti, _t in enumerate(mp_c.get("tunnels") or []):
+                if not isinstance(_t, dict):
+                    continue
+                _tname = _t.get("name") or f"#{_ti}"
+                _fw_seen = {}
+                for _f in _t.get("forwards") or []:
+                    if not isinstance(_f, dict):
+                        continue
+                    _lp = _f.get("local_port")
+                    if not isinstance(_lp, int) or isinstance(_lp, bool):
+                        continue
+                    _ref = f"隧道 {_tname} 端口转发本地端口"
+                    if _lp in _fw_seen:
+                        errors.append(
+                            f"隧道 {_tname} 的转发本地端口 {_lp} 重复")
+                    elif _lp in _seen:
+                        errors.append(
+                            f"端口冲突：{_seen[_lp]} 与 {_ref} 同为 {_lp}")
+                    else:
+                        _fw_seen[_lp] = True
 
         if errors:
             return CommitPlan(False, errors)

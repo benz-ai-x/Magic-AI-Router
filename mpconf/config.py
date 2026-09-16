@@ -30,6 +30,7 @@ DEFAULT_TUNNEL = {
     "auth_type": "key",
     "ssh_key": "",
     "ssh_compression": True,
+    "forwards": [],
 }
 
 DEFAULT_CONFIG = {
@@ -52,6 +53,38 @@ def stable_tunnel_id(user: str, host: str, port) -> str:
     import hashlib
     basis = f"{user or ''}@{host or ''}:{port or 22}"
     return "t-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:10]
+
+
+def _coerce_port(value, fallback: int) -> int:
+    """端口读时兼容：字符串数字接受，非法/越界回落 fallback（merge 侧）。"""
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return port if 1 <= port <= 65535 else fallback
+
+
+def _normalize_forward(row) -> dict:
+    """归一一条端口转发行：剥未知键、端口读时兼容、remote_host 缺省回环。
+
+    merge 的 DEFAULT_TUNNEL.copy() 是浅拷贝——forwards 列表绝不能跨隧道
+    共享默认值，这里逐行构造全新 dict。prepare 校验在 merge 前做严格
+    检查（非 int 即拒）；本函数是读路径的容错半边：手编字符串端口接受，
+    非法值落 0（下次保存被 prepare 拦下，绝不静默丢行）。
+    """
+    remote_host = str(row.get("remote_host") or "").strip() or "127.0.0.1"
+    return {
+        "local_port": _coerce_port(row.get("local_port"), 0),
+        "remote_host": remote_host,
+        "remote_port": _coerce_port(row.get("remote_port"), 0),
+    }
+
+
+def normalize_forwards(forwards) -> list:
+    """forwards 字段的读路径归一入口：非列表→[]，非 dict 行剔除。"""
+    if not isinstance(forwards, list):
+        return []
+    return [_normalize_forward(f) for f in forwards if isinstance(f, dict)]
 
 
 def assign_stable_ids(tunnels) -> int:
@@ -232,6 +265,8 @@ def merge_config(cfg):
                 mt["ssh_port"] = 22
             if not 1 <= mt["ssh_port"] <= 65535:
                 mt["ssh_port"] = 22
+            # 浅拷贝防护：forwards 默认 [] 不跨隧道共享，逐行全新构造
+            mt["forwards"] = normalize_forwards(mt.get("forwards"))
             merged["tunnels"].append(mt)
     for key, default in (("socks5_port", 1080), ("capture_port", DEFAULT_CAPTURE_PORT),
                          ("config_port", 9528), ("http_listen_port", 8888)):

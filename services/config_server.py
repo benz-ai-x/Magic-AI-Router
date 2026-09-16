@@ -132,6 +132,37 @@ def test_tunnel(tunnel):
     return ssh_launch.probe(normalized, password=password)
 
 
+def test_forward(tunnel, forward):
+    """One-shot port-forward probe: tunnel + 一条显式转发行（表单意图）。
+
+    本函数只持有端点职责：输入校验（地址/端口守卫）与 Keychain 取密码；
+    SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe_forward，
+    -W 直连远端端口）。测的是请求体里的 forward——未保存的行同样可测。
+
+    Returns {"ok": True, "latency_ms": int} or {"ok": False, "error": str}.
+    """
+    host = str(tunnel.get("ssh_host") or "").strip()
+    user = str(tunnel.get("ssh_user") or "").strip()
+    try:
+        port = int(tunnel.get("ssh_port", 22))
+    except (TypeError, ValueError):
+        port = 0
+    destination = f"{user}@{host}" if user else host
+    if not host or not 1 <= port <= 65535 or destination.startswith("-"):
+        return {"ok": False, "error": "隧道地址或端口无效"}
+
+    password = ""
+    if tunnel.get("auth_type") == "password":
+        password = keychain.get_password(tunnel)
+        if not password:
+            return {"ok": False, "error": "钥匙串中没有该隧道的密码，请先保存"}
+
+    normalized = dict(tunnel, ssh_host=host, ssh_user=user, ssh_port=port)
+    return ssh_launch.probe_forward(
+        normalized, forward.get("remote_host"), forward.get("remote_port"),
+        password=password)
+
+
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Carries the per-server callback refs on the INSTANCE (not class
     attributes): parallel ConfigServers in tests can never cross-talk, and
@@ -313,7 +344,8 @@ class _Handler(BaseHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         if path not in ("/api/fetch-models", "/api/test-provider", "/api/setup-claude-code",
-                        "/api/cc-sync-preview", "/api/test-tunnel", "/api/capture-clean"):
+                        "/api/cc-sync-preview", "/api/test-tunnel", "/api/test-forward",
+                        "/api/capture-clean"):
             self._json(404, {"error": "not found"})
             return
         data = self._read_json_body()
@@ -329,6 +361,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, claude_code_setup.setup(roles=roles))
         elif path == "/api/test-tunnel":
             code, payload = self._test_tunnel(data)
+            self._json(code, payload)
+        elif path == "/api/test-forward":
+            code, payload = self._test_forward(data)
             self._json(code, payload)
         elif path == "/api/capture-clean":
             self._json(200, self._capture_clean())
@@ -355,6 +390,29 @@ class _Handler(BaseHTTPRequestHandler):
         if not 0 <= idx < len(tunnels):
             return 400, {"ok": False, "error": "隧道索引越界"}
         return 200, test_tunnel(tunnels[idx])
+
+    def _test_forward(self, data):
+        """POST /api/test-forward {index, forward} → probe_forward once.
+
+        Returns (http_code, payload): 400 for bad index/body/forward shape,
+        200 with {"ok": bool, "latency_ms"?: int, "error"?: str} once the
+        probe actually runs. forward 取表单当前值——不要求已保存。
+        """
+        if not isinstance(data, dict):
+            return 400, {"ok": False, "error": "无效的请求体"}
+        idx = data.get("index")
+        if isinstance(idx, bool) or not isinstance(idx, int):
+            return 400, {"ok": False, "error": "无效的隧道索引"}
+        forward = data.get("forward")
+        if not isinstance(forward, dict):
+            return 400, {"ok": False, "error": "无效的转发行"}
+        cfg = _read_mp()
+        tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
+        if not tunnels:
+            return 400, {"ok": False, "error": "尚未配置隧道"}
+        if not 0 <= idx < len(tunnels):
+            return 400, {"ok": False, "error": "隧道索引越界"}
+        return 200, test_forward(tunnels[idx], forward)
 
     def _capture_clean(self):
         """POST /api/capture-clean → empty the capture dir (keep the dir)."""

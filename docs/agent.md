@@ -25,7 +25,10 @@
       "ssh_port": 22,
       "auth_type": "key",
       "ssh_key": "~/.ssh/id_rsa",
-      "ssh_compression": true
+      "ssh_compression": true,
+      "forwards": [
+        {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000}
+      ]
     }
   ],
   "capture_port": 8080,
@@ -40,6 +43,7 @@
 - `auth_type`: `"key"`（默认，用 ssh_key）或 `"password"`（需 sshpass，密码走 Keychain）
 - `http_listen_port`: 本地 HTTP 代理监听端口（整型；旧 `"host:port"` 字符串 `http_listen` 读时兼容）
 - `current_tunnel`: 当前使用的隧道索引
+- `forwards`: per-tunnel 本地端口转发（`ssh -L`，绑定恒 127.0.0.1）——远程 `remote_host:remote_port` 映射到本机 `local_port`；`remote_host` 缺省 `"127.0.0.1"`（服务器侧）。改 forwards 后需重连隧道生效（设置窗保存时已连接则自动重连）；同隧道 `local_port` 互斥且不得撞全局保留端口（8888/8080/9527/9528/socks5）
 
 ### ~/.suanpan.yaml — AI 路由配置
 
@@ -94,6 +98,7 @@ query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `
 | GET | `/api/usage?range=today\|7d\|month\|all` | 聚合本地用量日志；缺省 `all`，`month` = CST 自然月；返回总览、供应商、CST 每日与路由来源统计 |
 | POST | `/api/fetch-models` | 拉取供应商模型列表（body: `{"provider": "GLM_MAX"}`） |
 | POST | `/api/test-provider` | 测试供应商连通性（body: `{"provider": "GLM_MAX", "model": "glm-5.2"}`） |
+| POST | `/api/test-forward` | 测试一条端口转发（body: `{"index": 0, "forward": {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000}}`；一次性 `ssh -W` 探测表单值，无需先保存，返回 `{"ok", "latency_ms"?, "error"?}`） |
 
 ### 示例：读取当前配置
 

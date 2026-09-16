@@ -3,16 +3,18 @@
 「按我们的策略调用 ssh」只在本模块存在一份：
 
 - host-key 三件套（StrictHostKeyChecking=yes + 应用专用 known_hosts +
-  GlobalKnownHostsFile=/dev/null）——两个调用方行为恒等；
+  GlobalKnownHostsFile=/dev/null）——调用方行为恒等；
 - 认证注入：sshpass-via-fd（密码永不出现在 argv / ps）或 key 认证 -i 传参；
 - stderr → 中文短语的失败分类表（有序，变更先于未信任）。
 
-两个调用方：
+调用方：
 - tunnel/proxy.py::SSHMonitor.start —— 长驻隧道，消费 build_tunnel_command；
-- services/config_server.py::test_tunnel —— 一次性探针，走 probe() 全包。
+- services/config_server.py::test_tunnel / test_forward —— 一次性探针，
+  走 probe() / probe_forward() 全包。
 """
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -130,11 +132,35 @@ def _with_auth(tunnel, ssh_args, password, extra_auth_args=()):
                       destination=destination)
 
 
+def _forward_args(tunnel):
+    """本地端口转发（-L）argv 段：绑定地址恒 127.0.0.1（本机回环面）。
+
+    非法行（端口越界/缺字段/非对象）防御性跳过——prepare 校验与 merge
+    归一双保险下，正常流转的配置永不触达跳过分支。
+    """
+    args = []
+    for f in tunnel.get("forwards") or []:
+        if not isinstance(f, dict):
+            continue
+        lp = f.get("local_port")
+        rp = f.get("remote_port")
+        if not (isinstance(lp, int) and not isinstance(lp, bool)
+                and 1 <= lp <= 65535):
+            continue
+        if not (isinstance(rp, int) and not isinstance(rp, bool)
+                and 1 <= rp <= 65535):
+            continue
+        rh = str(f.get("remote_host") or "").strip() or "127.0.0.1"
+        args += ["-L", f"127.0.0.1:{lp}:{rh}:{rp}"]
+    return args
+
+
 def build_tunnel_command(tunnel, socks5_port, password=""):
-    """长驻隧道（ssh -D）的完整调用描述；spawn 由 SSHMonitor 负责。"""
+    """长驻隧道（ssh -D + 逐条 -L）的完整调用描述；spawn 由 SSHMonitor 负责。"""
     port = str(tunnel.get("ssh_port", 22))
     ssh_args = (
         ["-D", str(socks5_port), "-N", "-o", "ExitOnForwardFailure=yes"]
+        + _forward_args(tunnel)
         + _host_key_args()
         + ["-o", "ServerAliveInterval=20", "-o", "ServerAliveCountMax=3",
            # #87：跨国链路——更快判死（60s）、不标 DSCP（防中间设备针对性丢包）、
@@ -184,4 +210,59 @@ def probe(tunnel, password=""):
     # bytes + replace decode (not text=True)：SSH stderr 可能携带原始字节，
     # 严格 locale 解码绝不能把探针打崩。
     stderr = (proc.stderr or b"").decode("utf-8", "replace")
+    return {"ok": False, "error": describe_failure(stderr)}
+
+
+def probe_forward(tunnel, remote_host, remote_port, password=""):
+    """一次性端口转发探针：ssh -W 把 stdio 桥到远端 remote_host:remote_port。
+
+    与 probe()/真实隧道同一套 host-key 三件套与认证策略。stdin=DEVNULL
+    立即 EOF：远程端可达则 ssh 干净退出（0），远程拒绝/SSH 层失败则非 0
+    且 stderr 可分类。测的是「表单里的意图」——不依赖隧道当前状态，
+    未保存的转发行同样可测。返回 {"ok": True, "latency_ms": int} 或
+    {"ok": False, "error": "<中文短语>"}——绝不抛异常。
+    """
+    rh = str(remote_host or "").strip() or "127.0.0.1"
+    try:
+        rp = int(remote_port)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "远程端口无效（须 1..65535）"}
+    if not 1 <= rp <= 65535:
+        return {"ok": False, "error": "远程端口无效（须 1..65535）"}
+    if any(c.isspace() for c in rh) or ":" in rh:
+        return {"ok": False, "error": "远程地址无效（暂不支持 IPv6）"}
+    port = str(tunnel.get("ssh_port", 22))
+    ssh_args = (["-o", "ConnectTimeout=5"] + _host_key_args()
+                + ["-p", port, "-W", f"{rh}:{rp}", _destination(tunnel)])
+    if tunnel.get("auth_type") == "password":
+        extra = ("-o", "NumberOfPasswordPrompts=1")
+    else:
+        extra = ("-o", "BatchMode=yes")
+    sc = None
+    try:
+        sc = _with_auth(tunnel, ssh_args, password, extra)
+        started = time.monotonic()
+        proc = subprocess.run(
+            sc.cmd, capture_output=True, timeout=PROBE_TIMEOUT,
+            stdin=subprocess.DEVNULL, pass_fds=sc.pass_fds)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "连接超时"}
+    except OSError:
+        hint = "（密码认证需要 sshpass）" if password else ""
+        return {"ok": False, "error": f"无法启动 ssh{hint}"}
+    finally:
+        if sc is not None:
+            sc.close_password_fd()
+    if proc.returncode == 0:
+        return {"ok": True, "latency_ms": elapsed_ms}
+    stderr = (proc.stderr or b"").decode("utf-8", "replace")
+    # -W 专属分类先行：远程端口拒绝在 stderr 呈现为 channel open failed，
+    # 其中的 "Connection refused" 若落回通用表会被误报成 SSH 层被拒
+    if "open failed" in stderr:
+        if "refused" in stderr:
+            return {"ok": False, "error": f"远程 {rh}:{rp} 拒绝连接（服务未监听？）"}
+        if "timed out" in stderr:
+            return {"ok": False, "error": f"远程 {rh}:{rp} 连接超时"}
+        return {"ok": False, "error": f"无法连到远程 {rh}:{rp}"}
     return {"ok": False, "error": describe_failure(stderr)}

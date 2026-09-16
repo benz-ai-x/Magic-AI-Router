@@ -137,6 +137,60 @@ class TestMergeConfigTunnels(unittest.TestCase):
         merged = config.merge_config({"tunnels": [{"ssh_host": "s", "auth_type": "bogus"}]})
         self.assertEqual(merged["tunnels"][0]["auth_type"], "key")
 
+    def test_tunnel_missing_fields_get_forwards_default(self):
+        merged = config.merge_config({"tunnels": [{"ssh_host": "srv"}]})
+        # forwards 缺省得 []（旧配置无感升级，无需迁移脚本）
+        self.assertEqual(merged["tunnels"][0]["forwards"], [])
+
+
+class TestMergeConfigForwards(unittest.TestCase):
+    """端口转发读路径归一：剥未知键、字符串端口兼容、缺省回填、浅拷贝防护。"""
+
+    def test_string_ports_read_compat(self):
+        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "forwards": [
+            {"local_port": "9000", "remote_host": "db", "remote_port": "5432"},
+        ]}]})
+        self.assertEqual(merged["tunnels"][0]["forwards"], [
+            {"local_port": 9000, "remote_host": "db", "remote_port": 5432}])
+
+    def test_unknown_keys_stripped_and_remote_host_defaults(self):
+        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "forwards": [
+            {"local_port": 9000, "remote_port": 8000, "note": "dropped"},
+        ]}]})
+        self.assertEqual(merged["tunnels"][0]["forwards"], [
+            {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000}])
+
+    def test_invalid_port_falls_to_zero_not_dropped(self):
+        """非法端口落 0（下次保存被 prepare 拦），绝不静默丢行。"""
+        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "forwards": [
+            {"local_port": "abc", "remote_host": "h", "remote_port": 70000},
+        ]}]})
+        self.assertEqual(merged["tunnels"][0]["forwards"], [
+            {"local_port": 0, "remote_host": "h", "remote_port": 0}])
+
+    def test_non_dict_rows_and_non_list_dropped(self):
+        merged = config.merge_config({"tunnels": [
+            {"ssh_host": "s", "forwards": ["bad", 42,
+             {"local_port": 9000, "remote_port": 80}]},
+            {"ssh_host": "s2", "forwards": "not-a-list"},
+        ]})
+        self.assertEqual(merged["tunnels"][0]["forwards"], [
+            {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 80}])
+        self.assertEqual(merged["tunnels"][1]["forwards"], [])
+
+    def test_default_list_not_shared_across_tunnels(self):
+        """DEFAULT_TUNNEL.copy() 是浅拷贝——forwards 默认 [] 绝不能跨隧道
+        共享同一 list 对象（后续 append 会串隧道）。"""
+        merged = config.merge_config({"tunnels": [
+            {"ssh_host": "a"}, {"ssh_host": "b"},
+        ]})
+        fa, fb = merged["tunnels"][0]["forwards"], merged["tunnels"][1]["forwards"]
+        self.assertIsNot(fa, fb)
+        self.assertIsNot(fa, config.DEFAULT_TUNNEL["forwards"])
+        fa.append({"local_port": 1, "remote_host": "h", "remote_port": 2})
+        self.assertEqual(fb, [])
+        self.assertEqual(config.DEFAULT_TUNNEL["forwards"], [])
+
 
 class TestMergeConfigPorts(unittest.TestCase):
     def test_port_out_of_range_falls_back(self):

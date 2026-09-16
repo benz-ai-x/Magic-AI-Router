@@ -3,6 +3,17 @@
 All notable changes to Magic-AI-Router are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [v0.8.0] — 2026-09-16 — 端口转发（ssh -L 本地转发）
+
+### Added
+- **per-tunnel 端口转发**：把远程服务器可达的 `remote_host:remote_port` 映射到本机 `127.0.0.1:local_port`（如远程 8000 → 本机 9000）。配置存 `tunnels[i].forwards`，设置窗「隧道」详情内以表格编辑（增/删/行内测试），绑定地址恒为回环；旧配置无此字段自动兼容，无需迁移
+- **行内一击式测试**：`POST /api/test-forward` + `ssh_launch.probe_forward`——用与隧道完全一致的认证/主机密钥策略发起一次性 `ssh -W` 探测**表单当前值**（未保存的新行同样可测），返回可达性 + 延迟 + 分类中文错误（远程拒绝/超时/SSH 层失败分口径）；不依赖隧道当前状态
+- **保存后守卫自动重连**：forwards 有变且隧道当前已连接时，经 bridge `reconnectProxy {if_connected:true}` 自动重连应用（新增载荷旗标；原生侧仅 `status=="connected"` 才执行，绝不拉起未连接的隧道）。显式点击「重新连接」行为不变
+- **校验双层拦**：prepare 与 JS validateConfig 同口径——同隧道 local_port 互斥、不撞全局保留端口（socks5/http/抓包/9527/9528）、remote_host 须主机名或 IPv4（暂不支持 IPv6）；跨隧道同端口合法（单活）
+
+### Fixed
+- **merge 浅拷贝防护**：`DEFAULT_TUNNEL.copy()` 浅拷贝下 forwards 列表默认值会跨隧道共享——归一化逐行全新构造（新增测试钉住）；非法端口读路径落 0（下次保存被拦）绝不静默丢行
+
 ## [v0.7.3] — 2026-09-05 — 分层架构 DAG + 双语 README / 开源基建
 
 ### Changed

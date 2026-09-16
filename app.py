@@ -35,7 +35,7 @@ from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")
 LOG_PATH = os.path.join(LOG_DIR, "MagicProxy.log")
-VERSION = "0.7.3"
+VERSION = "0.8.0"
 VERSION_DISPLAY = version_display(VERSION, build_stamp())
 
 log_buffer = LogBuffer()
@@ -593,6 +593,15 @@ class MagicProxyApp(rumps.App):
         """
         kind = action.get("type")
         if kind == ACTION_RECONNECT_PROXY:
+            # if_connected 守卫（端口转发保存后的自动应用）：未连接的
+            # 隧道绝不因保存配置被拉起——restart 会无条件启停，必须在此
+            # 拦；显式点击路径不带旗标，行为不变。
+            if action.get("if_connected") and \
+                    self._conn.ssh.status != "connected":
+                logger.info(
+                    "端口转发自动重连跳过：隧道未连接（status=%s）",
+                    self._conn.ssh.status)
+                return
             threading.Thread(target=self.reconnect, args=(None,),
                              name="BridgeReconnect", daemon=True).start()
         elif kind == ACTION_OPEN_PATH and action.get("kind") == "captureDir":

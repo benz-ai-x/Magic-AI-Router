@@ -965,3 +965,108 @@ test("validateConfig accepts comma-form router default", () => {
   assert.deepEqual(L.validateConfig(S), [],
                    "schema 合法的逗号 default 不得被 UI 误拦");
 });
+
+// ── port forwards (ssh -L) ────────────────────────────
+test("viewSnapshot projects tunnel forwards with collect-compatible defaults", () => {
+  const loaded = L.normalizeState({ mp: { tunnels: [{ ssh_host: "h", forwards: [
+    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 },
+  ] }] } });
+  assert.deepEqual(L.viewSnapshot("tunnel", loaded).tunnels[0].forwards, [
+    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 },
+  ]);
+  // 缺省口径：空端口=0、空地址=127.0.0.1——collect 填回后不产生假 dirty
+  const bare = L.viewSnapshot("tunnel",
+    L.normalizeState({ mp: { tunnels: [{ ssh_host: "h", forwards: [{}] }] } }));
+  assert.deepEqual(bare.tunnels[0].forwards, [
+    { local_port: 0, remote_host: "127.0.0.1", remote_port: 0 },
+  ]);
+  const noKey = L.viewSnapshot("tunnel",
+    L.normalizeState({ mp: { tunnels: [{ ssh_host: "h" }] } }));
+  const emptyList = L.viewSnapshot("tunnel",
+    L.normalizeState({ mp: { tunnels: [{ ssh_host: "h", forwards: [] }] } }));
+  assert.equal(L.countChanges(noKey, emptyList), 0,
+    "missing forwards key and empty forwards are equally clean");
+});
+
+test("forwardsChanged detects edits, additions and removals per tunnel id", () => {
+  const base = { mp: { tunnels: [{ id: "t-1", forwards: [
+    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
+  const same = { mp: { tunnels: [{ id: "t-1", forwards: [
+    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
+  assert.equal(L.forwardsChanged(base, same), false);
+  const edited = { mp: { tunnels: [{ id: "t-1", forwards: [
+    { local_port: 9001, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
+  assert.equal(L.forwardsChanged(base, edited), true);
+  const added = { mp: { tunnels: [{ id: "t-1", forwards: [
+    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 },
+    { local_port: 9001, remote_host: "db", remote_port: 5432 }] }] } };
+  assert.equal(L.forwardsChanged(base, added), true);
+  const removed = { mp: { tunnels: [{ id: "t-1", forwards: [] }] } };
+  assert.equal(L.forwardsChanged(base, removed), true);
+});
+
+test("forwardsChanged ignores non-forward edits and aligns tunnels by id", () => {
+  const base = { mp: { tunnels: [{ id: "t-1", name: "prod", forwards: [
+    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
+  const renamed = { mp: { tunnels: [{ id: "t-1", name: "staging", forwards: [
+    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
+  assert.equal(L.forwardsChanged(base, renamed), false, "改名不触发守卫重连");
+  const reordered = { mp: { tunnels: [
+    { id: "t-2", forwards: [] },
+    { id: "t-1", forwards: [
+      { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
+  assert.equal(L.forwardsChanged(base, reordered), false,
+    "重排 + 新增空转发隧道不触发");
+  const otherChanged = { mp: { tunnels: [
+    { id: "t-1", forwards: [
+      { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] },
+    { id: "t-2", forwards: [
+      { local_port: 9000, remote_host: "db", remote_port: 5432 }] }] } };
+  assert.equal(L.forwardsChanged(base, otherChanged), true,
+    "另一条隧道加转发也触发");
+});
+
+test("forwardsChanged handles unsaved tunnels without ids", () => {
+  const base = { mp: { tunnels: [{ id: "t-1", forwards: [] }] } };
+  const withNew = { mp: { tunnels: [
+    { id: "t-1", forwards: [] },
+    { name: "new", forwards: [
+      { local_port: 9000, remote_host: "h", remote_port: 80 }] }] } };
+  assert.equal(L.forwardsChanged(base, withNew), true);
+});
+
+test("validateConfig rejects invalid forward rows", () => {
+  const mk = fw => L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "h", ssh_port: 22, name: "t1", forwards: [fw] }] } });
+  assert.ok(L.validateConfig(mk({ local_port: 0, remote_host: "127.0.0.1", remote_port: 8000 }))
+    .some(e => e.includes("本地端口")));
+  assert.ok(L.validateConfig(mk({ local_port: 70000, remote_host: "127.0.0.1", remote_port: 8000 }))
+    .some(e => e.includes("本地端口")));
+  assert.ok(L.validateConfig(mk({ local_port: 9000, remote_host: "127.0.0.1", remote_port: 0 }))
+    .some(e => e.includes("远程端口")));
+  assert.ok(L.validateConfig(mk({ local_port: 9000, remote_host: "::1", remote_port: 80 }))
+    .some(e => e.includes("远程地址")));
+  assert.ok(L.validateConfig(mk({ local_port: 9000, remote_host: "a b", remote_port: 80 }))
+    .some(e => e.includes("远程地址")));
+});
+
+test("validateConfig rejects same-tunnel duplicate local ports but allows cross-tunnel", () => {
+  const dup = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "h", ssh_port: 22, name: "t1", forwards: [
+      { local_port: 9000, remote_host: "a", remote_port: 1 },
+      { local_port: 9000, remote_host: "b", remote_port: 2 }] }] } });
+  assert.ok(L.validateConfig(dup).some(e => e.includes("重复")));
+  const cross = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "h1", ssh_port: 22, name: "t1", forwards: [
+      { local_port: 9000, remote_host: "a", remote_port: 1 }] },
+    { ssh_host: "h2", ssh_port: 22, name: "t2", forwards: [
+      { local_port: 9000, remote_host: "b", remote_port: 2 }] }] } });
+  assert.deepEqual(L.validateConfig(cross), [], "跨隧道同端口合法（单活）");
+});
+
+test("validateConfig rejects forward local port conflicting with reserved ports", () => {
+  const S = L.normalizeState({ mp: { socks5_port: 1080, http_listen_port: 8888,
+    tunnels: [{ ssh_host: "h", ssh_port: 22, name: "t1", forwards: [
+      { local_port: 8888, remote_host: "a", remote_port: 1 }] }] } });
+  assert.ok(L.validateConfig(S).some(e => e.includes("端口冲突")));
+});

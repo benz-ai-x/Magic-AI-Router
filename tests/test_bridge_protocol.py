@@ -147,13 +147,29 @@ class TestAppActionsDispatch(unittest.TestCase):
     def test_reconnect_returns_action(self):
         core = BridgeCore()
         self.assertEqual(core.handle_message({"type": "reconnectProxy", "payload": {}}),
-                         [{"type": "reconnectProxy"}])
+                         [{"type": "reconnectProxy", "if_connected": False}])
 
     def test_reconnect_ignores_payload_content(self):
         core = BridgeCore()
         self.assertEqual(
             core.handle_message({"type": "reconnectProxy", "payload": {"spam": 1}}),
-            [{"type": "reconnectProxy"}])
+            [{"type": "reconnectProxy", "if_connected": False}])
+
+    def test_reconnect_guarded_variant_carries_flag(self):
+        """端口转发保存后的守卫重连：if_connected=True 时原生侧只在隧道
+        已连接时执行（未连接绝不拉起）。"""
+        core = BridgeCore()
+        self.assertEqual(
+            core.handle_message(
+                {"type": "reconnectProxy",
+                 "payload": {"if_connected": True}}),
+            [{"type": "reconnectProxy", "if_connected": True}])
+        # 真值语义：非布尔按 bool 归一
+        self.assertEqual(
+            core.handle_message(
+                {"type": "reconnectProxy",
+                 "payload": {"if_connected": "yes"}}),
+            [{"type": "reconnectProxy", "if_connected": True}])
 
     def test_open_path_known_kind_returns_action(self):
         core = BridgeCore()

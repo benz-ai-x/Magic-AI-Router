@@ -288,5 +288,166 @@ class TestProbe(unittest.TestCase):
                 os.fstat(fd)  # 两端都已关闭
 
 
+class TestBuildTunnelCommandForwards(unittest.TestCase):
+    """本地端口转发（-L）argv 段：顺序紧跟 -D/ExitOnForwardFailure 组。"""
+
+    _KEY = {"ssh_host": "srv", "ssh_user": "u", "ssh_port": 22,
+            "auth_type": "key", "ssh_key": "~/.ssh/id_rsa"}
+
+    def test_two_forwards_full_argv(self):
+        t = dict(self._KEY, forwards=[
+            {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000},
+            {"local_port": 9001, "remote_host": "10.0.0.5", "remote_port": 5432},
+        ])
+        sc = ssh_launch.build_tunnel_command(t, 1080)
+        try:
+            self.assertEqual(sc.cmd, [
+                "ssh", "-i", "~/.ssh/id_rsa",
+                "-D", "1080", "-N",
+                "-o", "ExitOnForwardFailure=yes",
+                "-L", "127.0.0.1:9000:127.0.0.1:8000",
+                "-L", "127.0.0.1:9001:10.0.0.5:5432",
+                "-o", "StrictHostKeyChecking=yes",
+                "-o", f"UserKnownHostsFile={host_key.KNOWN_HOSTS_PATH}",
+                "-o", "GlobalKnownHostsFile=/dev/null",
+                "-o", "ServerAliveInterval=20",
+                "-o", "ServerAliveCountMax=3",
+                "-o", "IPQoS=none",
+                "-o", "ConnectionAttempts=3",
+                "-C",
+                "-p", "22", "u@srv",
+            ])
+        finally:
+            sc.close_password_fd()
+
+    def test_no_forwards_argv_unchanged(self):
+        """无 forwards 的隧道 argv 与历史完全一致（缺省字段零影响）。"""
+        sc_plain = ssh_launch.build_tunnel_command(self._KEY, 1080)
+        sc_empty = ssh_launch.build_tunnel_command(
+            dict(self._KEY, forwards=[]), 1080)
+        self.assertEqual(sc_plain.cmd, sc_empty.cmd)
+
+    def test_remote_host_blank_defaults_to_loopback(self):
+        t = dict(self._KEY, forwards=[
+            {"local_port": 9000, "remote_host": "", "remote_port": 8000}])
+        sc = ssh_launch.build_tunnel_command(t, 1080)
+        self.assertIn("-L", sc.cmd)
+        self.assertEqual(sc.cmd[sc.cmd.index("-L") + 1],
+                         "127.0.0.1:9000:127.0.0.1:8000")
+
+    def test_invalid_rows_skipped_defensively(self):
+        """越界/缺字段/非 dict 行防御性跳过——prepare+merge 双保险下不可达，
+        但 argv 构建绝不能因坏行产出畸形 -L 参数。"""
+        t = dict(self._KEY, forwards=[
+            {"local_port": 70000, "remote_host": "h", "remote_port": 80},
+            {"local_port": 9000, "remote_host": "h", "remote_port": 0},
+            "not-a-dict",
+            {"local_port": True, "remote_host": "h", "remote_port": 80},
+            {"local_port": 9100, "remote_host": "db", "remote_port": 5432},
+        ])
+        sc = ssh_launch.build_tunnel_command(t, 1080)
+        fw = [sc.cmd[i + 1] for i, a in enumerate(sc.cmd) if a == "-L"]
+        self.assertEqual(fw, ["127.0.0.1:9100:db:5432"])
+
+
+class TestProbeForward(unittest.TestCase):
+    """一次性端口转发探针（ssh -W）：测表单意图，不依赖隧道状态。"""
+
+    _KEY = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222,
+            "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"}
+
+    @staticmethod
+    def _proc(returncode=0, stderr=b""):
+        if isinstance(stderr, str):
+            stderr = stderr.encode("utf-8")
+        return SimpleNamespace(returncode=returncode, stderr=stderr)
+
+    def test_success_full_argv_and_latency(self):
+        with patch.object(ssh_launch.subprocess, "run",
+                          return_value=self._proc(0)) as run:
+            result = ssh_launch.probe_forward(self._KEY, "10.1.2.3", 8000)
+        self.assertTrue(result["ok"])
+        self.assertIsInstance(result["latency_ms"], int)
+        cmd = run.call_args[0][0]
+        self.assertEqual(cmd, [
+            "ssh", "-o", "BatchMode=yes", "-i", "~/.ssh/id_ed25519",
+            "-o", "ConnectTimeout=5",
+            "-o", "StrictHostKeyChecking=yes",
+            "-o", f"UserKnownHostsFile={host_key.KNOWN_HOSTS_PATH}",
+            "-o", "GlobalKnownHostsFile=/dev/null",
+            "-p", "2222", "-W", "10.1.2.3:8000", "u@example.com",
+        ])
+        kwargs = run.call_args[1]
+        self.assertTrue(kwargs["capture_output"])
+        self.assertEqual(kwargs["timeout"], ssh_launch.PROBE_TIMEOUT)
+        self.assertEqual(kwargs["pass_fds"], ())
+        # stdin=DEVNULL：-W 桥接的 stdio 立即 EOF，探针必然自终
+        self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+
+    def test_remote_refused_classified_before_generic_table(self):
+        """-W 的 channel open failed 内含 "Connection refused"——必须分类为
+        远程端拒绝，而非通用表的「连接被服务器拒绝」（那是 SSH 层语义）。"""
+        stderr = ("channel 0: open failed: connect failed: "
+                  "Connection refused\r\n")
+        with patch.object(ssh_launch.subprocess, "run",
+                          return_value=self._proc(255, stderr)):
+            result = ssh_launch.probe_forward(self._KEY, "127.0.0.1", 8000)
+        self.assertFalse(result["ok"])
+        self.assertIn("拒绝连接", result["error"])
+        self.assertIn("127.0.0.1:8000", result["error"])
+
+    def test_remote_timeout_classified(self):
+        stderr = "channel 0: open failed: connect failed: Operation timed out"
+        with patch.object(ssh_launch.subprocess, "run",
+                          return_value=self._proc(255, stderr)):
+            result = ssh_launch.probe_forward(self._KEY, "10.0.0.9", 8000)
+        self.assertFalse(result["ok"])
+        self.assertIn("连接超时", result["error"])
+
+    def test_other_open_failed_generic_remote_phrase(self):
+        stderr = "channel 0: open failed: connect failed: Network is unreachable"
+        with patch.object(ssh_launch.subprocess, "run",
+                          return_value=self._proc(255, stderr)):
+            result = ssh_launch.probe_forward(self._KEY, "10.0.0.9", 8000)
+        self.assertFalse(result["ok"])
+        self.assertIn("无法连到远程", result["error"])
+
+    def test_ssh_layer_failure_uses_failure_table(self):
+        with patch.object(ssh_launch.subprocess, "run",
+                          return_value=self._proc(
+                              255, "Permission denied (publickey).")):
+            result = ssh_launch.probe_forward(self._KEY, "127.0.0.1", 8000)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "认证失败：密钥或密码被拒绝")
+
+    def test_timeout_returns_chinese_phrase(self):
+        with patch.object(ssh_launch.subprocess, "run",
+                          side_effect=subprocess.TimeoutExpired("ssh", 15)):
+            result = ssh_launch.probe_forward(self._KEY, "127.0.0.1", 8000)
+        self.assertEqual(result, {"ok": False, "error": "连接超时"})
+
+    def test_input_guards(self):
+        for rh, rp in ((None, "8000"), ("127.0.0.1", "0"),
+                       ("127.0.0.1", "abc"), ("bad host", "80"),
+                       ("::1", "80"), ("", -1)):
+            result = ssh_launch.probe_forward(self._KEY, rh, rp)
+            self.assertFalse(result["ok"], f"{rh}:{rp} 不应通过")
+            self.assertNotIn("Traceback", result["error"])
+
+    def test_password_auth_uses_sshpass_fd(self):
+        t = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 22,
+             "auth_type": "password"}
+        with patch.object(ssh_launch.subprocess, "run",
+                          return_value=self._proc(0)) as run:
+            result = ssh_launch.probe_forward(t, "127.0.0.1", 8000, "sekrit")
+        self.assertTrue(result["ok"])
+        cmd = run.call_args[0][0]
+        self.assertEqual(cmd[0], "sshpass")
+        self.assertNotIn("sekrit", cmd)
+        self.assertIn("NumberOfPasswordPrompts=1", cmd)
+        self.assertNotIn("BatchMode=yes", cmd)
+        self.assertTrue(run.call_args[1]["pass_fds"])
+
+
 if __name__ == "__main__":
     unittest.main()
