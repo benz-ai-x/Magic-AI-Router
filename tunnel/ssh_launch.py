@@ -132,6 +132,12 @@ def _with_auth(tunnel, ssh_args, password, extra_auth_args=()):
                       destination=destination)
 
 
+def _port_ok(v):
+    """转发端口的防御性判定：真 int（bool 除外）且 1..65535。"""
+    return (isinstance(v, int) and not isinstance(v, bool)
+            and 1 <= v <= 65535)
+
+
 def _forward_args(tunnel):
     """本地端口转发（-L）argv 段：绑定地址恒 127.0.0.1（本机回环面）。
 
@@ -142,13 +148,8 @@ def _forward_args(tunnel):
     for f in tunnel.get("forwards") or []:
         if not isinstance(f, dict):
             continue
-        lp = f.get("local_port")
-        rp = f.get("remote_port")
-        if not (isinstance(lp, int) and not isinstance(lp, bool)
-                and 1 <= lp <= 65535):
-            continue
-        if not (isinstance(rp, int) and not isinstance(rp, bool)
-                and 1 <= rp <= 65535):
+        lp, rp = f.get("local_port"), f.get("remote_port")
+        if not _port_ok(lp) or not _port_ok(rp):
             continue
         rh = str(f.get("remote_host") or "").strip() or "127.0.0.1"
         args += ["-L", f"127.0.0.1:{lp}:{rh}:{rp}"]

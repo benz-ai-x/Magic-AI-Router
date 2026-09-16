@@ -691,7 +691,9 @@ class TestTestForwardEndpoint(unittest.TestCase):
                     '{}',
                     '{"index": 0}',
                     '{"forward": {}}',
-                    '{"index": 0, "forward": "x"}'):
+                    '{"index": 0, "forward": "x"}',
+                    '{"tunnel": "x", "forward": {}}',
+                    '{"tunnel": 5, "forward": {}}'):
             with self.subTest(body=bad):
                 status, data = self._post(bad)
                 self.assertEqual(status, 400)
@@ -713,8 +715,25 @@ class TestTestForwardEndpoint(unittest.TestCase):
             status, _ = self._post('{"index": 5, "forward": {}}')
         self.assertEqual(status, 400)
 
-    def test_valid_body_delegates_with_form_forward(self):
-        """forward 取请求体的表单值（未保存的行同样可测）——隧道取已保存档。"""
+    def test_form_tunnel_body_delegates_without_index(self):
+        """设置窗新载荷 {tunnel, forward}：隧道与转发都取表单当前值——
+        未保存的新隧道同样可测，不落 _read_mp（无 index 可解析）。"""
+        tunnel = {"ssh_host": "new.example.com", "ssh_user": "u",
+                  "ssh_port": 2222, "auth_type": "key"}
+        forward = {"local_port": 9000, "remote_host": "10.0.0.5",
+                   "remote_port": 8000}
+        with patch.object(config_server, "_read_mp") as rm, \
+             patch.object(config_server, "test_forward",
+                          return_value={"ok": True, "latency_ms": 42}) as tf:
+            status, data = self._post(json.dumps({"tunnel": tunnel,
+                                                  "forward": forward}))
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), {"ok": True, "latency_ms": 42})
+        rm.assert_not_called()
+        tf.assert_called_once_with(tunnel, forward)
+
+    def test_legacy_index_body_still_resolves_saved_tunnel(self):
+        """旧载荷 {index, forward} 兼容：按已保存隧道解析（agent.md 契约）。"""
         tunnel = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 22}
         forward = {"local_port": 9000, "remote_host": "10.0.0.5",
                    "remote_port": 8000}
@@ -722,11 +741,9 @@ class TestTestForwardEndpoint(unittest.TestCase):
                           return_value={"tunnels": [tunnel]}), \
              patch.object(config_server, "test_forward",
                           return_value={"ok": True, "latency_ms": 42}) as tf:
-            status, data = self._post(
-                '{"index": 0, "forward": {"local_port": 9000,'
-                ' "remote_host": "10.0.0.5", "remote_port": 8000}}')
+            status, data = self._post(json.dumps({"index": 0,
+                                                  "forward": forward}))
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(data), {"ok": True, "latency_ms": 42})
         tf.assert_called_once_with(tunnel, forward)
 
 

@@ -61,7 +61,8 @@ def _read_one(path: str, loader):
 
 # ── prepare：候选配置在首次 mutation 前的完整校验 ─────────────────────
 _MP_PORTS = ("socks5_port", "http_listen_port", "capture_port", "config_port")
-_SP_PORT_MAX = 65535
+# 端口上界（mp 四端口 / sp listen / 端口转发共用——通用约束，非 suanpan 域私有）
+_PORT_MAX = 65535
 _RETENTION_MAX = 3650        # 十年封顶：再大属单位填错
 _BODY_LIMIT_MAX = 512        # MB
 _REQUEST_TIMEOUT_MAX = 86400
@@ -114,7 +115,7 @@ class ConfigStateStore:
                 port = mp_c.get(field)
                 if port in (None, ""):
                     continue
-                if not isinstance(port, int) or not 1 <= port <= _SP_PORT_MAX:
+                if not isinstance(port, int) or not 1 <= port <= _PORT_MAX:
                     errors.append(f"{field} 端口无效（须 1..65535）")
             retention = mp_c.get("retention_days")
             if retention is not None and (
@@ -141,7 +142,7 @@ class ConfigStateStore:
                     for _key in ("local_port", "remote_port"):
                         _v = _f.get(_key)
                         if (not isinstance(_v, int) or isinstance(_v, bool)
-                                or not 1 <= _v <= _SP_PORT_MAX):
+                                or not 1 <= _v <= _PORT_MAX):
                             errors.append(
                                 f"隧道 {_tname} 第 {_fi + 1} 条转发的 "
                                 f"{_key} 无效（须 1..65535）")
@@ -157,7 +158,7 @@ class ConfigStateStore:
         if sp_c is not None:
             lp = sp_c.get("listen_port")
             if lp is not None and (not isinstance(lp, int)
-                                   or not 1 <= lp <= _SP_PORT_MAX):
+                                   or not 1 <= lp <= _PORT_MAX):
                 errors.append("listen_port 端口无效（须 1..65535）")
             # 顶层字段（#46 T1b：旧代码查不存在的 server 键——死校验分支，
             # 顶层非法值静默落盘）。schema 见 suanpan/config.py AppConfig。

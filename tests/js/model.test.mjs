@@ -1005,34 +1005,38 @@ test("forwardsChanged detects edits, additions and removals per tunnel id", () =
   assert.equal(L.forwardsChanged(base, removed), true);
 });
 
-test("forwardsChanged ignores non-forward edits and aligns tunnels by id", () => {
-  const base = { mp: { tunnels: [{ id: "t-1", name: "prod", forwards: [
-    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
-  const renamed = { mp: { tunnels: [{ id: "t-1", name: "staging", forwards: [
-    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
-  assert.equal(L.forwardsChanged(base, renamed), false, "改名不触发守卫重连");
-  const reordered = { mp: { tunnels: [
-    { id: "t-2", forwards: [] },
-    { id: "t-1", forwards: [
-      { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] }] } };
-  assert.equal(L.forwardsChanged(base, reordered), false,
-    "重排 + 新增空转发隧道不触发");
-  const otherChanged = { mp: { tunnels: [
-    { id: "t-1", forwards: [
+test("forwardsChanged only fires for the CURRENT tunnel's forwards", () => {
+  const base = { mp: { current_tunnel: 0, tunnels: [
+    { id: "t-1", name: "prod", forwards: [
       { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] },
-    { id: "t-2", forwards: [
-      { local_port: 9000, remote_host: "db", remote_port: 5432 }] }] } };
-  assert.equal(L.forwardsChanged(base, otherChanged), true,
-    "另一条隧道加转发也触发");
+    { id: "t-2", forwards: [] }] } };
+  const mk = (t1fw, t2fw, cur = 0) => ({ mp: { current_tunnel: cur, tunnels: [
+    { id: "t-1", name: "renamed", forwards: t1fw },
+    { id: "t-2", forwards: t2fw }] } });
+  const sameFw = [{ local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }];
+  assert.equal(L.forwardsChanged(base, mk(sameFw, [])), false,
+    "当前隧道改名/其他字段变化不触发");
+  assert.equal(L.forwardsChanged(base, mk(sameFw, [
+    { local_port: 9001, remote_host: "db", remote_port: 5432 }])), false,
+    "改非当前隧道的转发不打断当前连接（单活——它没在跑）");
+  assert.equal(L.forwardsChanged(base, mk([
+    { local_port: 9000, remote_host: "10.0.0.5", remote_port: 8000 }], [])), true,
+    "当前隧道 forwards 变更才触发守卫重连");
+  assert.equal(L.forwardsChanged(base, mk(sameFw, [], 1)), false,
+    "切换当前隧道（身份变了）走既有手动重连流，不自动重启");
+  assert.equal(L.forwardsChanged(base, mk(sameFw, [
+    { local_port: 9001, remote_host: "db", remote_port: 5432 }], 1)), false,
+    "切换身份 + 改新隧道转发：仍是手动流（重启会连到另一台，超出自动应用语义）");
 });
 
-test("forwardsChanged handles unsaved tunnels without ids", () => {
-  const base = { mp: { tunnels: [{ id: "t-1", forwards: [] }] } };
-  const withNew = { mp: { tunnels: [
+test("forwardsChanged ignores unsaved current tunnel without id", () => {
+  const base = { mp: { current_tunnel: 0, tunnels: [{ id: "t-1", forwards: [] }] } };
+  const withNew = { mp: { current_tunnel: 1, tunnels: [
     { id: "t-1", forwards: [] },
     { name: "new", forwards: [
       { local_port: 9000, remote_host: "h", remote_port: 80 }] }] } };
-  assert.equal(L.forwardsChanged(base, withNew), true);
+  assert.equal(L.forwardsChanged(base, withNew), false,
+    "未保存的新隧道成为当前：本身尚未连接，走手动流");
 });
 
 test("validateConfig rejects invalid forward rows", () => {
@@ -1069,4 +1073,16 @@ test("validateConfig rejects forward local port conflicting with reserved ports"
     tunnels: [{ ssh_host: "h", ssh_port: 22, name: "t1", forwards: [
       { local_port: 8888, remote_host: "a", remote_port: 1 }] }] } });
   assert.ok(L.validateConfig(S).some(e => e.includes("端口冲突")));
+});
+
+test("validateConfig hardens forward row shape like prepare (direct-state edges)", () => {
+  const mk = fw => L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "h", ssh_port: 22, name: "t1", forwards: [fw] }] } });
+  // UI 路径 collect 已 parseInt，仅直改 state 可达——但口径与 prepare 对齐
+  assert.ok(L.validateConfig(mk({ local_port: 9000.5, remote_host: "a", remote_port: 80 }))
+    .some(e => e.includes("本地端口")), "小数端口须拦（prepare 拒非 int）");
+  assert.ok(L.validateConfig(mk({ local_port: 9000, remote_host: "a", remote_port: 80.5 }))
+    .some(e => e.includes("远程端口")));
+  assert.ok(Array.isArray(L.validateConfig(mk({ local_port: 9000, remote_host: 12345, remote_port: 80 }))),
+    "数字形态 remote_host 不得抛 TypeError");
 });

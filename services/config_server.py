@@ -100,15 +100,12 @@ def _read_mp():
     return cfg
 
 
-def test_tunnel(tunnel):
-    """One-shot SSH reachability probe for one saved tunnel config.
+def _probe_inputs(tunnel):
+    """test_tunnel / test_forward 共用的探针前置：输入守卫 + Keychain 取用。
 
-    本函数只持有端点职责：输入校验（地址/端口/选项注入守卫）与 Keychain
-    取密码；SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe，
-    含超时上限）——绿结果意味着隧道本身会连上，未信任主机快速失败，
-    绝不自动信任。
-
-    Returns {"ok": True} or {"ok": False, "error": "<中文短语>"} — never raises.
+    返回 (normalized, password, error)：守卫不过 → (None, "", "<中文短语>")；
+    过关 → 探针消费校验归一后的值（strip/int），与历史行为一致——手改
+    配置的空白 host 或 "022" 端口不进 ssh argv。
     """
     host = str(tunnel.get("ssh_host") or "").strip()
     user = str(tunnel.get("ssh_user") or "").strip()
@@ -118,46 +115,46 @@ def test_tunnel(tunnel):
         port = 0
     destination = f"{user}@{host}" if user else host
     if not host or not 1 <= port <= 65535 or destination.startswith("-"):
-        return {"ok": False, "error": "隧道地址或端口无效"}
+        return None, "", "隧道地址或端口无效"
 
     password = ""
     if tunnel.get("auth_type") == "password":
         password = keychain.get_password(tunnel)
         if not password:
-            return {"ok": False, "error": "钥匙串中没有该隧道的密码，请先保存"}
+            return None, "", "钥匙串中没有该隧道的密码，请先保存"
 
-    # 探针消费校验归一后的值（strip/int），与历史行为一致——手改配置的
-    # 空白 host 或 "022" 端口不进 ssh argv。
-    normalized = dict(tunnel, ssh_host=host, ssh_user=user, ssh_port=port)
+    return dict(tunnel, ssh_host=host, ssh_user=user, ssh_port=port), password, ""
+
+
+def test_tunnel(tunnel):
+    """One-shot SSH reachability probe for one saved tunnel config.
+
+    本函数只持有端点职责：输入守卫与 Keychain 取用经 _probe_inputs 共享；
+    SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe，含超时
+    上限）——绿结果意味着隧道本身会连上，未信任主机快速失败，绝不
+    自动信任。
+
+    Returns {"ok": True} or {"ok": False, "error": "<中文短语>"} — never raises.
+    """
+    normalized, password, error = _probe_inputs(tunnel)
+    if error:
+        return {"ok": False, "error": error}
     return ssh_launch.probe(normalized, password=password)
 
 
 def test_forward(tunnel, forward):
     """One-shot port-forward probe: tunnel + 一条显式转发行（表单意图）。
 
-    本函数只持有端点职责：输入校验（地址/端口守卫）与 Keychain 取密码；
+    本函数只持有端点职责：输入守卫与 Keychain 取用经 _probe_inputs 共享；
     SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe_forward，
-    -W 直连远端端口）。测的是请求体里的 forward——未保存的行同样可测。
+    -W 直连远端端口）。测的是请求体里的 tunnel + forward——未保存的
+    表单值同样可测。
 
     Returns {"ok": True, "latency_ms": int} or {"ok": False, "error": str}.
     """
-    host = str(tunnel.get("ssh_host") or "").strip()
-    user = str(tunnel.get("ssh_user") or "").strip()
-    try:
-        port = int(tunnel.get("ssh_port", 22))
-    except (TypeError, ValueError):
-        port = 0
-    destination = f"{user}@{host}" if user else host
-    if not host or not 1 <= port <= 65535 or destination.startswith("-"):
-        return {"ok": False, "error": "隧道地址或端口无效"}
-
-    password = ""
-    if tunnel.get("auth_type") == "password":
-        password = keychain.get_password(tunnel)
-        if not password:
-            return {"ok": False, "error": "钥匙串中没有该隧道的密码，请先保存"}
-
-    normalized = dict(tunnel, ssh_host=host, ssh_user=user, ssh_port=port)
+    normalized, password, error = _probe_inputs(tunnel)
+    if error:
+        return {"ok": False, "error": error}
     return ssh_launch.probe_forward(
         normalized, forward.get("remote_host"), forward.get("remote_port"),
         password=password)
@@ -392,27 +389,34 @@ class _Handler(BaseHTTPRequestHandler):
         return 200, test_tunnel(tunnels[idx])
 
     def _test_forward(self, data):
-        """POST /api/test-forward {index, forward} → probe_forward once.
+        """POST /api/test-forward {tunnel, forward} → probe_forward once.
 
-        Returns (http_code, payload): 400 for bad index/body/forward shape,
-        200 with {"ok": bool, "latency_ms"?: int, "error"?: str} once the
-        probe actually runs. forward 取表单当前值——不要求已保存。
+        Returns (http_code, payload): 400 for bad body/shape, 200 with
+        {"ok": bool, "latency_ms"?: int, "error"?: str} once the probe
+        actually runs. tunnel/forward 都取表单当前值——未保存的新隧道、
+        新行同样可测（设置窗 UI 总是发送表单值）。兼容旧载荷 {index,
+        forward}：按已保存隧道解析。
         """
         if not isinstance(data, dict):
             return 400, {"ok": False, "error": "无效的请求体"}
-        idx = data.get("index")
-        if isinstance(idx, bool) or not isinstance(idx, int):
-            return 400, {"ok": False, "error": "无效的隧道索引"}
         forward = data.get("forward")
         if not isinstance(forward, dict):
             return 400, {"ok": False, "error": "无效的转发行"}
-        cfg = _read_mp()
-        tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
-        if not tunnels:
-            return 400, {"ok": False, "error": "尚未配置隧道"}
-        if not 0 <= idx < len(tunnels):
-            return 400, {"ok": False, "error": "隧道索引越界"}
-        return 200, test_forward(tunnels[idx], forward)
+        tunnel = data.get("tunnel")
+        if tunnel is None:
+            idx = data.get("index")
+            if isinstance(idx, bool) or not isinstance(idx, int):
+                return 400, {"ok": False, "error": "无效的隧道"}
+            cfg = _read_mp()
+            tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
+            if not tunnels:
+                return 400, {"ok": False, "error": "尚未配置隧道"}
+            if not 0 <= idx < len(tunnels):
+                return 400, {"ok": False, "error": "隧道索引越界"}
+            tunnel = tunnels[idx]
+        if not isinstance(tunnel, dict):
+            return 400, {"ok": False, "error": "无效的隧道"}
+        return 200, test_forward(tunnel, forward)
 
     def _capture_clean(self):
         """POST /api/capture-clean → empty the capture dir (keep the dir)."""

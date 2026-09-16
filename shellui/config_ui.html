@@ -447,11 +447,13 @@ function validateConfig(S){
     const tn=t.name||t.ssh_host||(`隧道 ${i+1}`);
     const fwSeen={};
     (t.forwards||[]).forEach(f=>{
-      const lp=f.local_port,rp=f.remote_port,rh=f.remote_host||'127.0.0.1';
-      if(!lp||lp<1||lp>65535)errors.push(`${tn}: 转发本地端口无效（须 1..65535）`);
+      // 与 prepare 同口径：端口须整数（拦小数），remote_host 字串化
+      // （数字形态仅在直改 state 时出现，String 兜底不抛 TypeError）
+      const lp=f.local_port,rp=f.remote_port,rh=String(f.remote_host||'127.0.0.1');
+      if(!Number.isInteger(lp)||lp<1||lp>65535)errors.push(`${tn}: 转发本地端口无效（须 1..65535）`);
       else if(fwSeen[lp])errors.push(`${tn}: 转发本地端口 ${lp} 重复`);
       else fwSeen[lp]=1;
-      if(!rp||rp<1||rp>65535)errors.push(`${tn}: 转发远程端口无效（须 1..65535）`);
+      if(!Number.isInteger(rp)||rp<1||rp>65535)errors.push(`${tn}: 转发远程端口无效（须 1..65535）`);
       if(/\s/.test(rh)||rh.includes(':'))errors.push(`${tn}: 转发远程地址无效（暂不支持 IPv6）`);
     });
   });
@@ -732,17 +734,15 @@ function dirtyProjection(base,S,baseRoles,roles){
   return{views,counts,total:[...counts.values()].reduce((s,n)=>s+n,0)};
 }
 function forwardsChanged(base,S){
-  // 端口转发专属 diff（比 view 级 dirty 更细）：隧道按 id 对齐（无 id 的
-  // 未保存隧道按数组位），任一隧道的 forwards 数组有变即 true——saveFlow
-  // 据此触发守卫重连（保存后自动应用端口转发）。
-  const key=(t,i)=>(t&&t.id)?'id:'+t.id:'idx:'+i;
-  const index=tunnels=>{const out={};(tunnels||[]).forEach((t,i)=>out[key(t,i)]=(t&&t.forwards)||[]);return out;};
-  const a=index(base&&base.mp&&base.mp.tunnels),b=index(S&&S.mp&&S.mp.tunnels);
-  const sig=fs=>(fs||[]).map(f=>`${f.local_port}|${f.remote_host}|${f.remote_port}`).join(';');
-  for(const k of new Set([...Object.keys(a),...Object.keys(b)])){
-    if(sig(a[k])!==sig(b[k]))return true;
-  }
-  return false;
+  // 守卫重连的精确判定：保存前后「同一身份的当前隧道」forwards 有变
+  // 才值得重启。单活语义下其他隧道根本没在跑——改它们的转发不打断
+  // 当前连接；切换当前隧道（身份变了，重启会连到另一台）与未保存的
+  // 新隧道一律走既有手动重连流，不在此自动重启。
+  const cur=st=>((st&&st.mp&&st.mp.tunnels)||[])[numberDefault(st&&st.mp&&st.mp.current_tunnel,0)]||null;
+  const sig=t=>((t&&t.forwards)||[]).map(f=>`${f.local_port}|${f.remote_host}|${f.remote_port}`).join(';');
+  const a=cur(base),b=cur(S);
+  if(!a||!b||!a.id||!b.id||a.id!==b.id)return false;
+  return sig(a)!==sig(b);
 }
 async function saveFlow(snap,deps,forceRulesSync){
   const{S,ccRoles,baselineState,baselineRoles}=snap;
@@ -1217,8 +1217,8 @@ async function testTunnel(btn){
     restore();
   }catch(e){_setTunnelResult('❌ 请求失败: '+e.message,'var(--danger)');restore();}
 }
-// 行内端口转发测试：探测的是表单当前值（collect 后的 t.forwards[fi]），
-// 未保存的新行同样可测——后端 probe_forward 不依赖隧道当前状态。
+// 行内端口转发测试：探测的是表单当前值（collect 后的隧道 + t.forwards[fi]），
+// 未保存的新隧道/新行同样可测——后端 probe_forward 不依赖隧道当前状态。
 async function testForward(fi,btn){
   collectTunnel();
   const ts=S.mp.tunnels||[],i=activeTunnel;
@@ -1229,7 +1229,7 @@ async function testForward(fi,btn){
   const set=(txt,cls)=>{if(!st)return;st.textContent=txt||'';st.className='fw-status'+(cls?' '+cls:'');};
   btn.disabled=true;btn.textContent='测试中…';set('测试中…','');
   try{
-    const r=await fetch('/api/test-forward',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({index:i,forward:f})});
+    const r=await fetch('/api/test-forward',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({tunnel:ts[i],forward:f})});
     const d=await r.json();
     if(d.ok)set('✓ 连通 · '+(d.latency_ms!=null?d.latency_ms+'ms':''),'ok');
     else set('✗ '+(d.error||'测试失败'),'err');
