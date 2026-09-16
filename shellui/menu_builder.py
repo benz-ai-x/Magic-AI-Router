@@ -75,9 +75,18 @@ class MenuState:
     current_tunnel: dict | None
     prevent_sleep_title: str
     launch_login_title: str
+    # 多活（v0.9）：转发会话快照 [(tunnel_id, name, status)]——隧道子菜单
+    # 与状态行的转发计数消费；默认 () 保持既有测试构造兼容
+    forward_states: tuple = ()
 
 
 # ── builder ──────────────────────────────────────────────────────
+
+# 多活隧道行尾状态（代理隧道随主 ssh_status；转发会话随自身 monitor）
+_PROXY_TAIL = {"connected": " — 已连接・代理", "connecting": " — 连接中・代理",
+               "error": " — 异常・代理"}
+_FW_TAIL = {"connected": " — 转发中", "connecting": " — 转发启动中",
+            "error": " — 转发异常"}
 
 class MenuBuilder:
     """Builds and refreshes the menu bar UI from a state snapshot.
@@ -115,6 +124,7 @@ class MenuBuilder:
             st.capture_error_hint,
             st.suanpan_running,
             st.suanpan_error[:50] if st.suanpan_error else "",
+            tuple(st.forward_states),  # 转发会话状态变化 → 重建子菜单
         )
 
     # ── full build ────────────────────────────────────────
@@ -191,15 +201,43 @@ class MenuBuilder:
             sysp_title = "系统代理：关"
         parent.add(rumps.MenuItem(sysp_title, callback=a.toggle_system_proxy, key="g"))
 
-        # Tunnel selection
+        # Tunnel list — 多活（v0.9）：每隧道子菜单承载「代理角色 + 转发
+        # 启停 + 单隧道重连」。代理隧道自身由顶部连接控制管理（暂停等
+        # 语义仅属代理会话）。
         tunnels = st.config.get("tunnels", [])
         if tunnels:
             parent.add(None)
             current_idx = st.config.get("current_tunnel", 0)
+            fw_running = {tid: status
+                          for tid, _n, status in (st.forward_states or ())}
             for i, t in enumerate(tunnels):
-                marker = "✓   " if i == current_idx else "    "
+                tid = t.get("id") or f"#{i}"
                 name = t.get("name") or f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}"
-                parent.add(rumps.MenuItem(f"{marker}{name}", callback=a.make_switch_tunnel(i)))
+                is_proxy = i == current_idx
+                if is_proxy:
+                    tail = _PROXY_TAIL.get(st.ssh_status, " — 未连接・代理")
+                elif tid in fw_running:
+                    tail = _FW_TAIL.get(fw_running[tid], " — 转发重试中")
+                else:
+                    tail = ""
+                sub = rumps.MenuItem(f"{name}{tail}", callback=None)
+                sub.add(rumps.MenuItem(
+                    ("✓ " if is_proxy else "") + "设为代理隧道",
+                    callback=a.make_switch_tunnel(i)))
+                if is_proxy:
+                    sub.add(rumps.MenuItem("重新连接", callback=a.reconnect))
+                elif tid in fw_running:
+                    sub.add(rumps.MenuItem(
+                        "停止端口转发",
+                        callback=a.toggle_forward_session(tid)))
+                    sub.add(rumps.MenuItem(
+                        "重新连接", callback=a.make_reconnect_tunnel(tid)))
+                else:
+                    hint = "" if t.get("forwards") else "（需先配置转发规则）"
+                    sub.add(rumps.MenuItem(
+                        f"启动端口转发{hint}",
+                        callback=a.toggle_forward_session(tid)))
+                parent.add(sub)
 
         # Proxied app launches
         apps_list = chromium_proxy.installed_apps()
@@ -275,6 +313,12 @@ class MenuBuilder:
             proxy_text = f"🔴  AI Proxy · {tunnel_name} · 连接失败"
         else:
             proxy_text = "⚫  AI Proxy"
+        # 多活：转发会话在跑时状态行附转发计数（主图标语义不变——只反映
+        # 代理会话，:8888 上游只依赖它）
+        fw_up = sum(1 for _tid, _n, status in (st.forward_states or ())
+                    if status == "connected")
+        if fw_up:
+            proxy_text += f" ｜ {fw_up} 条转发"
         self._set_title("proxy_status", proxy_text)
 
         # Router status line

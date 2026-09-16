@@ -78,7 +78,8 @@ def _schema_error_lines(exc) -> list:
 # 服务端注入的只读装饰字段（#52 单点声明）：config_server 读取时注入
 # 供 UI 展示，prepare 剥除保证持久化配置永不携带——两侧共用此名单，
 # 新增装饰字段不再靠注释对齐。
-READONLY_DECORATED_FIELDS = frozenset({"has_password", "capture_active"})
+READONLY_DECORATED_FIELDS = frozenset(
+    {"has_password", "capture_active", "is_proxy", "forward_running"})
 
 
 def _valid_http_origin(url) -> bool:

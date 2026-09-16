@@ -19,7 +19,7 @@ from shared import netloc
 from shared.identity import IdentityMigrationError
 from sysctl import port_check
 from shellui.bridge_protocol import (ACTION_COPY_AGENT_INSTRUCTIONS,
-    ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY)
+    ACTION_FORWARD_SESSION, ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY)
 from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
     DEFAULT_CONFIG, load_config, merge_config)
@@ -35,7 +35,7 @@ from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")
 LOG_PATH = os.path.join(LOG_DIR, "MagicProxy.log")
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 VERSION_DISPLAY = version_display(VERSION, build_stamp())
 
 log_buffer = LogBuffer()
@@ -116,6 +116,7 @@ class MagicProxyApp(rumps.App):
             paused_fn=lambda: self._conn.paused,
             on_menu_dirty=lambda: setattr(self._menu_builder, "last_struct_key", None),
             initial_sys_proxy_on=self._config.get("system_proxy_default", False),
+            tunnel_states_fn=lambda: self._conn.forward_sessions(),
         )
         self._suanpan = self._lifecycle.suanpan
         self._capture_ctrl = self._lifecycle.capture_ctrl
@@ -207,6 +208,7 @@ class MagicProxyApp(rumps.App):
             current_tunnel=self._conn.current_tunnel,
             prevent_sleep_title="防睡眠：开" if self._config.get("prevent_sleep") else "防睡眠：关",
             launch_login_title="登录启动：开" if self._config.get("launch_at_login") else "登录启动：关",
+            forward_states=tuple(self._conn.forward_sessions()),
         )
 
     # ── tick ─────────────────────────────────────────────
@@ -644,9 +646,12 @@ class MagicProxyApp(rumps.App):
             # 隧道绝不能因保存配置被拉起——restart 会无条件启停，必须在此
             # 拦；显式点击路径不带旗标，行为不变。tunnel_id 指定转发会话
             # 时按该会话自身的连接态守卫（多活）。
+            tunnel_id = action.get("tunnel_id")
+            is_forward = bool(tunnel_id) and \
+                tunnel_id != self._conn.proxy_tunnel_id
             if action.get("if_connected"):
-                tunnel_id = action.get("tunnel_id")
-                if tunnel_id and tunnel_id != self._conn.proxy_tunnel_id:
+                if is_forward:
+                    # 定向守卫：仅该转发会话已连接才重建，未运行不拉起
                     states = {tid: st for tid, _, st
                               in self._conn.forward_sessions()}
                     if states.get(tunnel_id) != "connected":
@@ -654,18 +659,39 @@ class MagicProxyApp(rumps.App):
                             "转发会话自动重连跳过：%s 未连接（status=%s）",
                             tunnel_id, states.get(tunnel_id))
                         return
-                    threading.Thread(
-                        target=self.make_reconnect_tunnel(tunnel_id),
-                        args=(None,), name="BridgeReconnectForward",
-                        daemon=True).start()
-                    return
-                if self._conn.ssh.status != "connected":
+                elif self._conn.ssh.status != "connected":
                     logger.info(
                         "端口转发自动重连跳过：隧道未连接（status=%s）",
                         self._conn.ssh.status)
                     return
+            if is_forward:
+                # 显式点击转发隧道的「重新连接」——单会话重建（守卫放行
+                # 或不带旗标都到这）
+                threading.Thread(
+                    target=self.make_reconnect_tunnel(tunnel_id),
+                    args=(None,), name="BridgeReconnectForward",
+                    daemon=True).start()
+                return
             threading.Thread(target=self.reconnect, args=(None,),
                              name="BridgeReconnect", daemon=True).start()
+        elif kind == ACTION_FORWARD_SESSION:
+            # 多活：设置窗「启动/停止端口转发」。start 走 host-key 首连
+            # 流程（内含 AppKit alert——host_key_flow 自带 callAfter 回主
+            # 线程，daemon 线程安全；与桥接重连同款线程纪律）。
+            tid = action.get("tunnel_id")
+            if not tid:
+                return
+            if action.get("action") == "start":
+                def _start_forward():
+                    ok, reason = self._conn.start_forward(tid)
+                    if not ok:
+                        self._notify("无法启动端口转发", reason)
+                threading.Thread(target=_start_forward,
+                                 name="BridgeForwardStart",
+                                 daemon=True).start()
+            else:
+                self._conn.stop_forward(tid)
+            self._dirty()
         elif kind == ACTION_OPEN_PATH and action.get("kind") == "captureDir":
             self.open_capture_dir(None)
         elif kind == ACTION_COPY_AGENT_INSTRUCTIONS:

@@ -3,6 +3,24 @@
 All notable changes to Magic-AI-Router are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [v0.9.0] — 2026-09-16 — 多隧道并行（代理隧道 + 转发会话）
+
+### Added
+- **多活模型**：服务器 A 跑 SOCKS5 代理、服务器 B 同时跑端口映射不再是梦想——`current_tunnel` 语义明示为**代理隧道**（唯一 -D 会话），其余隧道可各自「启动端口转发」为纯 `-L` 转发会话并行运行；每会话独立 monitor/retry/host-key 三件套（host-key 告警互不吞）、独立退避重试、唤醒全量僵尸重建
+- **`forward_autostart` 持久字段**：转发会话随应用启动自动恢复（`apply_autostarts` 收敛）
+- **菜单栏每隧道子菜单**：设为代理隧道 / 启停端口转发 / 单隧道重连；行尾状态（已连接・代理 / 转发中 / 未连接）；状态行附「N 条转发」计数（主图标语义不变——只反映代理会话）
+- **设置窗多活面**：非代理隧道详情栏「启动/停止转发」（经 bridge `forwardSession`）；master 列表「转发中」徽标；「随应用启动转发」开关；「重新连接」带隧道身份（修正既有偏差——此前重连的永远是 current 而非正在查看的隧道）
+- **守卫重连逐隧道定向**：`reconnectProxy {if_connected, tunnel_id?}`——运行中的转发会话各自按连接态守卫重建，未运行绝不拉起；代理隧道保持 v0.8「同一身份当前隧道」语义
+- `/api/state` per-tunnel 装饰：`is_proxy` / `forward_running`（READONLY_DECORATED_FIELDS 模式，永不落盘）
+
+### Changed
+- **[破坏性] 转发本地端口全局唯一**：多活下任意隧道可并行，两条隧道抢同端口会在 `ExitOnForwardFailure` 下互顶死循环——v0.8 的「跨隧道同端口合法（单活豁免）」作废，prepare 与 JS 双层拦（0.8.0 当日发布，存量影响≈0）
+- **切换代理角色 = 降级续跑**：旧代理隧道有 forwards 则转纯转发会话继续跑，无则停（此前单活语义为彻底断开）
+- 防睡眠按聚合状态：任一会话在跑即防睡；「暂停」仍仅作用于代理会话
+
+### Fixed
+- **切换流降级判定 bug**（本迭代实测）：restart 的降级对象改为 `_launched_proxy_id`（实际跑着的隧道）——`current_tunnel` 在 restart 前就已被切换流写成新值，读它永远降级失败
+
 ## [v0.8.0] — 2026-09-16 — 端口转发（ssh -L 本地转发）
 
 ### Added

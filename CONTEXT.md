@@ -24,11 +24,18 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 ### 隧道（Tunnel）
 
-一条 SSH 动态端口转发连接（`ssh -D`），包含 SSH 连接本身和它在本地创建的 SOCKS5 监听。两者共生——SSH 断开则 SOCKS5 随之失效。支持配置多条隧道，同一时间只有一条活跃（当前隧道）。切换隧道 = 关闭旧 SSH 连接，建立新 SSH 连接。
+一条 SSH 连接配置。**v0.9 起多活**：代理隧道 + 任意多条转发会话可并行（此前单活——切换=停旧起新）。
+
+### 代理隧道 / 转发会话（Proxy Tunnel / Forward Session）
+
+多活模型（v0.9）的两种运行角色：
+
+- **代理隧道** = `current_tunnel` 指定的隧道：唯一携带 `-D socks5_port` 的会话（含自己的 `-L`），是 :8888 HTTP 代理的 SOCKS5 上游。主图标/状态行/系统代理/暂停语义全部只反映代理会话。切换代理角色 = 旧代理隧道**降级续跑**（有 forwards 转纯转发会话，无则停）+ 新隧道以代理模式重启。
+- **转发会话** = 其他隧道的纯 `-L` 会话（无 `-D`）：`_ForwardSession` 各自持有 monitor/retry/host-key 三件套（实例隔离；host-key 告警互不吞）。`forward_autostart` 持久字段控制随应用启动自动恢复；`apply_autostarts` 收敛补启。唤醒事件触发全部活跃会话僵尸重建。端口全局唯一性（含跨隧道）在 prepare 与 JS 双层拦——多活下两条隧道抢同端口会在 `ExitOnForwardFailure` 下互顶死循环（v0.8 的单活豁免作废）。
 
 ### 端口转发（Local Forward）
 
-per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达的 `remote_host:remote_port` 映射到本机 `127.0.0.1:local_port`。配置存于 `tunnels[i].forwards`（`{local_port, remote_host 缺省 127.0.0.1, remote_port}`），argv 由 `ssh_launch.build_tunnel_command` 紧跟 `-D` 拼装，绑定地址恒为回环。`ExitOnForwardFailure=yes`（既有）使本地端口被占时 ssh 退出并交由重试调度；本地端口在 prepare 与 JS 校验双层拦（同隧道互斥 + 不撞全局保留端口；跨隧道同端口合法——单活）。保存后经 bridge `reconnectProxy {if_connected:true}` 守卫重连自动应用——仅当**同一身份的当前隧道**自身 forwards 有变且已连接时触发（改其他隧道的转发不打断当前连接；切换当前隧道走手动重连流）；行内「测试」走 `probe_forward`（一次性 `ssh -W` 探测**表单当前值**——隧道与转发行都未保存可测，不依赖隧道状态）。
+per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达的 `remote_host:remote_port` 映射到本机 `127.0.0.1:local_port`。配置存于 `tunnels[i].forwards`（`{local_port, remote_host 缺省 127.0.0.1, remote_port}`），argv 由 `ssh_launch.build_tunnel_command` 拼装（`socks5_port=None` 即纯转发模式），绑定地址恒为回环。`ExitOnForwardFailure=yes` 使本地端口被占时该会话独立退避重试。本地端口在 prepare 与 JS 校验双层拦（全局唯一——不撞保留端口、不撞任何其他隧道）。保存后经 bridge `reconnectProxy {if_connected:true, tunnel_id?}` 守卫重连逐隧道定向应用——代理隧道保持「同一身份当前隧道」语义，转发会话按各自连接态守卫（未运行绝不拉起）；行内「测试」走 `probe_forward`（一次性 `ssh -W` 探测**表单当前值**——隧道与转发行都未保存可测，不依赖隧道状态）。
 
 ### SSH 调用策略（ssh_launch）
 
