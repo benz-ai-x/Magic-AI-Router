@@ -321,20 +321,24 @@ class ConnectionCoordinator:
             logger.info("转发会话停止：%s", tunnel_id)
 
     def restart_forward(self, tunnel_id, reload_config_fn):
-        """重载配置后重建指定转发会话（保存转发后的守卫重连路径）。"""
+        """重载配置后重建指定转发会话（单会话重连的唯一归宿）。
+
+        显式重连语义：会话存在即重建——error/stopped/退避态同（评审
+        Spec-A：曾按 was_alive==connected 门控，error 态点「重新连接」
+        只停不连成死按钮）。守卫路径（保存后自动应用）在 app 侧按连接
+        态拦截，不会把未运行的会话送进来；能到这的都是显式意图。
+        """
         with self._lifecycle_lock:
             session = self._forward_sessions.get(tunnel_id)
             if session is None:
                 return False
-            was_alive = session.monitor.status == "connected"
             session.stop()
             reload_config_fn()
             tunnel = self._tunnel_by_id(tunnel_id)
             if tunnel is None or not tunnel.get("forwards"):
                 del self._forward_sessions[tunnel_id]
                 return True
-            if was_alive or tunnel.get("forward_autostart"):
-                session.connect()
+            session.connect()
             return True
 
     def apply_autostarts(self):

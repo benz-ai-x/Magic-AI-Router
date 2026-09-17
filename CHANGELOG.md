@@ -16,7 +16,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 ## [v0.9.0] — 2026-09-16 — 多隧道并行（代理隧道 + 转发会话）
 
 ### Added
-- **多活模型**：服务器 A 跑 SOCKS5 代理、服务器 B 同时跑端口映射不再是梦想——`current_tunnel` 语义明示为**代理隧道**（唯一 -D 会话），其余隧道可各自「启动端口转发」为纯 `-L` 转发会话并行运行；每会话独立 monitor/retry/host-key 三件套（host-key 告警互不吞）、独立退避重试、唤醒全量僵尸重建
+- **多活模型**（决策落档 ADR-005）：服务器 A 跑 SOCKS5 代理、服务器 B 同时跑端口映射不再是梦想——`current_tunnel` 语义明示为**代理隧道**（唯一 -D 会话），其余隧道可各自「启动端口转发」为纯 `-L` 转发会话并行运行；每会话独立 monitor/retry/host-key 三件套（host-key 告警互不吞）、独立退避重试、唤醒全量僵尸重建
 - **`forward_autostart` 持久字段**：转发会话随应用启动自动恢复（`apply_autostarts` 收敛）
 - **菜单栏每隧道子菜单**：设为代理隧道 / 启停端口转发 / 单隧道重连；行尾状态（已连接・代理 / 转发中 / 未连接）；状态行附「N 条转发」计数（主图标语义不变——只反映代理会话）
 - **设置窗多活面**：非代理隧道详情栏「启动/停止转发」（经 bridge `forwardSession`）；master 列表「转发中」徽标；「随应用启动转发」开关；「重新连接」带隧道身份（修正既有偏差——此前重连的永远是 current 而非正在查看的隧道）

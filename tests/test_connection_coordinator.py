@@ -549,3 +549,35 @@ class TestWakeTriggerForwards(unittest.TestCase):
         with patch.object(conn, "start_forward") as sf2:
             conn.apply_autostarts()
         sf2.assert_not_called()
+
+
+class TestRestartForwardExplicitSemantics(unittest.TestCase):
+    """评审 Spec-A：显式重连对 error/stopped 态会话同样重建（死按钮修复）。"""
+
+    def test_error_state_session_reconnects(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+        session.monitor._status = "error"
+        with patch.object(session, "stop"), \
+             patch.object(session, "connect") as mconn:
+            self.assertTrue(conn.restart_forward("t-2", lambda: None))
+        mconn.assert_called_once()
+
+    def test_tunnel_deleted_during_restart_removes_session(self):
+        conn, holder = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+
+        def drop_t2():
+            holder["cfg"] = {**_multi_config(),
+                             "tunnels": _multi_config()["tunnels"][:1]}
+        with patch.object(session, "stop"):
+            self.assertTrue(conn.restart_forward("t-2", drop_t2))
+        self.assertEqual(conn.forward_sessions(), [])
+
+    def test_unknown_session_returns_false(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        self.assertFalse(conn.restart_forward("t-nope", lambda: None))

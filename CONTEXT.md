@@ -28,7 +28,7 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 ### 代理隧道 / 转发会话（Proxy Tunnel / Forward Session）
 
-多活模型（v0.9）的两种运行角色：
+多活模型（v0.9，决策落档 [ADR-005](docs/adr/005-multi-active-tunnels.md)）的两种运行角色：
 
 - **代理隧道** = `current_tunnel` 指定的隧道：唯一携带 `-D socks5_port` 的会话（含自己的 `-L`），是 :8888 HTTP 代理的 SOCKS5 上游。主图标/状态行/系统代理/暂停语义全部只反映代理会话。切换代理角色 = 旧代理隧道**降级续跑**（有 forwards 转纯转发会话，无则停）+ 新隧道以代理模式重启。
 - **转发会话** = 其他隧道的纯 `-L` 会话（无 `-D`）：`_ForwardSession` 各自持有 monitor/retry/host-key 三件套（实例隔离；host-key 告警互不吞）。`forward_autostart` 持久字段控制随应用启动自动恢复；`apply_autostarts` 收敛补启。唤醒事件触发全部活跃会话僵尸重建。端口全局唯一性（含跨隧道）在 prepare 与 JS 双层拦——多活下两条隧道抢同端口会在 `ExitOnForwardFailure` 下互顶死循环（v0.8 的单活豁免作废）。
