@@ -10,7 +10,8 @@
 调用方：
 - tunnel/proxy.py::SSHMonitor.start —— 长驻隧道，消费 build_tunnel_command；
 - services/config_server.py::test_tunnel / test_forward —— 一次性探针，
-  走 probe() / probe_forward() 全包。
+  走 probe() / probe_forward() 全包；
+- mount/remote_setup.py —— 远程一键安装，走 run_remote()（一次性命令执行）。
 """
 import os
 import subprocess
@@ -23,6 +24,17 @@ from tunnel import host_key
 # 探针的硬上限：ssh 自己的 ConnectTimeout 只管 TCP，这个管其余一切
 # （sshpass 提示等待、密钥交换卡住），HTTP 请求绝不无限挂起。
 PROBE_TIMEOUT = 15
+
+# run_remote 的默认上限：覆盖发行版探测/exports 应用这类秒级命令；
+# 安装类调用（apt/dnf）由调用方显式传更长的 timeout。
+REMOTE_TIMEOUT = 60
+
+# sudo -S 失败特征（远程 stderr；-p '' 抑制提示行后只剩这两类）
+_SUDO_FAILURE_PHRASES = (
+    ("incorrect password attempt", "远程 sudo 认证失败：密码错误"),
+    ("a password is required", "远程 sudo 需要密码（NOPASSWD 未配置）"),
+    ("not in the sudoers file", "该 SSH 用户没有 sudo 权限"),
+)
 
 _FAILURE_PHRASES = (
     # 顺序敏感：密钥已变更的 stderr 同时含 "Host key verification failed"，
@@ -274,3 +286,63 @@ def probe_forward(tunnel, remote_host, remote_port, password=""):
             return {"ok": False, "error": f"远程 {rh}:{rp} 连接超时"}
         return {"ok": False, "error": f"无法连到远程 {rh}:{rp}"}
     return {"ok": False, "error": describe_failure(stderr)}
+
+
+def run_remote(tunnel, command, password="", sudo_password="",
+               timeout=REMOTE_TIMEOUT):
+    """一次性远程命令执行：与真实隧道同策略地连一次并执行 command。
+
+    与 probe() 同一套 host-key 三件套与认证策略；command 是完整远程
+    shell 命令串（调用方负责 shlex.quote 用户输入片段）。sudo_password
+    非空时经 ssh stdin 管道传给远程 `sudo -S`——密码只走管道，本地与
+    远程 argv 均不出现（sshpass 的 pty 回显由返回前 scrub 兜底，密码
+    绝不随 stdout/stderr 回流调用方）。无 sudo_password 时 stdin 接
+    DEVNULL，远程任何读取 stdin 的行为立即 EOF。
+
+    返回 {"ok": True, "stdout": str, "stderr": str} 或
+    {"ok": False, "error": "<中文短语>", "stdout": str, "stderr": str}
+    ——绝不抛异常。
+    """
+    port = str(tunnel.get("ssh_port", 22))
+    ssh_args = (["-o", "ConnectTimeout=10"] + _host_key_args()
+                + ["-p", port, _destination(tunnel), command])
+    if tunnel.get("auth_type") == "password":
+        extra = ("-o", "NumberOfPasswordPrompts=1")
+    else:
+        extra = ("-o", "BatchMode=yes")
+    sc = None
+    try:
+        sc = _with_auth(tunnel, ssh_args, password, extra)
+        if sudo_password:
+            proc = subprocess.run(
+                sc.cmd, capture_output=True, timeout=timeout,
+                input=(sudo_password + "\n").encode("utf-8"),
+                pass_fds=sc.pass_fds)
+        else:
+            proc = subprocess.run(
+                sc.cmd, capture_output=True, timeout=timeout,
+                stdin=subprocess.DEVNULL, pass_fds=sc.pass_fds)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"远程命令超时（>{timeout}s）",
+                "stdout": "", "stderr": ""}
+    except OSError:
+        hint = "（密码认证需要 sshpass）" if password else ""
+        return {"ok": False, "error": f"无法启动 ssh{hint}",
+                "stdout": "", "stderr": ""}
+    finally:
+        if sc is not None:
+            sc.close_password_fd()
+    stdout = (proc.stdout or b"").decode("utf-8", "replace")
+    stderr = (proc.stderr or b"").decode("utf-8", "replace")
+    if sudo_password:
+        stdout = stdout.replace(sudo_password, "***")
+        stderr = stderr.replace(sudo_password, "***")
+    if proc.returncode == 0:
+        return {"ok": True, "stdout": stdout, "stderr": stderr}
+    lowered = stderr.lower()
+    for needle, phrase in _SUDO_FAILURE_PHRASES:
+        if needle in lowered:
+            return {"ok": False, "error": phrase,
+                    "stdout": stdout, "stderr": stderr}
+    return {"ok": False, "error": describe_failure(stderr),
+            "stdout": stdout, "stderr": stderr}

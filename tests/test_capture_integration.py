@@ -52,6 +52,7 @@ def _new_app(**attrs):
     defaults = {
         "_config": config,
         "_conn": conn,
+        "_mounts": MagicMock(),
         "_lifecycle": svc,
         "_suanpan": suanpan,
         "_capture_ctrl": capture_ctrl,
@@ -324,3 +325,23 @@ class TestStructKeyIncludesCaptureState(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShutdownChokePoint(unittest.TestCase):
+    """退出清理唯一归宿：幂等 + NFS 卸载先于生命周期退出（ADR-007）。"""
+
+    def test_shutdown_idempotent_and_ordered(self):
+        import unittest.mock as _mock
+        inst = _new_app()
+        manager = _mock.MagicMock()
+        manager.attach_mock(inst._mounts, "mounts")
+        manager.attach_mock(inst._lifecycle, "lifecycle")
+        with patch("rumps.quit_application"):
+            inst.quit_app(None)
+            inst.quit_app(None)  # 二次退出（通知 + 菜单双路径）不再重复
+        names = [c[0] for c in manager.mock_calls if c[0].endswith(
+            ("unmount_all", "quit"))]
+        self.assertEqual(names.count("mounts.unmount_all"), 1)
+        self.assertEqual(names.count("lifecycle.quit"), 1)
+        self.assertLess(names.index("mounts.unmount_all"),
+                        names.index("lifecycle.quit"))

@@ -8,7 +8,8 @@ import sys
 import threading
 import time
 
-from AppKit import NSApplication, NSMenu, NSMenuItem
+from AppKit import NSApplication, NSMenu, NSMenuItem, NSApplicationWillTerminateNotification
+from Foundation import NSObject, NSNotificationCenter
 import rumps
 
 from capture import ca_trust
@@ -19,10 +20,12 @@ from shared import netloc
 from shared.identity import IdentityMigrationError
 from sysctl import port_check
 from shellui.bridge_protocol import (ACTION_COPY_AGENT_INSTRUCTIONS,
-    ACTION_FORWARD_SESSION, ACTION_OPEN_PATH, ACTION_RECONNECT_PROXY)
+    ACTION_FORWARD_SESSION, ACTION_NFS_MOUNT_TOGGLE, ACTION_OPEN_PATH,
+    ACTION_RECONNECT_PROXY)
 from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
-    DEFAULT_CONFIG, load_config, merge_config)
+    DEFAULT_CONFIG, load_config, merge_config, resolve_mount_dir)
+from mount.coordinator import MountCoordinator
 from shellui.log_window import LogBuffer, show_log_window
 from shellui.webview_window import show_config_window
 from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
@@ -35,7 +38,7 @@ from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")
 LOG_PATH = os.path.join(LOG_DIR, "MagicProxy.log")
-VERSION = "0.9.1"
+VERSION = "0.10.0"
 VERSION_DISPLAY = version_display(VERSION, build_stamp())
 
 log_buffer = LogBuffer()
@@ -69,6 +72,22 @@ ssh_log = logging.getLogger("magic-proxy.ssh")
 
 
 
+class _TerminateObserver(NSObject):
+    """NSApplicationWillTerminate → app._shutdown()。
+
+    菜单退出（quit_app）与 AppleEvent 退出（osascript quit / 注销 /
+    重启）都必经 NSApp.terminate_——本观察者是两条路径的公共咽喉。
+    曾有的缺口：清理只挂在菜单回调上，AppleEvent 退出直接跳过——NFS
+    会话的 ssh 泄漏成孤儿（PPID=1）占住本地端口，下个实例的 NFS 会话
+    在 ExitOnForwardFailure 下永久失败（实测：12049 被孤儿占用致挂载
+    死循环）。"""
+
+    def onTerminate_(self, _note):
+        app = self._app_ref()
+        if app is not None:
+            app._shutdown()
+
+
 class MagicProxyApp(rumps.App):
     def __init__(self):
         try:
@@ -97,10 +116,19 @@ class MagicProxyApp(rumps.App):
             get_config=lambda: self._config,
             get_tunnel_password=self._tunnel_password,
         )
+        # NFS 挂载协调（ADR-007）：专用 NFS 会话 + 挂载生命周期，与端口
+        # 转发会话并行互不干扰；resolve_mount_dir 注入——mount 域不横向
+        # import mpconf
+        self._mounts = MountCoordinator(
+            get_config=lambda: self._config,
+            get_tunnel_password=self._tunnel_password,
+            ssh_log_sink=lambda line: ssh_log.info("nfs| %s", line),
+            resolve_mount_dir=resolve_mount_dir,
+        )
         # #86：唤醒事件 → 立即重连（跳过退避）。事件源装不上则静默
-        # 降级——网络中断场景由 #85 的无限退避兜底。
-        self._reconnect_trigger = ReconnectTrigger(
-            self._conn.handle_reconnect_trigger)
+        # 降级——网络中断场景由 #85 的无限退避兜底。多活：NFS 会话同拍
+        # 僵尸重建（唤醒断了所有隧道的 TCP）。
+        self._reconnect_trigger = ReconnectTrigger(self._on_wake_event)
         WakeEventSource(self._reconnect_trigger.notify).start()
 
         # Non-blocking quit→relaunch state machine for proxied app launches
@@ -117,6 +145,7 @@ class MagicProxyApp(rumps.App):
             on_menu_dirty=lambda: setattr(self._menu_builder, "last_struct_key", None),
             initial_sys_proxy_on=self._config.get("system_proxy_default", False),
             tunnel_states_fn=lambda: self._conn.forward_sessions(),
+            mount_states_fn=lambda: self._mounts.mount_states(),
             on_mp_saved=self._on_mp_saved,
         )
         self._suanpan = self._lifecycle.suanpan
@@ -152,6 +181,19 @@ class MagicProxyApp(rumps.App):
             self._conn.start()
             # 多活：forward_autostart 的转发会话随应用启动恢复
             self._conn.apply_autostarts()
+        # NFS：auto_mount 的挂载项随应用启动恢复（tick 负责补会话）
+        self._mounts.apply_autostarts()
+
+        # 退出咽喉：AppleEvent 退出不走菜单回调——统一经
+        # NSApplicationWillTerminate 进 _shutdown（见 _TerminateObserver）
+        self._shutdown_done = False
+        import weakref
+        self._terminate_observer = _TerminateObserver.alloc().init()
+        self._terminate_observer._app_ref = weakref.ref(self)
+        NSNotificationCenter.defaultCenter(
+        ).addObserver_selector_name_object_(
+            self._terminate_observer, "onTerminate:",
+            NSApplicationWillTerminateNotification, None)
 
         rumps.Timer(self._on_tick, 1).start()
 
@@ -210,9 +252,15 @@ class MagicProxyApp(rumps.App):
             prevent_sleep_title="防睡眠：开" if self._config.get("prevent_sleep") else "防睡眠：关",
             launch_login_title="登录启动：开" if self._config.get("launch_at_login") else "登录启动：关",
             forward_states=tuple(self._conn.forward_sessions()),
+            mount_states=tuple(self._mounts.mount_states()),
         )
 
     # ── tick ─────────────────────────────────────────────
+
+    def _on_wake_event(self):
+        """#86 唤醒 → 代理/转发会话重连 + NFS 会话僵尸重建（同拍）。"""
+        self._conn.handle_reconnect_trigger()
+        self._mounts.reconnect_now()
 
     def _on_tick(self, _):
         self._stats.tick()
@@ -236,13 +284,21 @@ class MagicProxyApp(rumps.App):
         # SSH check AFTER icon (matches original)
         self._conn.check_ssh()
         self._conn.check_forwards()
+        # NFS 挂载收敛（会话健康 + 挂载/卸载 reconcile，不阻塞主线程）
+        self._mounts.tick()
 
         # Services —— 防睡眠按聚合状态：任一会话在跑就不睡（暂停是代理
-        # 会话语义，转发会话仍在服务时不因代理暂停而允许睡眠）
+        # 会话语义，转发会话仍在服务时不因代理暂停而允许睡眠）；挂载在
+        # 途/已挂载同理（hard 挂载睡着 = Finder 卡死）
         self._lifecycle.tick(self._config.get("capture_port", DEFAULT_CAPTURE_PORT))
-        sleep_status = "connected" if self._conn.any_connected else s
+        mounts_active = (self._mounts.any_mounted()
+                         or self._mounts.any_session_connected())
+        sleep_status = ("connected"
+                        if (self._conn.any_connected or mounts_active)
+                        else s)
         sleep_paused = (self._conn.paused
-                        and not self._conn.any_forward_session_connected)
+                        and not self._conn.any_forward_session_connected
+                        and not mounts_active)
         self._lifecycle.sync_sleep(sleep_status, sleep_paused,
                              self._config.get("prevent_sleep", False))
 
@@ -333,6 +389,8 @@ class MagicProxyApp(rumps.App):
             ok, err = login_item.set_launch_at_login(new_login)
             if not ok:
                 logger.warning("UI 保存后同步登录启动失败：%s", err)
+        # NFS：新配置的 auto_mount 挂载项收敛补挂（tick 负责补会话）
+        self._mounts.apply_autostarts()
 
     # ── connection ───────────────────────────────────────
 
@@ -426,6 +484,40 @@ class MagicProxyApp(rumps.App):
                 args=(tunnel_id, reload_cfg),
                 name="BridgeReconnectForward", daemon=True).start()
             self._dirty()
+        return act
+
+    # ── NFS 挂载（ADR-007）───────────────────────────────
+
+    def make_toggle_mount(self, tunnel_id, name):
+        """菜单「挂载/卸载」：在挂（mounted/mounting/unmounting）则卸，
+        其余（unmounted/error）则挂。"""
+        def act(_):
+            states = {(tid, n): st for tid, _tn, n, st, _e
+                      in self._mounts.mount_states()}
+            if states.get((tunnel_id, name)) in (
+                    "mounted", "mounting", "unmounting"):
+                self._mounts.stop_mount(tunnel_id, name)
+            else:
+                self._mounts.start_mount(tunnel_id, name)
+            self._dirty()
+        return act
+
+    def make_open_mount_dir(self, tunnel_id, name):
+        """菜单「打开挂载目录」：Finder 中打开（不存在则先建目录）。"""
+        def act(_):
+            for t in self._config.get("tunnels", []):
+                if not (isinstance(t, dict) and t.get("id") == tunnel_id):
+                    continue
+                for row in ((t.get("nfs") or {}).get("mounts") or []):
+                    if isinstance(row, dict) and row.get("name") == name:
+                        d = resolve_mount_dir(row)
+                        try:
+                            os.makedirs(d, exist_ok=True)
+                            subprocess.Popen(["open", d])
+                        except OSError:
+                            actions_log.exception(
+                                "Failed to open mount dir %s", d)
+                        return
         return act
 
     # ── suanpan ──────────────────────────────────────────
@@ -735,22 +827,51 @@ class MagicProxyApp(rumps.App):
             else:
                 self._conn.stop_forward(tid)
             self._dirty()
+        elif kind == ACTION_NFS_MOUNT_TOGGLE:
+            # ADR-007：设置窗「挂载/卸载」。start_mount 起专用会话（host-key
+            # 首连走 AppHelper 回主线程弹信任框）+ 派发 mount job 到 worker
+            # ——都在协调器内，这里只分派意图。
+            tid = action.get("tunnel_id")
+            name = action.get("name")
+            if not tid or not name:
+                return
+            if action.get("action") == "unmount":
+                self._mounts.stop_mount(tid, name)
+            else:
+                self._mounts.start_mount(tid, name)
+            self._dirty()
         elif kind == ACTION_OPEN_PATH and action.get("kind") == "captureDir":
             self.open_capture_dir(None)
         elif kind == ACTION_COPY_AGENT_INSTRUCTIONS:
             self._copy_agent_instructions()
 
-    def quit_app(self, _):
-        # 退出顺序契约由 LifecycleRuntime.quit 持有（系统代理恢复先于 SSH 停止）
+    def _shutdown(self):
+        """退出清理唯一归宿（幂等）。
+
+        顺序契约：NFS 先卸载（hard 挂载断隧道前必须卸，防 Finder 卡死）
+        → 系统代理恢复 → SSH 停止 → 服务线 → 配置服务（后者由
+        LifecycleRuntime.quit 持有）。"""
+        if getattr(self, "_shutdown_done", False):
+            return
+        self._shutdown_done = True
+        self._mounts.unmount_all()
         self._lifecycle.quit(self._conn.stop_all)
+
+    def quit_app(self, _):
+        self._shutdown()
         rumps.quit_application()
 
 
 if __name__ == "__main__":
     if os.environ.get("MAGIC_PROXY_SMOKE_TEST") == "1":
         logger.info("Magic AI Router smoke import OK: v%s", VERSION)
+        # mount 域（ADR-007）依赖分析守卫：app.py 顶层 import 会让
+        # PyInstaller 把 mount 包编进 PYZ——这里真导入一次，漏收集在
+        # 打包冒烟即红，而非装到 /Applications 后首挂载才炸
+        from mount import (  # noqa: F401
+            coordinator, mount_control, nfs_session, remote_setup)
         # frozen 冒烟（issue #2）：契约解析 + 实际 spawn bundled mitmdump
-        # 加载 addon，判据单一归宿在 capture.resources；失败原因直达
+        # 加载 addon，判据单一归宿在 capture/resources；失败原因直达
         # stderr（windowed 包 logger 不落终端，print 才可见）。
         from capture.resources import (
             CaptureResourcesError, resolve_capture_resources, smoke_capture_boot)

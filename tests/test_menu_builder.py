@@ -188,3 +188,67 @@ class TestProxyTunnelIndex(unittest.TestCase):
     def test_malformed_config_is_safe(self):
         self.assertEqual(_proxy_tunnel_index(None), 0)
         self.assertEqual(_proxy_tunnel_index({}), 0)
+
+
+class TestMountSubmenu(unittest.TestCase):
+    """远程挂载（ADR-007）：mount_states 参与 struct_key + 子菜单构建。"""
+
+    @staticmethod
+    def _mounts():
+        return (("t-1", "Aws-eu", "data", "mounted", ""),
+                ("t-1", "Aws-eu", "ws", "unmounted", ""))
+
+    def _submenu(self, mount_states=(), cfg=None):
+        app = MagicMock()
+        with unittest.mock.patch("shellui.menu_builder.chromium_proxy.installed_apps",
+                                 return_value=[]):
+            mb = MenuBuilder(app, lambda: _state(
+                config=cfg or {"tunnels": []}, mount_states=mount_states))
+            parent = mb._build_mount_submenu()
+        rows = [r for r in parent.values() if hasattr(r, "values")]
+        titles = [r.title for r in parent.values() if hasattr(r, "title")]
+        return parent, rows, titles
+
+    def test_mount_state_change_rebuilds_menu(self):
+        key_idle = MenuBuilder(MagicMock(), lambda: _state(
+            mount_states=())).struct_key()
+        key_mounted = MenuBuilder(MagicMock(), lambda: _state(
+            mount_states=self._mounts())).struct_key()
+        self.assertNotEqual(key_idle, key_mounted)
+        # 状态迁移（unmounted→mounting）同样触发重建
+        key_shift = MenuBuilder(MagicMock(), lambda: _state(
+            mount_states=(("t-1", "Aws-eu", "ws", "mounting", ""),))).struct_key()
+        self.assertNotEqual(key_mounted, key_shift)
+
+    def test_mount_rows_and_actions(self):
+        _, rows, titles = self._submenu(self._mounts())
+        mounted = [r for r in rows if r.title.startswith("Aws-eu · data")]
+        unmounted = [r for r in rows if r.title.startswith("Aws-eu · ws")]
+        self.assertTrue(mounted and unmounted, titles)
+        self.assertIn("— 已挂载", mounted[0].title)
+        self.assertIn("— 未挂载", unmounted[0].title)
+        items = [i.title for i in list(mounted[0].values())]
+        self.assertIn("卸载", items)
+        self.assertIn("打开挂载目录", items)
+        items = [i.title for i in list(unmounted[0].values())]
+        self.assertIn("挂载", items)
+
+    def test_error_row_shows_message(self):
+        states = (("t-1", "srv", "data", "error", "挂载失败：权限不足"),)
+        _, rows, titles = self._submenu(states)
+        err = [r for r in rows if r.title.startswith("srv · data")]
+        self.assertIn("— 异常", err[0].title)
+        items = [i.title for i in list(err[0].values())]
+        self.assertIn("  挂载失败：权限不足", items)
+
+    def test_empty_state_hint(self):
+        _, _, titles = self._submenu()
+        self.assertIn("在偏好设置 → 远程挂载里配置", titles)
+
+    def test_status_line_appends_mount_count(self):
+        mb = MenuBuilder(MagicMock(), lambda: _state(
+            ssh_status="connected", mount_states=self._mounts()))
+        mb.build()
+        mb.refresh_titles()
+        title = mb.refs["proxy_status"].title
+        self.assertIn("1 挂载", title)

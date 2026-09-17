@@ -39,7 +39,17 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 ### SSH 调用策略（ssh_launch）
 
-「按我们的策略调用 ssh」的单一归宿（`tunnel/ssh_launch.py`）：argv 构建（host-key 三件套 StrictHostKeyChecking=yes + 应用专用 known_hosts + GlobalKnownHostsFile=/dev/null；sshpass-via-fd 密码注入，密码永不出现在 argv/ps；key 认证 -i 传参）、一次性连通性探针 `probe()`、stderr→中文短语的有序失败分类表（密钥已变更先于未信任）。两个调用方各留本职：`SSHMonitor.start` 只持有长驻子进程生命周期（消费 `build_tunnel_command` 的 `SshCommand`），`config_server.test_tunnel` 只持有输入校验与 Keychain 取用（委托 `probe()`）——探针与真实隧道行为恒等，改策略只落一处。
+「按我们的策略调用 ssh」的单一归宿（`tunnel/ssh_launch.py`）：argv 构建（host-key 三件套 StrictHostKeyChecking=yes + 应用专用 known_hosts + GlobalKnownHostsFile=/dev/null；sshpass-via-fd 密码注入，密码永不出现在 argv/ps；key 认证 -i 传参）、一次性连通性探针 `probe()`、一次性远程命令执行 `run_remote()`（sudo 密码经 ssh stdin 管道传给远程 `sudo -S -p ''`，sshpass 的 pty 回显在返回前 scrub——密码绝不随 argv/stdout/stderr 泄漏）、stderr→中文短语的有序失败分类表（密钥已变更先于未信任）。调用方各留本职：`SSHMonitor.start` 只持有长驻子进程生命周期（消费 `build_tunnel_command` 的 `SshCommand`），`config_server.test_tunnel` 只持有输入校验与 Keychain 取用（委托 `probe()`），`mount/remote_setup` 只持有安装序列编排（委托 `run_remote`）——探针/远程执行与真实隧道行为恒等，改策略只落一处。
+
+### 远程挂载（NFS over SSH Tunnel）
+
+把远程服务器目录经 SSH 隧道以 **NFSv4** 挂载到本机（ADR-007，`mount/` 域）。仅 NFSv4——单 TCP 端口 2049、无 mount 协议，一条 `-L` 隧道承载该隧道全部挂载；macOS 自带客户端，本地零内核扩展。
+
+- **专用 NFS 会话**（`nfs_session.py`）：镜像 `_ForwardSession` 三件套的独立会话，tunnel 副本只携带 NFS 一条 -L（用户转发行归用户会话——同端口双进程互顶死）。运行编排归 `MountCoordinator`（`coordinator.py`，tick reconcile）：会话 connected + 未挂载 → 派发挂载；会话断开 + 已挂载 → **立即强制卸载**（hard 挂载防 Finder 卡死）；恢复自动重挂 auto_mount 项；退出先卸载后断隧道。mount/umount 子进程全走 worker 线程。
+- **远程一键安装**（`remote_setup.py`，幂等）：发行版探测 → 装包（apt/dnf/yum）→ 写应用专属 `/etc/exports.d/magic-router.exports`（导出恒绑 127.0.0.1 + `insecure` 必须：sshd 转发源端口非特权）→ `exportfs -ra` → 验证 2049 监听。root 脚本经单次 `sudo sh -c` 执行；sudo 密码解析序：UI 显式输入 > 密码登录复用隧道密码 > Keychain `nfs-sudo:` 账户槽；空 = `sudo -n`。
+- **本地挂载**（`mount_control.py`）：`sudo -n mount_nfs -o vers=4,port=<lp>,tcp,hard 127.0.0.1:<path> <dir>`；挂载状态真相源 = `/sbin/mount` 表（不信单次返回码）；卸载升级链 umount → `umount -f` → `diskutil unmount force`。本地提权 = 一次性 osascript 管理员授权写 `/etc/sudoers.d/magic-router-mount`（base64 过引号 + `visudo -cf` 先校验，规则仅限 mount_nfs/umount 两个二进制）。
+- **配置**：`tunnels[i].nfs`（enabled / local_port 默认 12049 / squash_to_ssh_user / mounts[{name, remote_path, local_dir 空缺省 /Volumes/<名>, auto_mount}]）；本地端口与全局端口面冲突在 prepare 拦（仅 enabled 或有挂载的节点参与——merge 填的纯默认节点不占端口）。
+- 挂载启停经 bridge `nfsMountToggle`（运行时意图不落盘）；远程检测/安装走 config_server `/api/nfs-check-remote`、`/api/nfs-setup-remote`；`nfs_states` 是 /api/state 的只读运行态装饰。
 
 ### 抓包模式（Capture Mode）
 

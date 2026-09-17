@@ -20,6 +20,7 @@ from shared import keychain
 from services import sp_config
 from mpconf.config_state import ConfigStateStore
 from tunnel import ssh_launch
+from mount import remote_setup
 from services import claude_code_setup
 from capture import capture_store
 from mpconf.config import load_config, merge_config
@@ -159,6 +160,49 @@ def test_forward(tunnel, forward):
         password=password)
 
 
+def _nfs_credentials(tunnel, sudo_password_override=None):
+    """NFS 远程操作的凭据解析：(tunnel, ssh_password, sudo_password, error)。
+
+    sudo 密码解析序（ADR-007）：显式覆盖（UI 输入）> 密码登录复用隧道
+    密码 > Keychain sudo 槽（密钥登录存过一次的）。空串 = sudo -n
+    （NOPASSWD 服务器），失败由 run_remote 分类成中文短语提示补输。
+    """
+    normalized, password, error = _probe_inputs(tunnel)
+    if error:
+        return None, "", "", error
+    if sudo_password_override:
+        return normalized, password, sudo_password_override, ""
+    if normalized.get("auth_type") == "password":
+        return normalized, password, password, ""
+    return normalized, password, keychain.get_sudo_password(normalized), ""
+
+
+def nfs_check_remote(tunnel):
+    """探测远程 NFS 状态（发行版/已装/监听/导出表）——只读，无副作用。"""
+    normalized, password, sudo_password, error = _nfs_credentials(tunnel)
+    if error:
+        return {"ok": False, "error": error}
+    return remote_setup.check_remote(normalized, password=password,
+                                     sudo_password=sudo_password)
+
+
+def nfs_setup_remote(tunnel, mounts, squash_to_ssh_user=False,
+                     sudo_password_override=""):
+    """一键安装 + 配置导出（幂等）。显式输入的 sudo 密码在成功后落
+    Keychain（密钥登录的隧道下次免输）。"""
+    normalized, password, sudo_password, error = _nfs_credentials(
+        tunnel, sudo_password_override)
+    if error:
+        return {"ok": False, "error": error, "stage": "detect"}
+    result = remote_setup.setup_remote(
+        normalized, mounts, password=password, sudo_password=sudo_password,
+        squash_to_ssh_user=squash_to_ssh_user)
+    if (result.get("ok") and sudo_password_override
+            and normalized.get("auth_type") != "password"):
+        keychain.set_sudo_password(normalized, sudo_password_override)
+    return result
+
+
 class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Carries the per-server callback refs on the INSTANCE (not class
     attributes): parallel ConfigServers in tests can never cross-talk, and
@@ -167,12 +211,13 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
     def __init__(self, address, handler, *, expected_token=None,
                  on_sp_saved=None, on_mp_saved=None, capture_state_fn=None,
-                 tunnel_states_fn=None):
+                 tunnel_states_fn=None, mount_states_fn=None):
         self.expected_token = expected_token
         self.on_sp_saved = on_sp_saved
         self.on_mp_saved = on_mp_saved
         self.capture_state_fn = capture_state_fn
         self.tunnel_states_fn = tunnel_states_fn
+        self.mount_states_fn = mount_states_fn
         super().__init__(address, handler)
 
 
@@ -315,10 +360,24 @@ class _Handler(BaseHTTPRequestHandler):
                 states = {}
             cid = mp.get("current_tunnel_id") or ""
             current_idx = mp.get("current_tunnel", 0)
+            # ADR-007：NFS 挂载运行态装饰（mount_states_fn seam，缺席即
+            # 空投影——测试/容器形态）；nfs_states 属 READONLY_
+            # DECORATED_FIELDS，prepare 剥除保证永不落盘
+            try:
+                mfn = self.server.mount_states_fn
+                mount_states = {}
+                for entry in (mfn() if mfn else []):
+                    if isinstance(entry, (tuple, list)) and len(entry) >= 4:
+                        mount_states.setdefault(entry[0], {})[entry[2]] = \
+                            entry[3]
+            except Exception:
+                logger.exception("mount_states_fn failed")
+                mount_states = {}
             for i, t in enumerate(mp.get("tunnels", [])):
                 is_role = (t.get("id") == cid) if cid else i == current_idx
                 t["is_proxy"] = is_role
                 t["forward_running"] = t.get("id") in states
+                t["nfs_states"] = mount_states.get(t.get("id")) or {}
             self._json(200, {"mp": mp, "sp": sp})
         elif path == "/api/balance":
             self._json(200, fetch_balance(sp_config.sp_load_raw()))
@@ -361,6 +420,7 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path not in ("/api/fetch-models", "/api/test-provider", "/api/setup-claude-code",
                         "/api/cc-sync-preview", "/api/test-tunnel", "/api/test-forward",
+                        "/api/nfs-check-remote", "/api/nfs-setup-remote",
                         "/api/capture-clean"):
             self._json(404, {"error": "not found"})
             return
@@ -380,6 +440,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(code, payload)
         elif path == "/api/test-forward":
             code, payload = self._test_forward(data)
+            self._json(code, payload)
+        elif path == "/api/nfs-check-remote":
+            code, payload = self._nfs_check_remote(data)
+            self._json(code, payload)
+        elif path == "/api/nfs-setup-remote":
+            code, payload = self._nfs_setup_remote(data)
             self._json(code, payload)
         elif path == "/api/capture-clean":
             self._json(200, self._capture_clean())
@@ -448,6 +514,56 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "removed": removed}
 
+    # ── NFS 远程端点（ADR-007）─────────────────────────────
+
+    @staticmethod
+    def _resolve_tunnel(data):
+        """body 里解析隧道：显式 tunnel 优先，index 回退到已保存隧道。
+        返回 (tunnel, error_已发送时为 None 之外的场景统一返回错误串)。"""
+        tunnel = data.get("tunnel")
+        if tunnel is not None:
+            if isinstance(tunnel, dict):
+                return tunnel, ""
+            return None, "无效的隧道"
+        idx = data.get("index")
+        if isinstance(idx, bool) or not isinstance(idx, int):
+            return None, "无效的隧道索引"
+        cfg = _read_mp()
+        tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
+        if not tunnels:
+            return None, "尚未配置隧道"
+        if not 0 <= idx < len(tunnels):
+            return None, "隧道索引越界"
+        return tunnels[idx], ""
+
+    def _nfs_check_remote(self, data):
+        """POST /api/nfs-check-remote {tunnel|index} → 只读探测远程 NFS。"""
+        tunnel, error = self._resolve_tunnel(data)
+        if error:
+            return 400, {"ok": False, "error": error}
+        return 200, nfs_check_remote(tunnel)
+
+    def _nfs_setup_remote(self, data):
+        """POST /api/nfs-setup-remote {tunnel|index, mounts, squash,
+        sudo_password?} → 一键安装 + 配置导出（幂等）。"""
+        tunnel, error = self._resolve_tunnel(data)
+        if error:
+            return 400, {"ok": False, "error": error, "stage": "detect"}
+        mounts = data.get("mounts")
+        if not isinstance(mounts, list) or \
+                not all(isinstance(p, str) and p.startswith("/")
+                        for p in mounts if p is not None) or not mounts:
+            return 400, {"ok": False,
+                         "error": "mounts 须为非空的绝对路径列表",
+                         "stage": "detect"}
+        sudo_pw = data.get("sudo_password")
+        if sudo_pw is not None and not isinstance(sudo_pw, str):
+            sudo_pw = ""
+        return 200, nfs_setup_remote(
+            tunnel, mounts,
+            squash_to_ssh_user=data.get("squash") is True,
+            sudo_password_override=sudo_pw or "")
+
     def do_PUT(self):
         if not self._valid_host() or not self._valid_token():
             self._json(401, {"error": "unauthorized"})
@@ -503,7 +619,7 @@ class ConfigServer:
 
     def __init__(self, on_sp_saved=None, on_mp_saved=None, port=CONFIG_PORT,
                  capture_state=None, bind_host="127.0.0.1", token=None,
-                 tunnel_states_fn=None):
+                 tunnel_states_fn=None, mount_states_fn=None):
         self._port = port
         self._bind_host = bind_host
         self._server = None
@@ -517,6 +633,9 @@ class ConfigServer:
         # 多活：转发会话快照 getter → [(tunnel_id, name, status)]；
         # None（测试/容器）⇒ forward_running 全 False
         self._tunnel_states_fn = tunnel_states_fn
+        # ADR-007：NFS 挂载快照 getter → [(tunnel_id, tname, name, status,
+        # error)]；None（测试/容器）⇒ nfs_states 全空投影
+        self._mount_states_fn = mount_states_fn
 
     @property
     def token(self):
@@ -559,7 +678,8 @@ class ConfigServer:
                 on_sp_saved=self._on_sp_saved,
                 on_mp_saved=self._on_mp_saved,
                 capture_state_fn=self._capture_state,
-                tunnel_states_fn=self._tunnel_states_fn)
+                tunnel_states_fn=self._tunnel_states_fn,
+                mount_states_fn=self._mount_states_fn)
         except OSError:
             logger.warning("Config server: port %d unavailable", self._port)
             return False

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 _LAYERS = {
     "shared": 0, "util": 0,
     "tunnel": 1, "mpconf": 1, "capture": 1, "sysctl": 1, "suanpan": 1,
+    "mount": 1,
     "services": 2, "shellui": 2,
     "app": 3, "docker": 3,
 }
@@ -31,13 +32,17 @@ _ROOT_FILES = {"app.py": "app", "util.py": "util"}
 
 # 守卫覆盖的产品代码根（tests/tools/scripts 除外）
 _PACKAGES = ("shared", "tunnel", "mpconf", "shellui", "capture",
-             "sysctl", "services", "suanpan", "docker")
+             "sysctl", "services", "suanpan", "docker", "mount")
 
 # 设计内同层耦合白名单——每条必须带理由；新增横边不在此列即红。
 _ALLOWED_SAME_LAYER = {
     # config_state 是 mp+sp 双文件的唯一事务边界：prepare/commit 需要
     # suanpan 的 pydantic schema 与路由文法做全量校验（CONTEXT.md 配置事务）
     ("mpconf", "suanpan"),
+    # ADR-007：ssh 调用策略（argv 构建/host-key 三件套/认证注入/失败
+    # 分类）单一归宿在 tunnel/ssh_launch——mount 域的远程安装与会话
+    # 必须复用同一份策略，不得自建 ssh argv
+    ("mount", "tunnel"),
 }
 
 

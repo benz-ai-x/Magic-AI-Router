@@ -368,6 +368,22 @@ function numberDefault(value,fallback){
 // #53 声明：__saved_api_key__ / __saved_password__ 是脏检查投影层的
 // 占位哨兵（viewSnapshot/dirtyProjection 专用）——collect() 从表单读到
 // 空值即回写 null，哨兵永不上 PUT 线、永不入 S.sp/S.mp 持久态。
+// NFS 视图投影（ADR-007）：collect 的缺省口径与本投影同一语义——空端口
+// =12049、空字段=''、auto_mount 严格布尔，未触碰的隧道不产生假 dirty。
+function nfsProjection(n){
+  n=n||{};
+  return{
+    enabled:n.enabled===true,
+    local_port:numberDefault(n.local_port,12049),
+    squash_to_ssh_user:n.squash_to_ssh_user===true,
+    mounts:(n.mounts||[]).map(m=>({
+      name:(m&&m.name)||'',
+      remote_path:(m&&m.remote_path)||'',
+      local_dir:(m&&m.local_dir)||'',
+      auto_mount:!!m&&m.auto_mount===true,
+    })),
+  };
+}
 function viewSnapshot(view,state,roles){
   // Project the shared config into the values owned by one settings page.
   // Defaults match what the form renders, preventing an untouched omitted
@@ -392,6 +408,13 @@ function viewSnapshot(view,state,roles){
         remote_host:f.remote_host||'127.0.0.1',
         remote_port:numberDefault(f.remote_port,0),
       })),
+    })),
+  };
+  if(view==='nfs')return{
+    // 运行态装饰 nfs_states 不入 dirty 面（READONLY_DECORATED_FIELDS 剥除）
+    tunnels:(mp.tunnels||[]).map(t=>({
+      id:t.id||'',
+      nfs:nfsProjection(t.nfs),
     })),
   };
   if(view==='proxy')return{
@@ -732,7 +755,7 @@ function ccBackupNote(pv){
 // 一切副作用经 deps 注入（真 fetch / 测试桩 = 两个真 adapter）；快照是
 // collect 之后的纯数据。两次真实事故（99999 端口写库、幽灵 api_key 保存）
 // 都发生在这条流上——node 测试从此直接钉住状态机。
-const EDITABLE_VIEWS=['tunnel','proxy','providers','rules','system'];
+const EDITABLE_VIEWS=['tunnel','nfs','proxy','providers','rules','system'];
 function dirtyProjection(base,S,baseRoles,roles){
   // 纯派生：哪些页面有真实 diff、各几项。recomputeDirty 与 saveFlow 共用，
   // 保证「按钮上的计数」与「保存流实际处理范围」永远同一口径。
@@ -871,6 +894,7 @@ const refreshTimers={};
 // render/collect are attached below once the view functions exist.
 const VIEWS={
   tunnel:{group:'代理',title:'隧道',sub:'SSH 连接配置',icon:'<path d="M4 6.5h16v11H4z"/><path d="M8 10h8M8 14h5"/>'},
+  nfs:{group:'代理',title:'远程挂载',sub:'NFS over SSH 隧道',icon:'<rect x="4" y="4" width="16" height="6" rx="1.5"/><path d="M4 15h16v5H4z"/><path d="M7 17.5h.01M17 17.5h1.5"/>'},
   proxy:{group:'代理',title:'网络设置',sub:'端口与抓包',icon:'<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a6 6 0 0 1 6 6h-2a4 4 0 0 0-4-4z"/>'},
   system:{group:'系统',title:'系统选项',sub:'防睡眠与登录启动',icon:'<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a4 4 0 0 0-4 4h2a2 2 0 0 1 4 0h2a4 4 0 0 0-4-4zm0 10a4 4 0 0 0 4-4H8a4 4 0 0 0 4 4z"/>'},
   providers:{group:'AI 路由',title:'供应商',sub:'后端接入与凭证',icon:'<circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 6h8M6 8v5a5 5 0 0 0 5 5h5"/>'},
@@ -1319,6 +1343,160 @@ function toggleForwardSession(btn,tunnelId,action){
     btn.disabled=true;
     setTimeout(()=>{recomputeDirty();renderView();},1200);
   }else toast('端口转发启停需在应用的设置窗内使用');
+}
+
+// ── NFS 远程挂载 view（ADR-007，master-detail 同隧道页）──
+const NFS_STATUS_LABEL={mounted:['已挂载','ok'],mounting:['挂载中…','warn'],
+  unmounting:['卸载中…','warn'],error:['异常','err'],unmounted:['未挂载','muted']};
+function _nfsMountedCount(t){
+  return Object.values(t.nfs_states||{}).filter(s=>s==='mounted').length;
+}
+function nfsMountRows(t){
+  const n=t.nfs||{},states=t.nfs_states||{};
+  const ms=n.mounts||[];
+  if(!ms.length)return `<tr class="fw-empty"><td colspan="5">暂无挂载项——点「+ 添加挂载」把远程目录挂到本机</td></tr>`;
+  return ms.map((m,mi)=>{
+    const st=states[m.name]||'unmounted';
+    const [lbl,cls]=NFS_STATUS_LABEL[st]||NFS_STATUS_LABEL.unmounted;
+    return `<tr data-nmr="${mi}">
+      <td><input class="control" data-nmf="name" value="${esc(m.name||'')}" placeholder="data" aria-label="挂载 ${mi+1} 名称"></td>
+      <td><input class="control mono" data-nmf="remote_path" value="${esc(m.remote_path||'')}" placeholder="/data" aria-label="挂载 ${mi+1} 远程路径"></td>
+      <td><input class="control mono" data-nmf="local_dir" value="${esc(m.local_dir||'')}" placeholder="/Volumes/${esc(m.name||'名称')}" aria-label="挂载 ${mi+1} 本地目录"></td>
+      <td><button class="switch" data-nmf="auto" role="switch" aria-checked="${m.auto_mount===true}" aria-label="挂载 ${mi+1} 随应用自动挂载" onclick="toggleSwitch(this)"></button></td>
+      <td><div class="fw-actions"><span class="fw-status ${cls}">${lbl}</span>
+        <button class="btn btn-sm" aria-label="挂载 ${esc(m.name||('项'+(mi+1)))}" onclick="nfsMountAction(this,${mi},'mount')">挂载</button>
+        <button class="btn btn-sm" aria-label="卸载 ${esc(m.name||('项'+(mi+1)))}" onclick="nfsMountAction(this,${mi},'unmount')">卸载</button>
+        <button class="btn btn-sm btn-danger" aria-label="删除挂载 ${mi+1}" onclick="removeNfsMount(${mi})">删除</button></div></td>
+    </tr>`;
+  }).join('');
+}
+function nfsHTML(){
+  const ts=S.mp.tunnels||[];
+  if(!ts.length)return `<section class="view"><div class="panel"><div class="empty-state"><h2>还没有配置隧道</h2><p>远程挂载依附于 SSH 隧道——先到「隧道」页添加服务器。</p></div></div></section>`;
+  const t=ts[activeTunnel];
+  const n=t.nfs||{};
+  const tname=t.name||t.ssh_host||('Server '+(activeTunnel+1));
+  return `<section class="view">
+    <p class="module-intro">把远程目录经 SSH 隧道以 NFSv4 挂载到本机。三步：填挂载项 →「一键安装」配置服务器 →「挂载」。仅 NFSv4（单端口，一条隧道承载全部挂载）；服务器只导出给 127.0.0.1；首次挂载会请求一次本机管理员授权。</p>
+    <div class="panel"><div class="md-layout">
+      <div class="md-master">
+        <div class="section-bar"><h2 class="section-title">服务器</h2><span class="count">${ts.length} 台</span></div>
+        <div class="md-list">${ts.map((tn,i)=>{
+          const tnfs=tn.nfs||{};const up=_nfsMountedCount(tn);
+          return `<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectNfsTunnel(${i})"><span class="dot ${tnfs.enabled===true?'':'off'}" title="${tnfs.enabled===true?'NFS 挂载已启用':'NFS 挂载未启用'}"></span><span><strong>${esc(tn.name||tn.ssh_host||('Server '+(i+1)))}</strong>${up?`<span class="fw-badge">${up} 挂载中</span>`:''}<span class="sub">${tn.ssh_host?esc((tn.ssh_user?tn.ssh_user+'@':'')+tn.ssh_host+(tn.ssh_port&&tn.ssh_port!==22?':'+tn.ssh_port:'')):'（需填写地址）'}</span></span></button>`;}).join('')}</div>
+      </div>
+      <div class="md-detail">
+        <div class="detail-bar"><h2>${esc(tname)}</h2>
+          <div class="section-actions">
+            <button class="btn btn-sm" aria-label="检测远程 NFS ${esc(tname)}" onclick="nfsCheckRemote(this)">检测远程 NFS</button>
+            <button class="btn btn-sm" aria-label="一键安装并配置导出 ${esc(tname)}" onclick="nfsSetupRemote(this)">一键安装 / 更新导出</button>
+          </div></div>
+        <div class="detail-body">
+          <div class="form-section"><h3>挂载选项</h3>
+            <div class="toggle-row" style="border:0;padding:0 0 12px"><div><label>启用远程挂载</label></div>
+              <div class="switch-line"><span class="switch-label">${n.enabled===true?'已启用':'已停用'}</span>
+              <button class="switch" data-nf="enabled" role="switch" aria-checked="${n.enabled===true}" aria-label="启用远程挂载" onclick="toggleSwitch(this)"></button></div></div>
+            <div class="field-grid">
+              <div class="field"><label>本地端口（→ 远程 2049）</label><input class="control mono" data-nf="port" type="number" min="1025" max="65535" value="${esc(n.local_port||12049)}" onblur="validatePort(this)"></div>
+              <div class="field"><label>远程 sudo 密码（可选）</label><input class="control mono" type="password" data-nf="sudo_pw" placeholder="密钥登录且未配 NOPASSWD 时填写"></div>
+            </div>
+            <div class="toggle-row"><div><label>属主统一映射</label><p class="panel-hint" style="margin:2px 0 0">服务器与 Mac 用户 UID 不一致时，文件属主统一映射到 SSH 用户（all_squash）</p></div>
+              <div class="switch-line"><span class="switch-label">${n.squash_to_ssh_user===true?'已启用':'已停用'}</span>
+              <button class="switch" data-nf="squash" role="switch" aria-checked="${n.squash_to_ssh_user===true}" aria-label="属主统一映射" onclick="toggleSwitch(this)"></button></div></div>
+          </div>
+          <div class="form-section"><div class="fw-head"><h3>挂载项</h3>
+            <button class="btn btn-sm" onclick="addNfsMount()">+ 添加挂载</button></div>
+            <p class="fw-hint">远程路径为服务器绝对路径（一键安装会自动创建并导出）；本地目录留空 = /Volumes/&lt;挂载名&gt;。「挂载 / 卸载」即时生效（无需保存）；改名或改路径须保存后重新挂载。密码登录的服务器自动复用隧道密码执行安装，无需在此填 sudo 密码。</p>
+            <table class="rules-table fw-table"><thead><tr>
+              <th style="width:16%">挂载名</th><th style="width:28%">远程路径（服务器）</th><th style="width:24%">本地目录</th><th style="width:10%">自动挂载</th><th>状态 / 操作</th>
+            </tr></thead><tbody>${nfsMountRows(t)}</tbody></table>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>`;
+}
+function selectNfsTunnel(i){collectNfs();recomputeDirty();activeTunnel=i;renderView();}
+function addNfsMount(){collectNfs();const t=S.mp.tunnels[activeTunnel];if(!t)return;const n=t.nfs=t.nfs||{enabled:false,local_port:12049,squash_to_ssh_user:false,mounts:[]};(n.mounts=n.mounts||[]).push({name:'',remote_path:'',local_dir:'',auto_mount:false});recomputeDirty();renderView();}
+function removeNfsMount(mi){collectNfs();const t=S.mp.tunnels[activeTunnel];if(!t)return;const n=t.nfs;if(!n||!(n.mounts||[]).length)return;n.mounts.splice(mi,1);recomputeDirty();renderView();}
+function collectNfs(){
+  const ts=S.mp.tunnels;if(!ts.length)return;const t=ts[activeTunnel];if(!t)return;
+  const d=document.querySelector('.md-detail .detail-body');if(!d)return;
+  const val=k=>{const el=d.querySelector(`[data-nf="${k}"]`);return el?el.value:'';};
+  const sw=k=>{const el=d.querySelector(`[data-nf="${k}"]`);return !!el&&el.getAttribute('aria-checked')==='true';};
+  const mounts=[];
+  d.querySelectorAll('.fw-table tbody tr[data-nmr]').forEach(tr=>{
+    const g=k=>{const el=tr.querySelector(`[data-nmf="${k}"]`);return el?el.value.trim():'';};
+    const auto=tr.querySelector('[data-nmf="auto"]');
+    mounts.push({name:g('name'),remote_path:g('remote_path'),
+      local_dir:g('local_dir'),auto_mount:!!auto&&auto.getAttribute('aria-checked')==='true'});
+  });
+  // 缺省口径与 nfsProjection 同一语义（空端口=12049）
+  t.nfs={enabled:sw('enabled'),
+    local_port:parseInt(val('port'),10)||12049,
+    squash_to_ssh_user:sw('squash'),mounts};
+}
+// 结果行按需插入 detail-body 顶部（模式对齐 _setTunnelResult）
+function _setNfsResult(text,color){
+  const body=document.querySelector('.md-detail .detail-body');
+  if(!body)return;
+  let el=document.getElementById('nfs-result');
+  if(!text){if(el)el.remove();return;}
+  if(!el){
+    el=document.createElement('div');el.id='nfs-result';
+    el.className='models-error';el.style.margin='0 0 12px';
+    body.insertBefore(el,body.firstChild);
+  }
+  el.style.color=color||'';
+  el.textContent=text;
+}
+async function nfsCheckRemote(btn){
+  collectNfs();const ts=S.mp.tunnels||[],i=activeTunnel;
+  if(!(i>=0&&i<ts.length)){toast('没有可检测的隧道',true);return;}
+  btn.disabled=true;btn.textContent='检测中…';_setNfsResult('检测中…（探测发行版 / NFS 服务 / 2049 监听）','var(--muted)');
+  const restore=()=>{btn.disabled=false;btn.textContent='检测远程 NFS';};
+  try{
+    const r=await fetch('/api/nfs-check-remote',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({tunnel:ts[i]})});
+    const d=await r.json();
+    if(!d.ok)_setNfsResult('❌ '+(d.error||'检测失败'),'var(--danger)');
+    else{
+      const parts=[`发行版：${d.family}`,
+        `NFS 服务：${d.installed?'已安装':'未安装'}`,
+        `2049 监听：${d.listening?'是':'否'}`,
+        d.exports?'导出表已配置':'导出表未配置'];
+      _setNfsResult('✅ '+parts.join(' · '),'var(--ok)');
+    }
+    restore();
+  }catch(e){_setNfsResult('❌ 请求失败: '+e.message,'var(--danger)');restore();}
+}
+async function nfsSetupRemote(btn){
+  collectNfs();const ts=S.mp.tunnels||[],i=activeTunnel;
+  if(!(i>=0&&i<ts.length)){toast('没有可安装的隧道',true);return;}
+  const t=ts[i],n=t.nfs||{};
+  const mounts=[...new Set((n.mounts||[]).map(m=>(m.remote_path||'').trim()).filter(p=>p&&p.startsWith('/')))];
+  if(!mounts.length){_setNfsResult('❌ 请先填写至少一条有效的远程绝对路径','var(--danger)');return;}
+  const pwEl=document.querySelector('.md-detail [data-nf="sudo_pw"]');
+  const sudo_pw=pwEl?pwEl.value:'';
+  btn.disabled=true;btn.textContent='安装中…';_setNfsResult('安装中…（远程装包 + 写导出表，最长约 5 分钟）','var(--muted)');
+  try{
+    const r=await fetch('/api/nfs-setup-remote',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),
+      body:JSON.stringify({tunnel:t,mounts,squash:n.squash_to_ssh_user===true,sudo_password:sudo_pw})});
+    const d=await r.json();
+    if(d.ok){_setNfsResult('✅ 远程 NFS 已就绪'+(d.installed?'（本次完成了安装）':'')+'——现在可以点「挂载」','var(--ok)');if(pwEl)pwEl.value='';}
+    else _setNfsResult('❌ '+(d.error||'安装失败')+(d.stage?`（阶段：${d.stage==='install'?'安装软件包':d.stage==='apply'?'应用导出':'前置检查'}）`:''),'var(--danger)');
+  }catch(e){_setNfsResult('❌ 请求失败: '+e.message,'var(--danger)');}
+  btn.disabled=false;btn.textContent='一键安装 / 更新导出';
+}
+function nfsMountAction(btn,mi,action){
+  collectNfs();const t=S.mp.tunnels[activeTunnel];if(!t)return;
+  const m=((t.nfs||{}).mounts||[])[mi];
+  if(!m||!m.name){toast('请先填写挂载名',true);return;}
+  if(!t.id){toast('该隧道尚未保存，请先保存再挂载',true);return;}
+  if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
+    nativeSend('nfsMountToggle',{tunnel_id:t.id,name:m.name,action});
+    btn.disabled=true;
+    setTimeout(()=>{recomputeDirty();renderView();},1500);
+  }else toast('挂载操作需在应用的设置窗内使用');
 }
 
 // ── proxy settings view (ports + capture + toggles) ────
@@ -1839,6 +2017,7 @@ function collect(forSave){
 // setProxyTunnel（显式动作）。旧版在此隐式写 activeTunnel，查看另一条
 // 隧道后保存会把代理静默切过去（实测 bug：保存后隧道变成另一连接串）
 Object.assign(VIEWS.tunnel,{render:tunnelHTML,collect(){collectTunnel();}});
+Object.assign(VIEWS.nfs,{render:nfsHTML,collect(){collectNfs();}});
 Object.assign(VIEWS.proxy,{render:proxyHTML,collect:collectProxy});
 Object.assign(VIEWS.system,{render:systemHTML,collect:collectSystem});
 Object.assign(VIEWS.providers,{render:providerHTML,collect:collectProvider});

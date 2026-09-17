@@ -1122,3 +1122,49 @@ test("proxyIndexOf: id 真相优先，悬空/缺省回退旧下标并钳制", ()
   // 删除前方隧道后 id 仍指向同一条——下标漂移类 bug 的形态学钉子
   assert.equal(L.proxyIndexOf(mk("t-c", 0, ts.slice(1))), 1);
 });
+
+// ── NFS view snapshot (ADR-007) ────────────────────────
+test("viewSnapshot('nfs') treats default nfs node as no change", () => {
+  // merge 给每条隧道填默认 nfs（enabled=false/无挂载/12049）——视图
+  // 切换与保存不得因此产生假 dirty
+  const loaded = L.normalizeState({ mp: { tunnels: [{ id: "t1", ssh_host: "h" }] } });
+  const collected = L.normalizeState({
+    mp: { tunnels: [{ id: "t1", ssh_host: "h", nfs: { enabled: false, local_port: 12049, squash_to_ssh_user: false, mounts: [] } }] },
+  });
+  assert.equal(
+    L.countChanges(L.viewSnapshot("nfs", loaded), L.viewSnapshot("nfs", collected)),
+    0,
+  );
+});
+
+test("viewSnapshot('nfs') counts mount edits as changes", () => {
+  const base = L.normalizeState({
+    mp: { tunnels: [{ id: "t1", nfs: { enabled: false, local_port: 12049, mounts: [] } }] },
+  });
+  const edited = L.normalizeState({
+    mp: { tunnels: [{ id: "t1", nfs: { enabled: true, local_port: 13000, mounts: [{ name: "data", remote_path: "/data", local_dir: "", auto_mount: true }] } }] },
+  });
+  const diff = L.countChanges(L.viewSnapshot("nfs", base), L.viewSnapshot("nfs", edited));
+  // 新增挂载行按设计算 1 项（countChanges 语义）+ enabled + 端口 = 3
+  assert.equal(diff, 3);
+});
+
+test("nfsProjection normalizes missing/malformed rows defensively", () => {
+  const p = L.nfsProjection(null);
+  assert.deepEqual(p, { enabled: false, local_port: 12049, squash_to_ssh_user: false, mounts: [] });
+  const q = L.nfsProjection({ local_port: "", mounts: [null, { name: "a" }] });
+  assert.equal(q.local_port, 12049);
+  assert.deepEqual(q.mounts[0], { name: "", remote_path: "", local_dir: "", auto_mount: false });
+  assert.equal(q.mounts[1].name, "a");
+});
+
+test("viewSnapshot('nfs') ignores runtime decorations", () => {
+  const a = L.normalizeState({ mp: { tunnels: [{ id: "t1" }] } });
+  const b = L.normalizeState({
+    mp: { tunnels: [{ id: "t1", nfs_states: { data: "mounted" } }] },
+  });
+  assert.equal(
+    L.countChanges(L.viewSnapshot("nfs", a), L.viewSnapshot("nfs", b)),
+    0,
+  );
+});

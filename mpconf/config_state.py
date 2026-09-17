@@ -79,7 +79,8 @@ def _schema_error_lines(exc) -> list:
 # 供 UI 展示，prepare 剥除保证持久化配置永不携带——两侧共用此名单，
 # 新增装饰字段不再靠注释对齐。
 READONLY_DECORATED_FIELDS = frozenset(
-    {"has_password", "capture_active", "is_proxy", "forward_running"})
+    {"has_password", "capture_active", "is_proxy", "forward_running",
+     "nfs_states"})
 
 
 def _valid_http_origin(url) -> bool:
@@ -155,6 +156,56 @@ class ConfigStateStore:
                         errors.append(
                             f"隧道 {_tname} 第 {_fi + 1} 条转发的 remote_host "
                             "无效（须主机名或 IPv4 地址，暂不支持 IPv6）")
+                # NFS 挂载节校验（ADR-007）：名字/路径/端口是运行时标识与
+                # 安全边界（远程路径进 root 脚本、本地目录进 mount_nfs
+                # argv），形状不对必须在落盘前拦下
+                _nfs = _t.get("nfs")
+                if _nfs is not None and not isinstance(_nfs, dict):
+                    errors.append(f"隧道 {_tname} 的 nfs 必须是对象")
+                elif isinstance(_nfs, dict):
+                    _nport = _nfs.get("local_port")
+                    if _nport not in (None, "") and (
+                            not isinstance(_nport, int)
+                            or isinstance(_nport, bool)
+                            or not 1 <= _nport <= _PORT_MAX):
+                        errors.append(
+                            f"隧道 {_tname} 的 NFS 本地端口无效（须 1..65535）")
+                    _mounts = _nfs.get("mounts")
+                    if _mounts is not None and not isinstance(_mounts, list):
+                        errors.append(f"隧道 {_tname} 的 nfs.mounts 必须是列表")
+                        _mounts = []
+                    _names = set()
+                    for _mi, _m in enumerate(_mounts or []):
+                        if not isinstance(_m, dict):
+                            errors.append(
+                                f"隧道 {_tname} 的第 {_mi + 1} 条 NFS 挂载"
+                                "必须是对象")
+                            continue
+                        _label = _m.get("name") or f"#{_mi + 1}"
+                        _mname = _m.get("name")
+                        if not isinstance(_mname, str) or not _mname.strip():
+                            errors.append(
+                                f"隧道 {_tname} 的第 {_mi + 1} 条 NFS 挂载"
+                                "名不能为空")
+                        elif _mname.strip() in _names:
+                            errors.append(
+                                f"隧道 {_tname} 的 NFS 挂载名 "
+                                f"{_mname.strip()} 重复")
+                        else:
+                            _names.add(_mname.strip())
+                        _rp = _m.get("remote_path")
+                        if (not isinstance(_rp, str)
+                                or not _rp.strip().startswith("/")):
+                            errors.append(
+                                f"NFS 挂载 {_label} 的远程路径必须是"
+                                "绝对路径（以 / 开头）")
+                        _ld = _m.get("local_dir")
+                        if (_ld not in (None, "")
+                                and (not isinstance(_ld, str)
+                                     or not _ld.strip().startswith("/"))):
+                            errors.append(
+                                f"NFS 挂载 {_label} 的本地目录必须是"
+                                "绝对路径（以 / 开头）")
 
         if sp_c is not None:
             lp = sp_c.get("listen_port")
@@ -245,6 +296,43 @@ class ConfigStateStore:
                         _fw_seen.add(_lp)
                         _port_refs.append(
                             (f"隧道 {_tname} 端口转发本地端口", _lp))
+                # NFS 隧道与转发会话并行运行——本地端口同一命名空间。
+                # 只查「实际在用」的 nfs（enabled 或配置了挂载）：merge 会
+                # 给每条隧道填默认 nfs 节（enabled=False、无挂载、12049），
+                # 纯默认节点不占端口，不得让两条隧道互报假冲突
+                _nfs = _t.get("nfs")
+                if isinstance(_nfs, dict) and (
+                        _nfs.get("enabled") is True or _nfs.get("mounts")):
+                    _np = _nfs.get("local_port")
+                    if (isinstance(_np, int) and not isinstance(_np, bool)
+                            and 1 <= _np <= _PORT_MAX):
+                        _port_refs.append(
+                            (f"隧道 {_tname} NFS 本地端口", _np))
+            # NFS 挂载点全局唯一（解析默认值与运行时同一归宿）：两个挂载
+            # 抢同一目录，后挂的会顶掉先挂的
+            from mpconf.config import resolve_mount_dir as _resolve_dir
+            _dirs_seen = {}
+            for _ti, _t in enumerate(mp_c.get("tunnels") or []):
+                if not isinstance(_t, dict):
+                    continue
+                _tname = _t.get("name") or f"#{_ti}"
+                _nfs = _t.get("nfs")
+                _nfs_mounts = (_nfs.get("mounts")
+                               if isinstance(_nfs, dict) else None) or []
+                for _m in _nfs_mounts:
+                    if not isinstance(_m, dict):
+                        continue
+                    _label = str(_m.get("name") or "?").strip()
+                    if not _label:
+                        continue  # 空名已在前段拦下
+                    _dir = _resolve_dir(_m)
+                    _who = f"隧道 {_tname} 的挂载 {_label}"
+                    if _dir in _dirs_seen:
+                        errors.append(
+                            f"挂载点冲突：{_dirs_seen[_dir]} 与 {_who} "
+                            f"同为 {_dir}")
+                    else:
+                        _dirs_seen[_dir] = _who
         if sp_c is not None:
             _v = sp_c.get("listen_port")
             if isinstance(_v, int) and not isinstance(_v, bool):
@@ -475,9 +563,16 @@ class ConfigStateStore:
                         mode, tunnel = entry
                     else:
                         mode, tunnel = "all", entry
-                    ok = (self._keychain.delete_legacy_password(tunnel)
-                          if mode == "legacy-only"
-                          else self._keychain.delete_password(tunnel))
+                    if mode == "all":
+                        ok = self._keychain.delete_password(tunnel)
+                        # ADR-007：NFS sudo 槽随隧道删除一并清理（测试
+                        # 替身可能无此方法——缺席不视为失败）
+                        sudo_del = getattr(self._keychain,
+                                           "delete_sudo_password", None)
+                        if callable(sudo_del):
+                            sudo_del(tunnel)
+                    else:
+                        ok = self._keychain.delete_legacy_password(tunnel)
                     if not ok:
                         keychain_errors.append(
                             f"隧道 {tunnel.get('name', tunnel.get('ssh_host', '?'))} 的旧密码清理失败")

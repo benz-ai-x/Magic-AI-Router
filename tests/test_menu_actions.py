@@ -22,6 +22,7 @@ def _make_app(config=None):
     """Build a MagicProxyApp without rumps.App.__init__ for callback testing."""
     a = MagicProxyApp.__new__(MagicProxyApp)
     a._conn = MagicMock()
+    a._mounts = MagicMock()
     a._lifecycle = MagicMock()
     a._suanpan = MagicMock()
     a._capture_ctrl = MagicMock()

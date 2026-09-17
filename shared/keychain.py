@@ -113,3 +113,55 @@ def delete_password(tunnel: dict) -> bool:
     except Exception as e:  # noqa: BLE001
         logger.warning("Keychain delete failed: %s", type(e).__name__)
         return False
+
+
+# ── 远程 sudo 密码槽（ADR-007：NFS 一键安装的远程提权凭据）────────
+# 密钥登录的隧道没有 ssh 密码可复用——UI 显式输入一次后存独立账户槽，
+# 与隧道登录密码互不混淆。
+
+def _sudo_account(tunnel: dict) -> str:
+    return f"nfs-sudo:{_account(tunnel)}"
+
+
+def set_sudo_password(tunnel: dict, password: str) -> bool:
+    if not tunnel.get("ssh_host"):
+        return False
+    try:
+        account = _sudo_account(tunnel)
+        Security.SecItemDelete(_base_query(tunnel, account))
+        attrs = _base_query(tunnel, account)
+        attrs[Security.kSecValueData] = password.encode("utf-8")
+        status = Security.SecItemAdd(attrs, None)
+        ok = status[0] == Security.errSecSuccess if isinstance(status, tuple) \
+            else status == Security.errSecSuccess
+        if not ok:
+            logger.warning("Keychain sudo set failed: status %s", status)
+        return ok
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Keychain sudo set failed: %s", type(e).__name__)
+        return False
+
+
+def get_sudo_password(tunnel: dict) -> str:
+    if not tunnel.get("ssh_host"):
+        return ""
+    try:
+        query = _base_query(tunnel, _sudo_account(tunnel))
+        query[Security.kSecReturnData] = True
+        query[Security.kSecMatchLimit] = Security.kSecMatchLimitOne
+        status, data = Security.SecItemCopyMatching(query, None)
+        if status == Security.errSecSuccess and data is not None:
+            return bytes(data).decode("utf-8")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Keychain sudo get failed: %s", type(e).__name__)
+    return ""
+
+
+def delete_sudo_password(tunnel: dict) -> bool:
+    """删除远程 sudo 密码槽（隧道删除时随 all 清理）。"""
+    try:
+        Security.SecItemDelete(_base_query(tunnel, _sudo_account(tunnel)))
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Keychain sudo delete failed: %s", type(e).__name__)
+        return False

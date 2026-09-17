@@ -88,7 +88,19 @@ tunnel/ ── SSH 隧道核心
   host_key.py ── SSH known_hosts 管理
   host_key_flow.py ── SSH 主机密钥信任流程
   ssh_launch.py ── SSH 调用策略单一归宿：argv 构建 + probe() +
+    run_remote()（一次性远程命令，sudo 密码走 stdin 管道）+
     stderr→中文失败分类
+
+mount/ ── NFSv4 over SSH 隧道挂载（ADR-007；跨域白名单边 mount→tunnel
+  复用 ssh_launch 的调用策略）
+  remote_setup.py ── 远程 NFS 一键安装（发行版探测 + exports.d 幂等
+    写入 + 2049 监听验证）
+  mount_control.py ── 本地挂载控制（mount 表真相源 + mount_nfs/umount
+    升级链 + 一次性 sudoers.d 引导）
+  nfs_session.py ── 专用 NFS 转发会话（镜像 _ForwardSession 三件套，
+    只携带 NFS 一条 -L）
+  coordinator.py ── MountCoordinator 挂载生命周期状态机（tick
+    reconcile：断线强制卸载/恢复自动重挂，worker 线程跑子进程）
 
 shellui/ ── 界面
   menu_builder.py ── 菜单栏 UI + 状态图标
@@ -142,15 +154,15 @@ suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM �
 
 **线程模型：** 主线程跑 rumps NSRunLoop（菜单栏）。后台 daemon 线程跑：asyncio 事件循环（代理服务 ProxyRuntime）、Suanpan 网关（uvicorn）、config server（http.server）。
 
-**菜单结构（五组）：** 状态区（着色圆点 + 流量行）→ 代 理 ▸（-D 会话：启停/系统代理/角色单选/经代理启动）→ 端口映射 ▸（-L 多活会话）→ AI 路由 ▸ → 抓 包 ▸ → 系 统 ▸ → 页脚（偏好/日志/复制 AI 助手指令/关于/退出）；菜单项图标走 SF Symbols（`menu_builder._apply_icon`，旧系统静默降级）
+**菜单结构（六组）：** 状态区（着色圆点 + 流量行 + 转发/挂载计数）→ 代 理 ▸（-D 会话：启停/系统代理/角色单选/经代理启动）→ 端口映射 ▸（-L 多活会话）→ 远程挂载 ▸（NFS 挂载项启停/打开目录，ADR-007）→ AI 路由 ▸ → 抓 包 ▸ → 系 统 ▸ → 页脚（偏好/日志/复制 AI 助手指令/关于/退出）；菜单项图标走 SF Symbols（`menu_builder._apply_icon`，旧系统静默降级）
 
-**偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 网络设置）+ AI 路由（供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。
+**偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 远程挂载 / 网络设置）+ AI 路由（供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。
 
 ## 配置
 
 ### Magic Proxy — `~/.magic-proxy.json`
 
-支持多隧道，`auth_type` 为 `key`（默认）或 `password`（需 `sshpass`）。密码走 macOS Keychain。监听地址存 `http_listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-002）。
+支持多隧道，`auth_type` 为 `key`（默认）或 `password`（需 `sshpass`）。密码走 macOS Keychain。监听地址存 `http_listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-002）。每条隧道可配 `nfs` 节（NFSv4 挂载：enabled / local_port / squash_to_ssh_user / mounts[{name, remote_path, local_dir, auto_mount}]，见 ADR-007；远程 sudo 密码存 Keychain 独立 `nfs-sudo:` 账户槽）。
 
 ### Suanpan AI 路由 — `~/.suanpan.yaml`
 

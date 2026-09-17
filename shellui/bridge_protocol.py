@@ -17,6 +17,9 @@ Protocol v1 (single "bridge" script-message channel, {type, payload} JSON):
              连接态守卫（多活；不填 tunnel_id = 代理会话）
            {type:"forwardSession", payload:{tunnel_id: id, action: "start"|"stop"}}
              — 转发会话启停（设置窗 detail-bar 按钮；多活 v0.9）
+           {type:"nfsMountToggle", payload:{tunnel_id: id, name: str, action: "mount"|"unmount"}}
+             — NFS 挂载启停（ADR-007；会话/挂载编排归 MountCoordinator，
+               JS 无运行时状态）
            {type:"openPath",       payload:{kind: "captureDir"}}
   PY → JS  {type:"keyFilePicked", payload:{field, path}}
            delivered via window.__native.receive(<json>)
@@ -44,9 +47,13 @@ ACTION_RECONNECT_PROXY = "reconnectProxy"
 ACTION_OPEN_PATH = "openPath"
 ACTION_COPY_AGENT_INSTRUCTIONS = "copyAgentInstructions"
 ACTION_FORWARD_SESSION = "forwardSession"
+ACTION_NFS_MOUNT_TOGGLE = "nfsMountToggle"
 
 # forwardSession 的合法动作闭集（action 字段）
 FORWARD_SESSION_ACTIONS = frozenset({"start", "stop"})
+
+# nfsMountToggle 的合法动作闭集（action 字段）
+NFS_MOUNT_ACTIONS = frozenset({"mount", "unmount"})
 
 
 def _plain(obj):
@@ -126,6 +133,18 @@ class BridgeCore:
                 return [{"type": ACTION_FORWARD_SESSION,
                          "tunnel_id": tid, "action": act}]
             logger.warning("forwardSession bad payload: %r", payload)
+            return []
+        if mtype == "nfsMountToggle":
+            # ADR-007：设置窗「挂载/卸载」——MountCoordinator 编排，
+            # JS 无运行时状态（mount_states 由 /api/state 装饰回读）
+            tid = payload.get("tunnel_id")
+            name = payload.get("name")
+            act = payload.get("action")
+            if (isinstance(tid, str) and tid and isinstance(name, str)
+                    and name and act in NFS_MOUNT_ACTIONS):
+                return [{"type": ACTION_NFS_MOUNT_TOGGLE,
+                         "tunnel_id": tid, "name": name, "action": act}]
+            logger.warning("nfsMountToggle bad payload: %r", payload)
             return []
         if mtype == "openPath":
             kind = payload.get("kind")

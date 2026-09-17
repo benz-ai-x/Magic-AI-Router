@@ -34,6 +34,15 @@ DEFAULT_TUNNEL = {
     # 多活（v0.9）：该隧道的转发会话随应用启动自动恢复（纯 -L，不占
     # socks5 端口；代理隧道自身不受此字段影响）
     "forward_autostart": False,
+    # NFSv4 over SSH 隧道挂载（ADR-007）：单条 -L(2049) 承载本隧道全部
+    # 挂载；enabled 才有运行时意义，其余字段随配置持久化。归一见
+    # normalize_nfs（浅拷贝防护：nfs dict 绝不跨隧道共享）
+    "nfs": {
+        "enabled": False,
+        "local_port": 12049,
+        "squash_to_ssh_user": False,
+        "mounts": [],   # [{name, remote_path, local_dir, auto_mount}]
+    },
 }
 
 DEFAULT_CONFIG = {
@@ -90,6 +99,49 @@ def normalize_forwards(forwards) -> list:
     if not isinstance(forwards, list):
         return []
     return [_normalize_forward(f) for f in forwards if isinstance(f, dict)]
+
+
+NFS_LOCAL_PORT_FALLBACK = 12049
+
+
+def _normalize_mount_row(row) -> dict:
+    """归一一条 NFS 挂载行：剥未知键，字符串原样 strip（空值合法——
+    local_dir 空表示用默认 /Volumes/<name>，见 resolve_mount_dir）。"""
+    return {
+        "name": str(row.get("name") or "").strip(),
+        "remote_path": str(row.get("remote_path") or "").strip(),
+        "local_dir": str(row.get("local_dir") or "").strip(),
+        "auto_mount": row.get("auto_mount") is True,
+    }
+
+
+def normalize_nfs(nfs) -> dict:
+    """nfs 节的读路径归一：非 dict→默认；端口读时兼容；mounts 逐行全新
+    构造（DEFAULT_TUNNEL 浅拷贝下 nfs dict 绝不跨隧道共享）。"""
+    if not isinstance(nfs, dict):
+        nfs = {}
+    mounts = nfs.get("mounts")
+    if not isinstance(mounts, list):
+        mounts = []
+    return {
+        "enabled": nfs.get("enabled") is True,
+        "local_port": _coerce_port(nfs.get("local_port"),
+                                   NFS_LOCAL_PORT_FALLBACK),
+        "squash_to_ssh_user": nfs.get("squash_to_ssh_user") is True,
+        "mounts": [_normalize_mount_row(m) for m in mounts
+                   if isinstance(m, dict)],
+    }
+
+
+def resolve_mount_dir(mount_row) -> str:
+    """挂载点目录的单一解析归宿：显式 local_dir 优先，空则
+    /Volumes/<name>（name 内的路径分隔符替换为 -，防嵌套）。"""
+    explicit = str((mount_row or {}).get("local_dir") or "").strip()
+    if explicit:
+        return explicit
+    name = str((mount_row or {}).get("name") or "").strip()
+    safe = name.replace("/", "-").replace("\\", "-").strip() or "nfs"
+    return f"/Volumes/{safe}"
 
 
 def assign_stable_ids(tunnels) -> int:
@@ -273,6 +325,8 @@ def merge_config(cfg):
             # 浅拷贝防护：forwards 默认 [] 不跨隧道共享，逐行全新构造
             mt["forwards"] = normalize_forwards(mt.get("forwards"))
             mt["forward_autostart"] = mt.get("forward_autostart") is True
+            # 同款浅拷贝防护：nfs dict 逐字段全新构造
+            mt["nfs"] = normalize_nfs(mt.get("nfs"))
             merged["tunnels"].append(mt)
     for key, default in (("socks5_port", 1080), ("capture_port", DEFAULT_CAPTURE_PORT),
                          ("config_port", 9528), ("http_listen_port", 8888)):

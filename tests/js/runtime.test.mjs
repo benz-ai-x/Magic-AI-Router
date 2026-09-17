@@ -364,3 +364,57 @@ test("deleting a tunnel keeps the proxy role on the same tunnel", () => {
     "删掉代理自身后清空 id 真相，交由下标钳制回落剩余首条");
   assert.equal(rt.run("proxyIndexOf(S)"), 0);
 });
+
+// ── NFS 远程挂载视图（ADR-007 master-detail 重构）──────────
+test("nfs view renders master-detail mirroring the tunnel view", () => {
+  const rt = makeRuntime();
+  const html = rt.run(`
+    S=normalizeState({mp:{tunnels:[
+      {id:'t-1',name:'srv-a',ssh_user:'u',ssh_host:'a.example',ssh_port:22,
+       nfs:{enabled:true,local_port:12049,squash_to_ssh_user:false,
+            mounts:[{name:'data',remote_path:'/data',local_dir:'',auto_mount:true}]},
+       nfs_states:{data:'mounted'}},
+      {id:'t-2',name:'srv-b',ssh_user:'u',ssh_host:'b.example',ssh_port:22,
+       nfs:{enabled:false,local_port:12049,squash_to_ssh_user:false,mounts:[]}},
+    ]}});
+    activeTunnel=0;nfsHTML();
+  `);
+  // master：服务器列表 + 启用态圆点 + 挂载数徽标
+  assert.match(html, /class="md-master"/);
+  assert.match(html, /selectNfsTunnel\(1\)/);
+  assert.match(html, /1 挂载中/);
+  // detail：操作在 detail-bar，启用开关/端口/squash 在挂载选项区
+  assert.match(html, /class="md-detail"/);
+  assert.match(html, /nfsCheckRemote\(this\)/);
+  assert.match(html, /data-nf="enabled"/);
+  assert.match(html, /data-nf="port"/);
+  assert.match(html, /data-nf="squash"/);
+  // 挂载行：状态徽标 + 即时操作
+  assert.match(html, /已挂载/);
+  assert.match(html, /nfsMountAction\(this,0,'mount'\)/);
+});
+
+test("nfs view follows the shared activeTunnel selection", () => {
+  const rt = makeRuntime();
+  rt.run(`
+    S=normalizeState({mp:{tunnels:[
+      {id:'t-1',name:'srv-a',ssh_host:'a.example',nfs:{enabled:true,local_port:12049,mounts:[]}},
+      {id:'t-2',name:'srv-b',ssh_host:'b.example',nfs:{enabled:false,local_port:12049,mounts:[]}},
+    ]}});
+    activeTunnel=0;
+  `);
+  assert.match(rt.run("nfsHTML()"),
+    /is-selected" onclick="selectNfsTunnel\(0\)"/);
+  rt.run("renderView=()=>undefined;selectNfsTunnel(1)");
+  assert.equal(rt.run("activeTunnel"), 1);
+  assert.match(rt.run("nfsHTML()"),
+    /is-selected" onclick="selectNfsTunnel\(1\)"/);
+  assert.doesNotMatch(rt.run("nfsHTML()"),
+    /is-selected" onclick="selectNfsTunnel\(0\)"/);
+});
+
+test("nfs view empty state without tunnels", () => {
+  const rt = makeRuntime();
+  const html = rt.run("S=normalizeState({mp:{tunnels:[]}});nfsHTML()");
+  assert.match(html, /还没有配置隧道/);
+});

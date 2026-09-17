@@ -147,7 +147,7 @@ def show_config_window(url, title="Magic AI Router 设置", on_action=None,
     WKWebView = _ensure_webkit()
     WKWebViewConfiguration = objc.lookUpClass("WKWebViewConfiguration")
 
-    w, h = 1080, 880
+    w, h = 1200, 880
     screen = NSScreen.mainScreen()
     if screen:
         sf = screen.visibleFrame()

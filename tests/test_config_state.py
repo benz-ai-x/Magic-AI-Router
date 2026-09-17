@@ -686,10 +686,11 @@ class TestReadonlyDecoratedFields(unittest.TestCase):
     def test_declaration_covers_both_sides(self):
         from mpconf.config_state import READONLY_DECORATED_FIELDS
         # 精确集（非成员性）：注入侧字段恰为此集，多列少列都漂移
-        # （v0.9 增 is_proxy / forward_running 多活运行态装饰）
+        # （v0.9 增 is_proxy / forward_running；ADR-007 增 nfs_states）
         self.assertEqual(READONLY_DECORATED_FIELDS,
                          frozenset({"has_password", "capture_active",
-                                    "is_proxy", "forward_running"}))
+                                    "is_proxy", "forward_running",
+                                    "nfs_states"}))
 
     def test_prepare_strips_exactly_the_declared_fields(self):
         """注入字段全被剥除（持久化配置永不携带），未声明字段不受累。"""

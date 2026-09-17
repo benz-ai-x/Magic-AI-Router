@@ -58,13 +58,15 @@ _ICON = {
     # 分区父项
     "proxy_menu": "bolt.fill",       # 代 理（-D 会话）
     "forward_menu": "arrowshape.turn.up.right",  # 端口映射（-L 转发）
+    "mount_menu": "externaldrive",   # 远程挂载（NFS over SSH，ADR-007）
     "router": "cpu", "capture": "eye", "system": "gearshape",
     # 代理区
     "connect": "play.fill", "cancel": "stop.fill", "pause": "pause.fill",
     "refresh": "arrow.clockwise", "sysproxy": "globe",
     "tunnel_row": "server.rack", "launch": "arrow.up.right.square",
-    # 端口映射区
+    # 端口映射区 / 挂载区
     "fw_start": "play.circle", "fw_stop": "stop.circle",
+    "mount_row": "externaldrive",
     # AI 路由 / 抓包
     "cycle": "arrow.triangle.2.circlepath",
     "doc": "doc.on.doc", "clipboard": "doc.on.clipboard",
@@ -181,6 +183,9 @@ class MenuState:
     # 多活（v0.9）：转发会话快照 [(tunnel_id, name, status)]——隧道子菜单
     # 与状态行的转发计数消费；默认 () 保持既有测试构造兼容
     forward_states: tuple = ()
+    # NFS 挂载快照 [(tunnel_id, tunnel_name, mount_name, status, error)]
+    # （ADR-007）——挂载子菜单与状态行挂载计数消费；默认 () 同上
+    mount_states: tuple = ()
 
 
 # ── builder ──────────────────────────────────────────────────────
@@ -188,6 +193,16 @@ class MenuState:
 # 转发会话行尾状态（随各自 monitor）
 _FW_TAIL = {"connected": " — 转发中", "connecting": " — 转发启动中",
             "error": " — 转发异常"}
+
+# 挂载行尾状态与着色档（ADR-007）
+_MOUNT_TAIL = {"mounted": " — 已挂载", "mounting": " — 挂载中…",
+               "unmounting": " — 卸载中…", "unmounted": " — 未挂载",
+               "error": " — 异常"}
+
+
+def _mount_status_kind(status):
+    return {"mounted": "ok", "mounting": "warn", "unmounting": "warn",
+            "error": "err"}.get(status, "idle")
 
 class MenuBuilder:
     """Builds and refreshes the menu bar UI from a state snapshot.
@@ -226,6 +241,7 @@ class MenuBuilder:
             st.suanpan_running,
             st.suanpan_error[:50] if st.suanpan_error else "",
             tuple(st.forward_states),  # 转发会话状态变化 → 重建子菜单
+            tuple(st.mount_states),    # 挂载状态变化 → 重建挂载子菜单
         )
 
     # ── full build ────────────────────────────────────────
@@ -239,6 +255,7 @@ class MenuBuilder:
         app.menu.add(None)
         app.menu.add(self._build_proxy_submenu())
         app.menu.add(self._build_forward_submenu())
+        app.menu.add(self._build_mount_submenu())
         app.menu.add(self._build_suanpan_submenu())
         app.menu.add(self._build_capture_submenu())
         app.menu.add(self._build_system_submenu())
@@ -418,6 +435,46 @@ class MenuBuilder:
                                       callback=None))
         return parent
 
+    def _build_mount_submenu(self):
+        """远程挂载 ▸ —— NFS over SSH 挂载项（ADR-007）：跨隧道列出所有
+        配置了 NFS 挂载的项，每项启停 + 打开挂载目录。NFS 走独立专用
+        会话，无端口映射里「随代理运行」的特殊行。"""
+        st = self._get_state()
+        a = self._app
+        parent = rumps.MenuItem("远程挂载", callback=None)
+        _apply_icon(parent, "mount_menu")
+
+        any_mounts = False
+        for entry in (st.mount_states or ()):
+            if not isinstance(entry, (tuple, list)) or len(entry) < 4:
+                continue
+            tid, tname, mname, status = entry[:4]
+            error = entry[4] if len(entry) > 4 else ""
+            any_mounts = True
+            tail = _MOUNT_TAIL.get(status, "")
+            row = rumps.MenuItem(f"{tname} · {mname}{tail}", callback=None)
+            _apply_icon(row, "circle", point_size=9,
+                        color=_status_color(_mount_status_kind(status)))
+            active = status in ("mounted", "mounting", "unmounting")
+            item = rumps.MenuItem(
+                "卸载" if active else "挂载",
+                callback=a.make_toggle_mount(tid, mname))
+            _apply_icon(item, "fw_stop" if active else "fw_start")
+            row.add(item)
+            item = rumps.MenuItem(
+                "打开挂载目录", callback=a.make_open_mount_dir(tid, mname))
+            _apply_icon(item, "folder")
+            row.add(item)
+            if status == "error" and error:
+                row.add(rumps.MenuItem(f"  {_truncate(error, 60)}",
+                                       callback=None))
+            parent.add(row)
+
+        if not any_mounts:
+            parent.add(rumps.MenuItem("在偏好设置 → 远程挂载里配置",
+                                      callback=None))
+        return parent
+
     def _build_capture_submenu(self):
         a = self._app
         st = self._get_state()
@@ -529,6 +586,12 @@ class MenuBuilder:
                     if status == "connected")
         if fw_up:
             proxy_text += f" ｜ {fw_up} 条转发"
+        # 挂载计数同款模式（ADR-007）：只数已挂载
+        mounts_up = sum(1 for entry in (st.mount_states or ())
+                        if isinstance(entry, (tuple, list))
+                        and len(entry) >= 4 and entry[3] == "mounted")
+        if mounts_up:
+            proxy_text += f" ｜ {mounts_up} 挂载"
         self._set_title("proxy_status", proxy_text)
 
         # Router status line
