@@ -70,7 +70,9 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
     同一 sha1 截断——已落盘 id 的兼容契约）
 
 mpconf/ ── 配置栈
-  config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串）
+  config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串；
+    代理角色双表示：current_tunnel_id 稳定 id 真相 + current_tunnel
+    下标兼容投影，解析序 id→下标→首条）
   config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
     全量校验（含 schema + 端口冲突）/ commit（journal+MP+SP+Keychain+
     回调次序）/ recover 幂等重放 / update_mp 菜单写径

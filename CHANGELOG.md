@@ -1,7 +1,15 @@
 # Changelog
 
-All notable changes to Magic-AI-Router are documented here.
+All notable changes to Magic-AI-Router are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
+
+## [Unreleased] — 保存流可靠性三连修（代理角色显式化 + 保存后内存收敛 + 角色稳定 id）
+
+### Fixed
+- **保存后 SSH 隧道变成另一条连接串（实测）**：设置窗隧道页 collect 曾把「正在查看/编辑的隧道」（activeTunnel，纯 UI 状态）隐式写进代理角色并随保存落盘——变更潜伏到下一次重连才显形，用户视角即隧道随机切换。collect 自此只读表单；角色在设置窗的唯一写径是新增的显式**「设为代理隧道」**按钮（dirty 跟踪、可放弃；当前代理渲染徽标），保存后经「重新连接」应用（切换会断现有会话，绝不随保存自动断）
+- **UI 保存后应用按旧配置行动**：PUT 只落盘 + reload 网关，app 内存副本要等下一次重连才重读——防睡眠/抓包设置/代理角色在窗口期全按旧值行动。新增 `on_mp_saved` 回调链（config_server 按事务段分发 → app 重读磁盘刷新内存 + 标记菜单重建）
+- **登录启动两条写径漂移**：UI 保存路径此前只写配置文件、从不注册 LaunchAgent（只有菜单路径注册）——`on_mp_saved` 收敛时 `launch_at_login` 有变即补注册/注销，与菜单路径对齐
+- **代理角色下标漂移（结构性）**：`current_tunnel` 存数组下标，删除/调序隧道后同一下标指向另一条隧道。角色迁移稳定 id 双表示：`current_tunnel_id`（t- 前缀）是唯一真相，`current_tunnel` 降为旧版本读兼容 + merge 派生投影——解析序全链路同一语义（id → 悬空/缺省回退下标 → 首条：merge / 连接协调器 / 菜单 / is_proxy 装饰 / 前端）。旧配置零迁移即兼容，回滚旧版 app 亦不断
 
 ## [v0.9.1] — 2026-09-17 — 菜单栏重组：代理/端口映射分离 + SF Symbols 图标
 
