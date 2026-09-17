@@ -581,3 +581,39 @@ class TestRestartForwardExplicitSemantics(unittest.TestCase):
     def test_unknown_session_returns_false(self):
         conn, _ = _mutable_coordinator(_multi_config())
         self.assertFalse(conn.restart_forward("t-nope", lambda: None))
+
+
+class TestCurrentTunnelResolution(unittest.TestCase):
+    """代理角色解析序（v0.9.2）：id 真相 → 旧下标 → 首条；永不因
+    删除/调序漂移到另一条隧道。"""
+
+    def _conn(self, cfg):
+        return ConnectionCoordinator(
+            stats=MagicMock(),
+            ssh_log_sink=lambda line: None,
+            get_config=lambda: cfg,
+            get_tunnel_password=lambda t: "",
+        )
+
+    def _tunnels(self):
+        return [
+            {"id": "t-a", "ssh_host": "a", "ssh_user": "u", "ssh_port": 22, "auth_type": "key"},
+            {"id": "t-b", "ssh_host": "b", "ssh_user": "u", "ssh_port": 22, "auth_type": "key"},
+        ]
+
+    def test_id_resolves_even_when_index_points_elsewhere(self):
+        cfg = {"current_tunnel": 0, "current_tunnel_id": "t-b",
+               "tunnels": self._tunnels()}
+        self.assertEqual(self._conn(cfg).current_tunnel["id"], "t-b")
+
+    def test_dangling_id_falls_back_to_index(self):
+        cfg = {"current_tunnel": 1, "current_tunnel_id": "t-gone",
+               "tunnels": self._tunnels()}
+        self.assertEqual(self._conn(cfg).current_tunnel["id"], "t-b")
+
+    def test_index_out_of_range_falls_back_to_first(self):
+        cfg = {"current_tunnel": 9, "tunnels": self._tunnels()}
+        self.assertEqual(self._conn(cfg).current_tunnel["id"], "t-a")
+
+    def test_empty_tunnels_yields_none(self):
+        self.assertIsNone(self._conn({"tunnels": []}).current_tunnel)

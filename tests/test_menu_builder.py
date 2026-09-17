@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import rumps
 
-from shellui.menu_builder import MenuBuilder, MenuState
+from shellui.menu_builder import MenuBuilder, MenuState, _proxy_tunnel_index
 
 
 def _state(**overrides):
@@ -165,3 +165,26 @@ class TestIconInfrastructure(unittest.TestCase):
         from shellui import menu_builder
         for kind in ("ok", "warn", "err", "idle"):
             self.assertIsNotNone(menu_builder._status_color(kind))
+
+
+class TestProxyTunnelIndex(unittest.TestCase):
+    """角色解析序（v0.9.2）：id 真相 → 旧下标 → 首条（与 merge 同语义，
+    菜单只消费不重定义）。"""
+
+    def test_id_wins_over_index(self):
+        cfg = {"current_tunnel": 0, "current_tunnel_id": "t-b",
+               "tunnels": [{"id": "t-a"}, {"id": "t-b"}]}
+        self.assertEqual(_proxy_tunnel_index(cfg), 1)
+
+    def test_dangling_id_falls_back_to_index(self):
+        cfg = {"current_tunnel": 1, "current_tunnel_id": "gone",
+               "tunnels": [{"id": "t-a"}, {"id": "t-b"}]}
+        self.assertEqual(_proxy_tunnel_index(cfg), 1)
+
+    def test_index_out_of_range_resets_to_first(self):
+        cfg = {"current_tunnel": 5, "tunnels": [{"id": "t-a"}]}
+        self.assertEqual(_proxy_tunnel_index(cfg), 0)
+
+    def test_malformed_config_is_safe(self):
+        self.assertEqual(_proxy_tunnel_index(None), 0)
+        self.assertEqual(_proxy_tunnel_index({}), 0)

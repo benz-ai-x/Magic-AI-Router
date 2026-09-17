@@ -115,6 +115,25 @@ def _apply_icon(item, key, point_size=None, color=None):
             pass  # 图标是增强，绝不阻断菜单构建
 
 
+def _proxy_tunnel_index(config):
+    """代理角色 → 隧道下标：id（current_tunnel_id）是唯一真相，旧下标
+    是兼容回退（无 id 旧档/手编配置），末路回首条。与 mpconf.config
+    merge 的解析序同一语义——菜单只消费不重定义。"""
+    if not isinstance(config, dict):
+        return 0
+    tunnels = config.get("tunnels", [])
+    cid = config.get("current_tunnel_id") or ""
+    if cid:
+        for i, t in enumerate(tunnels):
+            if isinstance(t, dict) and t.get("id") == cid:
+                return i
+    try:
+        idx = int(config.get("current_tunnel", 0))
+    except (TypeError, ValueError):
+        idx = 0
+    return idx if 0 <= idx < len(tunnels) else 0
+
+
 def _status_color(kind):
     """状态点着色（动态系统色，明暗模式自适应）。"""
     try:
@@ -196,7 +215,7 @@ class MenuBuilder:
         # traffic *title* (refresh_titles), never the menu structure.
         return (
             s, st.paused,
-            st.config.get("current_tunnel", 0),
+            st.config.get("current_tunnel_id", ""),
             len(tunnels),
             s == "error" and bool(st.ssh_error_msg),
             st.ssh_log if s == "connecting" else "",
@@ -312,7 +331,7 @@ class MenuBuilder:
         if tunnels:
             parent.add(None)
             parent.add(rumps.MenuItem("代理隧道（SOCKS5 上游）", callback=None))
-            current_idx = st.config.get("current_tunnel", 0)
+            current_idx = _proxy_tunnel_index(st.config)
             for i, t in enumerate(tunnels):
                 marker = "✓ " if i == current_idx else ""
                 name = t.get("name") or f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}"
@@ -345,7 +364,7 @@ class MenuBuilder:
         _apply_icon(parent, "forward_menu")
 
         tunnels = st.config.get("tunnels", [])
-        current_idx = st.config.get("current_tunnel", 0)
+        current_idx = _proxy_tunnel_index(st.config)
         fw_running = {tid: status for tid, _n, status in (st.forward_states or ())}
         any_rules = False
         for i, t in enumerate(tunnels):

@@ -1074,3 +1074,26 @@ class TestPutSectionCallbacks(unittest.TestCase):
         self.assertEqual(status, 422)
         self.mp_saved.assert_not_called()
         self.sp_saved.assert_not_called()
+
+
+class TestProxyRoleDecorationById(unittest.TestCase):
+    """is_proxy 装饰按角色 id 真相解析（v0.9.2）：下标漂移不再误导 UI。"""
+
+    def test_is_proxy_resolves_by_id_over_index(self):
+        cfg = {"tunnels": [
+            {"id": "t-1", "ssh_host": "a", "forwards": []},
+            {"id": "t-2", "ssh_host": "b", "forwards": []}],
+            "current_tunnel": 0, "current_tunnel_id": "t-2"}
+        server = config_server.ConfigServer()
+        server._server = config_server._ThreadingHTTPServer(
+            ("127.0.0.1", 0), config_server._Handler,
+            expected_token=server._token)
+        port = server._server.server_address[1]
+        import threading
+        threading.Thread(target=server._server.serve_forever, daemon=True).start()
+        self.addCleanup(server.stop)
+        with patch.object(config_server, "_read_mp", return_value=cfg):
+            status, body = _request(port, "GET", "/api/state", token=server._token)
+        mp = json.loads(body)["mp"]
+        self.assertFalse(mp["tunnels"][0]["is_proxy"])
+        self.assertTrue(mp["tunnels"][1]["is_proxy"])

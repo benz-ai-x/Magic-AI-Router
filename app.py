@@ -371,10 +371,22 @@ class MagicProxyApp(rumps.App):
 
     def make_switch_tunnel(self, idx):
         def switch(_):
-            if idx == self._config.get("current_tunnel", 0) and self._conn.ssh.status == "connected":
+            tunnels = self._config.get("tunnels", [])
+            tunnel = tunnels[idx] if 0 <= idx < len(tunnels) else None
+            if tunnel is None:
                 return
-            if not self._update_mp_config(
-                    lambda c: {**c, "current_tunnel": idx}):
+            if tunnel is self._conn.current_tunnel \
+                    and self._conn.ssh.status == "connected":
+                return
+            # 角色写双字段：id 是真相；下标投影供旧版本读兼容（磁盘侧
+            # tunnels 均已经 load 赋过 id）
+            tid = tunnel.get("id") or ""
+            def _switch_role(c):
+                ts = [t for t in c.get("tunnels", []) if isinstance(t, dict)]
+                i = next((k for k, t in enumerate(ts) if t.get("id") == tid),
+                         min(idx, max(0, len(ts) - 1)))
+                return {**c, "current_tunnel_id": tid, "current_tunnel": i}
+            if not self._update_mp_config(_switch_role):
                 return
             self.reconnect(None)
         return switch

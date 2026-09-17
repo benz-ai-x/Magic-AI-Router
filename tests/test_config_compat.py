@@ -225,3 +225,54 @@ class TestMergeConfigPorts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProxyRoleResolution(unittest.TestCase):
+    """v0.9.2 代理角色双表示：current_tunnel_id（稳定 id）是唯一真相，
+    current_tunnel 下标退为兼容读入口 + merge 派生投影。"""
+
+    def _two(self):
+        return [
+            {"id": "t-a", "ssh_host": "a", "ssh_port": 22, "auth_type": "key"},
+            {"id": "t-b", "ssh_host": "b", "ssh_port": 22, "auth_type": "key"},
+        ]
+
+    def test_id_wins_over_index_and_backfills_projection(self):
+        merged = config.merge_config({
+            "current_tunnel": 0, "current_tunnel_id": "t-b",
+            "tunnels": self._two()})
+        self.assertEqual(merged["current_tunnel_id"], "t-b")
+        self.assertEqual(merged["current_tunnel"], 1)
+
+    def test_dangling_id_falls_back_to_index(self):
+        merged = config.merge_config({
+            "current_tunnel": 1, "current_tunnel_id": "t-gone",
+            "tunnels": self._two()})
+        self.assertEqual(merged["current_tunnel_id"], "t-b")
+        self.assertEqual(merged["current_tunnel"], 1)
+
+    def test_legacy_index_only_backfills_id(self):
+        merged = config.merge_config({
+            "current_tunnel": 1, "tunnels": self._two()})
+        self.assertEqual(merged["current_tunnel_id"], "t-b")
+
+    def test_role_survives_reorder(self):
+        reordered = config.merge_config({
+            "current_tunnel": 0, "current_tunnel_id": "t-b",
+            "tunnels": [self._two()[1], self._two()[0]]})
+        self.assertEqual(reordered["current_tunnel_id"], "t-b")
+        self.assertEqual(reordered["current_tunnel"], 0,
+                         "投影下标随位置重算，真相 id 纹丝不动")
+
+    def test_empty_tunnels_resets_role(self):
+        merged = config.merge_config({"current_tunnel": 3, "tunnels": []})
+        self.assertEqual(merged["current_tunnel"], 0)
+        self.assertEqual(merged["current_tunnel_id"], "")
+
+    def test_idless_tunnel_role_stays_indexless_id(self):
+        # 新隧道保存时尚未赋 id（下次 load 才赋）——id 真相保持空，
+        # 角色经下标解析不丢
+        merged = config.merge_config({
+            "current_tunnel": 0, "tunnels": [{"ssh_host": "x", "ssh_port": 22}]})
+        self.assertEqual(merged["current_tunnel_id"], "")
+        self.assertEqual(merged["current_tunnel"], 0)

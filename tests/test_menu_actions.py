@@ -566,3 +566,32 @@ class TestMpSavedConverge(unittest.TestCase):
         with patch.object(app, "load_config", return_value=None):
             a._on_mp_saved()  # 不得抛
         self.assertIs(a._config.get("prevent_sleep"), False)
+
+
+class TestSwitchTunnelStableRole(unittest.TestCase):
+    """v0.9.2：菜单切换代理角色写稳定 id（current_tunnel_id 真相 +
+    current_tunnel 下标投影），删除/调序不再让角色漂移。"""
+
+    def test_switch_tunnel_persists_stable_id_role(self):
+        tunnels = [
+            {"name": "t1", "ssh_user": "u", "ssh_host": "h1",
+             "ssh_port": 22, "auth_type": "key", "id": "t-a"},
+            {"name": "t2", "ssh_user": "u", "ssh_host": "h2",
+             "ssh_port": 22, "auth_type": "key", "id": "t-b"}]
+        import json as _json_seed
+        from shared import config_store as _cs
+        with open(_cs.PATHS["mp"], "w") as f:
+            _json_seed.dump({"current_tunnel": 0, "current_tunnel_id": "t-a",
+                             "tunnels": tunnels}, f)
+        a = _make_app({"current_tunnel": 0, "current_tunnel_id": "t-a",
+                       "tunnels": tunnels})
+        a._conn.ssh.status = "stopped"
+        a.make_switch_tunnel(1)(None)
+        self.assertEqual(a._config["current_tunnel_id"], "t-b")
+        self.assertEqual(a._config["current_tunnel"], 1)
+        import json as _json
+        from shared import config_store
+        disk = _json.loads(open(config_store.PATHS["mp"]).read())
+        self.assertEqual(disk.get("current_tunnel_id"), "t-b")
+        self.assertEqual(disk.get("current_tunnel"), 1)
+        a._conn.restart.assert_called_once()

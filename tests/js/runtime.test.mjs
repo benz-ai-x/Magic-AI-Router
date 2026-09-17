@@ -289,10 +289,10 @@ test("collectTunnel reads the forward_autostart switch", () => {
 });
 
 // ── proxy role：查看 ≠ 切换——隐式写已删，角色只经 setProxyTunnel 显式变更 ──
-function setupTunnelForm(rt, { current = 0, active = 0 } = {}) {
+function setupTunnelForm(rt, { role = "t-a", active = 0 } = {}) {
   const name = active === 0 ? "A" : "B", addr = active === 0 ? "a" : "b";
   rt.run(`
-    S=normalizeState({mp:{current_tunnel:${current},tunnels:[
+    S=normalizeState({mp:{current_tunnel_id:'${role}',current_tunnel:${role === "t-b" ? 1 : 0},tunnels:[
       {id:'t-a',name:'A',ssh_user:'',ssh_host:'a',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]},
       {id:'t-b',name:'B',ssh_user:'',ssh_host:'b',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
@@ -316,33 +316,34 @@ function setupTunnelForm(rt, { current = 0, active = 0 } = {}) {
 
 test("viewing another tunnel must not silently switch the proxy role", () => {
   const rt = makeRuntime();
-  setupTunnelForm(rt, { current: 0, active: 1 });
+  setupTunnelForm(rt, { role: "t-a", active: 1 });
   // 保存路径的精确复现：用户停留在隧道页查看 B（activeTunnel=1）时按下保存
   rt.run("collect(true);recomputeDirty()");
-  assert.equal(rt.run("S.mp.current_tunnel"), 0,
+  assert.equal(rt.run("S.mp.current_tunnel_id"), "t-a",
     "collect 只读表单——正在查看的隧道绝不能被隐式写成代理隧道");
   assert.equal(rt.run("dirty"), false, "单纯查看另一条隧道不得伪造待保存项");
 });
 
 test("setProxyTunnel marks the role switch as one tracked, reversible change", () => {
   const rt = makeRuntime();
-  setupTunnelForm(rt, { current: 0, active: 1 });
+  setupTunnelForm(rt, { role: "t-a", active: 1 });
   assert.match(rt.run("tunnelHTML()"), /设为代理隧道/,
     "非代理隧道的详情栏必须暴露显式角色动作");
   rt.run("setProxyTunnel()");
-  assert.equal(rt.run("S.mp.current_tunnel"), 1);
+  assert.equal(rt.run("S.mp.current_tunnel_id"), "t-b");
+  assert.equal(rt.run("S.mp.current_tunnel"), 1, "下标投影随 id 一并写入");
   assert.equal(rt.run("dirty"), true);
   assert.equal(rt.run("totalDirtyCount()"), 1, "只有角色一个叶子计入待保存");
   assert.match(rt.run("tunnelHTML()"), /fw-badge[^>]*>代理隧道</,
     "当前代理隧道渲染徽标而非按钮");
   rt.run("discardAll()");
-  assert.equal(rt.run("S.mp.current_tunnel"), 0, "放弃更改恢复已保存的角色");
+  assert.equal(rt.run("S.mp.current_tunnel_id"), "t-a", "放弃更改恢复已保存的角色");
 });
 
 test("deleting a tunnel keeps the proxy role on the same tunnel", () => {
   const rt = makeRuntime();
   rt.run(`
-    S=normalizeState({mp:{current_tunnel:2,tunnels:[
+    S=normalizeState({mp:{current_tunnel_id:'t-c',current_tunnel:2,tunnels:[
       {id:'t-a',name:'A',ssh_user:'',ssh_host:'a',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]},
       {id:'t-b',name:'B',ssh_user:'',ssh_host:'b',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]},
       {id:'t-c',name:'C',ssh_user:'',ssh_host:'c',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]}]}});
@@ -353,11 +354,13 @@ test("deleting a tunnel keeps the proxy role on the same tunnel", () => {
     document.getElementById('viewport').firstElementChild={classList:{add(){}}};
   `);
   rt.run("removeTunnel(0)");
-  assert.equal(rt.run("S.mp.current_tunnel"), 1,
-    "删掉代理前面的隧道后，角色下标前移指向同一条隧道");
-  assert.equal(rt.run("S.mp.tunnels[S.mp.current_tunnel].id"), "t-c");
+  assert.equal(rt.run("S.mp.current_tunnel_id"), "t-c",
+    "删掉代理前面的隧道后，角色 id 纹丝不动——不再依赖下标");
+  assert.equal(rt.run("proxyIndexOf(S)"), 1, "解析下标指向同一条隧道");
+  assert.equal(rt.run("S.mp.tunnels[proxyIndexOf(S)].id"), "t-c");
   rt.run("removeTunnel(1)");
   assert.equal(rt.run("S.mp.tunnels.length"), 1);
-  assert.equal(rt.run("S.mp.current_tunnel"), 0,
-    "删掉代理自身后下标钳制到剩余首条");
+  assert.equal(rt.run("S.mp.current_tunnel_id"), "",
+    "删掉代理自身后清空 id 真相，交由下标钳制回落剩余首条");
+  assert.equal(rt.run("proxyIndexOf(S)"), 0);
 });

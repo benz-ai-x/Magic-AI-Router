@@ -133,9 +133,27 @@ class ConnectionCoordinator:
 
     @property
     def current_tunnel(self):
-        idx = self._config.get("current_tunnel", 0)
-        tunnels = self._config.get("tunnels", [])
-        return tunnels[idx] if 0 <= idx < len(tunnels) else None
+        """代理隧道（按角色解析）：id 是唯一真相，旧下标兼容，末路回首条。
+
+        配置通常已经 merge_config 解析过（id/下标自洽）；属性内保留完整
+        解析序是为了对未经 merge 的裸配置（测试/手编）也给出稳定答案。
+        """
+        tunnels = [t for t in self._config.get("tunnels", [])
+                   if isinstance(t, dict)]
+        if not tunnels:
+            return None
+        cid = self._config.get("current_tunnel_id") or ""
+        if cid:
+            for t in tunnels:
+                if t.get("id") == cid:
+                    return t
+        try:
+            idx = int(self._config.get("current_tunnel", 0))
+        except (TypeError, ValueError):
+            idx = 0
+        if 0 <= idx < len(tunnels):
+            return tunnels[idx]
+        return tunnels[0]
 
     @property
     def socks5_port(self):

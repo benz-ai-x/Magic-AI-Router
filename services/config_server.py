@@ -302,9 +302,10 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 logger.exception("capture_state_fn failed")
                 mp["capture_active"] = False
-            # 多活（v0.9）：per-tunnel 运行态装饰——is_proxy 按当前索引，
-            # forward_running 按转发会话快照（tunnel_states_fn seam，
-            # capture_state 同款；app 侧注入，测试/容器形态缺席即全 False）
+            # 多活（v0.9）：per-tunnel 运行态装饰——is_proxy 按代理角色
+            # （id 真相 + 旧下标回退，与 merge 同一解析序），forward_running
+            # 按转发会话快照（tunnel_states_fn seam，capture_state 同款；
+            # app 侧注入，测试/容器形态缺席即全 False）
             try:
                 states_fn = self.server.tunnel_states_fn
                 states = {tid: st for tid, _n, st
@@ -312,9 +313,11 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 logger.exception("tunnel_states_fn failed")
                 states = {}
+            cid = mp.get("current_tunnel_id") or ""
             current_idx = mp.get("current_tunnel", 0)
             for i, t in enumerate(mp.get("tunnels", [])):
-                t["is_proxy"] = i == current_idx
+                is_role = (t.get("id") == cid) if cid else i == current_idx
+                t["is_proxy"] = is_role
                 t["forward_running"] = t.get("id") in states
             self._json(200, {"mp": mp, "sp": sp})
         elif path == "/api/balance":
@@ -477,9 +480,12 @@ class _Handler(BaseHTTPRequestHandler):
             committed_callbacks.append(self.server.on_mp_saved)
         if sp_in is not None and getattr(self.server, "on_sp_saved", None):
             committed_callbacks.append(self.server.on_sp_saved)
-        on_committed = (
-            (lambda: [cb() for cb in committed_callbacks])
-            if committed_callbacks else None)
+
+        def _fire_committed():
+            for cb in committed_callbacks:
+                cb()
+
+        on_committed = _fire_committed if committed_callbacks else None
         result = store.commit(plan, on_committed=on_committed)
         if not result.ok:
             self._json(422, {"ok": False, "errors": result.errors})

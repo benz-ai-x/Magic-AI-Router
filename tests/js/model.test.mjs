@@ -1091,11 +1091,14 @@ test("validateConfig hardens forward row shape like prepare (direct-state edges)
 
 // ── 代理角色显式化：角色切换是隧道页的一个可计数变更（经 setProxyTunnel）──
 test("viewSnapshot counts an explicit proxy-role switch as one tunnel-page change", () => {
-  const mk = cur => L.normalizeState({ mp: { current_tunnel: cur, tunnels: [
-    { id: "t-a", ssh_host: "a", ssh_port: 22 },
-    { id: "t-b", ssh_host: "b", ssh_port: 22 },
-  ] } });
-  const base = mk(0), changed = mk(1);
+  const mk = cid => L.normalizeState({ mp: {
+    current_tunnel_id: cid,
+    current_tunnel: cid === "t-b" ? 1 : 0,
+    tunnels: [
+      { id: "t-a", ssh_host: "a", ssh_port: 22 },
+      { id: "t-b", ssh_host: "b", ssh_port: 22 },
+    ] } });
+  const base = mk("t-a"), changed = mk("t-b");
   const p = L.dirtyProjection(base, changed, {}, {});
   assert.equal(p.total, 1);
   assert.deepEqual([...p.views], ["tunnel"]);
@@ -1103,6 +1106,19 @@ test("viewSnapshot counts an explicit proxy-role switch as one tunnel-page chang
     L.countChanges(L.viewSnapshot("tunnel", base).tunnels,
                    L.viewSnapshot("tunnel", changed).tunnels),
     0,
-    "角色切换只动 current_tunnel，隧道本体零变更",
+    "角色切换只动 current_tunnel_id，隧道本体零变更",
   );
+});
+
+test("proxyIndexOf: id 真相优先，悬空/缺省回退旧下标并钳制", () => {
+  const mk = (cid, idx, tunnels) => ({ mp: {
+    current_tunnel_id: cid, current_tunnel: idx, tunnels } });
+  const ts = [{ id: "t-a" }, { id: "t-b" }, { id: "t-c" }];
+  assert.equal(L.proxyIndexOf(mk("t-c", 0, ts)), 2, "id 真相优先于下标");
+  assert.equal(L.proxyIndexOf(mk("t-gone", 1, ts)), 1, "悬空 id 回退旧下标");
+  assert.equal(L.proxyIndexOf(mk("", 2, ts)), 2, "无 id 按下标解析");
+  assert.equal(L.proxyIndexOf(mk("", 9, ts)), 2, "下标越界钳制");
+  assert.equal(L.proxyIndexOf({ mp: { tunnels: [] } }), 0, "空列表钳 0");
+  // 删除前方隧道后 id 仍指向同一条——下标漂移类 bug 的形态学钉子
+  assert.equal(L.proxyIndexOf(mk("t-c", 0, ts.slice(1))), 1);
 });
