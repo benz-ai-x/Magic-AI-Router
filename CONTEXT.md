@@ -31,7 +31,7 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 多活模型（v0.9，决策落档 [ADR-005](docs/adr/005-multi-active-tunnels.md)）的两种运行角色：
 
 - **代理隧道** = `current_tunnel_id`（稳定 id，角色唯一真相；`current_tunnel` 下标为兼容投影）指定的隧道：唯一携带 `-D socks5_port` 的会话（含自己的 `-L`），是 :8888 HTTP 代理的 SOCKS5 上游。主图标/状态行/系统代理/暂停语义全部只反映代理会话。切换代理角色（菜单单选 / 设置窗「设为代理隧道」显式按钮）= 旧代理隧道**降级续跑**（有 forwards 转纯转发会话，无则停）+ 新隧道以代理模式重启。
-- **转发会话** = 其他隧道的纯 `-L` 会话（无 `-D`）：`_ForwardSession` 各自持有 monitor/retry/host-key 三件套（实例隔离；host-key 告警互不吞）。`forward_autostart` 持久字段控制随应用启动自动恢复；`apply_autostarts` 收敛补启。唤醒事件触发全部活跃会话僵尸重建。端口全局唯一性（含跨隧道）在 prepare 与 JS 双层拦——多活下两条隧道抢同端口会在 `ExitOnForwardFailure` 下互顶死循环（v0.8 的单活豁免作废）。
+- **转发会话** = 其他隧道的纯 `-L` 会话（无 `-D`）：`tunnel/ssh_session.SshSession` 实例（**SSH 会话 deep module**，ADR-007 收敛落地——三件套组装/连接序列/僵尸重建/每秒健康泵 `tick()` 的单一归宿，转发会话与 NFS 会话共用，原 `_ForwardSession` 与 `NfsSession` 的两份逐行镜像已删）。`forward_autostart` 持久字段控制随应用启动自动恢复；`apply_autostarts` 收敛补启。唤醒事件触发全部活跃会话僵尸重建。端口全局唯一性（含跨隧道）在 prepare 与 JS 双层拦——多活下两条隧道抢同端口会在 `ExitOnForwardFailure` 下互顶死循环（v0.8 的单活豁免作废）。
 
 ### 端口转发（Local Forward）
 
@@ -45,7 +45,7 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 把远程服务器目录经 SSH 隧道以 **NFSv4** 挂载到本机（ADR-007，`mount/` 域）。仅 NFSv4——单 TCP 端口 2049、无 mount 协议，一条 `-L` 隧道承载该隧道全部挂载；macOS 自带客户端，本地零内核扩展。
 
-- **专用 NFS 会话**（`nfs_session.py`）：镜像 `_ForwardSession` 三件套的独立会话，tunnel 副本只携带 NFS 一条 -L（用户转发行归用户会话——同端口双进程互顶死）。运行编排归 `MountCoordinator`（`coordinator.py`，tick reconcile）：会话 connected + 未挂载 → 派发挂载；会话断开 + 已挂载 → **立即强制卸载**（hard 挂载防 Finder 卡死）；恢复自动重挂 auto_mount 项；退出先卸载后断隧道。mount/umount 子进程全走 worker 线程。
+- **专用 NFS 会话**（`nfs_session.py`，SshSession 薄子类）：tunnel 副本（spawn 投影）只携带 NFS 一条 -L（用户转发行归用户会话——同端口双进程互顶死）；生命周期编排（三件套/连接/健康泵）继承自 SSH 会话 deep module。运行编排归 `MountCoordinator`（`coordinator.py`，tick reconcile）：会话 connected + 未挂载 → 派发挂载；会话断开 + 已挂载 → **立即强制卸载**（hard 挂载防 Finder 卡死）；恢复自动重挂 auto_mount 项；退出先卸载后断隧道。mount/umount 子进程全走 worker 线程。
 - **远程一键安装**（`remote_setup.py`，幂等）：发行版探测 → 装包（apt/dnf/yum）→ 写应用专属 `/etc/exports.d/magic-router.exports`（导出恒绑 127.0.0.1 + `insecure` 必须：sshd 转发源端口非特权）→ `exportfs -ra` → 验证 2049 监听。root 脚本经单次 `sudo sh -c` 执行；sudo 密码解析序：UI 显式输入 > 密码登录复用隧道密码 > Keychain `nfs-sudo:` 账户槽；空 = `sudo -n`。
 - **本地挂载**（`mount_control.py`）：`sudo -n mount_nfs -o vers=4,port=<lp>,tcp,hard 127.0.0.1:<path> <dir>`；挂载状态真相源 = `/sbin/mount` 表（不信单次返回码）；卸载升级链 umount → `umount -f` → `diskutil unmount force`。本地提权 = 一次性 osascript 管理员授权写 `/etc/sudoers.d/magic-router-mount`（base64 过引号 + `visudo -cf` 先校验，规则仅限 mount_nfs/umount 两个二进制）。
 - **配置**：`tunnels[i].nfs`（enabled / local_port 默认 12049 / squash_to_ssh_user / mounts[{name, remote_path, local_dir 空缺省 /Volumes/<名>, auto_mount}]）；本地端口与全局端口面冲突在 prepare 拦（仅 enabled 或有挂载的节点参与——merge 填的纯默认节点不占端口）。

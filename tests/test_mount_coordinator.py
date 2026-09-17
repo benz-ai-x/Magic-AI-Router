@@ -81,6 +81,9 @@ class _FakeSession:
     def connect(self):
         self.connects += 1
 
+    def tick(self):
+        self.ticks = getattr(self, "ticks", 0) + 1
+
     def reconnect_now(self):
         self.connects += 1
 

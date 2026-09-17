@@ -82,6 +82,9 @@ tunnel/ ── SSH 隧道核心
   proxy.py ── asyncio HTTP→SOCKS5 代理（明文逐请求归属）+ SSHMonitor
   async_runtime.py ── daemon 线程 + asyncio 循环 + 代际停止
   http_framer.py ── 明文 HTTP 增量定界（未定界即安全关闭）
+  ssh_session.py ── SshSession：SSH 会话 deep module（三件套编排 +
+    连接序列 + 僵尸重建 + 每秒健康泵 tick；转发/NFS 会话共用，
+    ADR-007 收敛）
   connection_coordinator.py ── 连接/重试编排（持 _lifecycle_lock）
   retry_scheduler.py ── SSH 重试退避调度（无限退避封顶 60s，永不放弃）
   reconnect_trigger.py ── 唤醒事件→立即重连触发器（去抖 + NSWorkspace 源）
@@ -97,8 +100,8 @@ mount/ ── NFSv4 over SSH 隧道挂载（ADR-007；跨域白名单边 mount�
     写入 + 2049 监听验证）
   mount_control.py ── 本地挂载控制（mount 表真相源 + mount_nfs/umount
     升级链 + 一次性 sudoers.d 引导）
-  nfs_session.py ── 专用 NFS 转发会话（镜像 _ForwardSession 三件套，
-    只携带 NFS 一条 -L）
+  nfs_session.py ── NFS 会话薄子类（SshSession + 仅含 NFS -L 的隧道
+    副本投影；生命周期编排归 tunnel/ssh_session）
   coordinator.py ── MountCoordinator 挂载生命周期状态机（tick
     reconcile：断线强制卸载/恢复自动重挂，worker 线程跑子进程）
 

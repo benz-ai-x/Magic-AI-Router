@@ -418,7 +418,7 @@ class TestForwardSessions(unittest.TestCase):
 
     def test_start_forward_creates_session_and_connects(self):
         conn, _ = _mutable_coordinator(_multi_config())
-        with patch("tunnel.connection_coordinator._ForwardSession.connect") as c:
+        with patch("tunnel.ssh_session.SshSession.connect") as c:
             ok, reason = conn.start_forward("t-2")
         self.assertTrue(ok, reason)
         c.assert_called_once()
@@ -427,7 +427,7 @@ class TestForwardSessions(unittest.TestCase):
 
     def test_stop_forward_idempotent(self):
         conn, _ = _mutable_coordinator(_multi_config())
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
         with patch.object(session, "stop") as s:
@@ -438,7 +438,7 @@ class TestForwardSessions(unittest.TestCase):
 
     def test_check_forwards_reconciles_deleted_tunnel(self):
         conn, holder = _mutable_coordinator(_multi_config())
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
         holder["cfg"] = {**_multi_config(), "tunnels":
@@ -450,7 +450,7 @@ class TestForwardSessions(unittest.TestCase):
 
     def test_check_forwards_reconciles_emptied_forwards(self):
         conn, holder = _mutable_coordinator(_multi_config())
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
         cfg = _multi_config()
@@ -462,7 +462,7 @@ class TestForwardSessions(unittest.TestCase):
 
     def test_check_forwards_connected_resets_retry(self):
         conn, _ = _mutable_coordinator(_multi_config())
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
         session.monitor._status = "connected"
@@ -475,7 +475,7 @@ class TestForwardSessions(unittest.TestCase):
     def test_any_connected_aggregates_sessions(self):
         conn, _ = _mutable_coordinator(_multi_config())
         self.assertFalse(conn.any_connected)
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
         self.assertFalse(conn.any_connected)
@@ -525,7 +525,7 @@ class TestWakeTriggerForwards(unittest.TestCase):
     def test_wake_rebuilds_forward_sessions(self):
         conn, _ = _mutable_coordinator(_multi_config())
         conn._paused = True  # 暂停只豁免代理会话；转发会话仍要重建
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
         session.monitor._status = "connected"
@@ -544,7 +544,7 @@ class TestWakeTriggerForwards(unittest.TestCase):
             conn.apply_autostarts()
         sf.assert_called_once_with("t-2")
         # 已在跑的不再重复启动
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         with patch.object(conn, "start_forward") as sf2:
             conn.apply_autostarts()
@@ -556,7 +556,7 @@ class TestRestartForwardExplicitSemantics(unittest.TestCase):
 
     def test_error_state_session_reconnects(self):
         conn, _ = _mutable_coordinator(_multi_config())
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
         session.monitor._status = "error"
@@ -567,7 +567,7 @@ class TestRestartForwardExplicitSemantics(unittest.TestCase):
 
     def test_tunnel_deleted_during_restart_removes_session(self):
         conn, holder = _mutable_coordinator(_multi_config())
-        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+        with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
 

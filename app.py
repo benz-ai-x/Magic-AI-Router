@@ -265,7 +265,6 @@ class MagicProxyApp(rumps.App):
     def _on_tick(self, _):
         self._stats.tick()
         self._conn.handle_retry()
-        self._conn.handle_retry_forwards()
 
         # Set icon from pre-check status (matches original ordering)——
         # 主图标永远反映代理会话（:8888 上游只依赖它）；转发会话的健康

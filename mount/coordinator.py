@@ -207,27 +207,8 @@ class MountCoordinator:
                 self._sessions[tid] = self._new_session_locked(
                     tid, nfs.get("local_port"), tunnels)
                 continue
-            if session.retry.consume_due() \
-                    and session.monitor.status in ("stopped", "error"):
-                session.connect()
-            self._check_monitor(session)
-
-    @staticmethod
-    def _check_monitor(session):
-        """单会话健康检查（镜像 ConnectionCoordinator._check_monitor）。"""
-        monitor = session.monitor
-        if monitor.status not in ("connecting", "connected",
-                                  "stopped", "error"):
-            return
-        monitor.check(session.local_port)
-        if monitor.status == "connected":
-            session.retry.reset()
-        elif monitor.status == "error":
-            if monitor.is_host_key_changed \
-                    and not session.host_key.change_prompted:
-                session.host_key.begin_replacement()
-            else:
-                session.retry.handle_error()
+            # 每秒健康泵（到期重连 + 健康检查）单一归宿在 SshSession.tick
+            session.tick()
 
     def _reconcile_mounts(self, tunnels):
         table = mount_control.nfs_mounts()   # 每拍一次，本拍内共享

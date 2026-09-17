@@ -4,14 +4,17 @@ Owns the connection state machine that was previously scattered across MagicProx
 The App delegates start/stop/reconnect/pause to this module.
 
 多活模型（v0.9）：代理隧道（current_tunnel，携带 -D 的唯一会话，本类
-全部既有状态机照旧）+ 任意多条并行「转发会话」（_ForwardSession，纯
--L 无 -D，各自持有 monitor/retry/host-key 三件套）。
+全部既有状态机照旧）+ 任意多条并行「转发会话」（纯 -L 无 -D，SshSession
+实例，各自持有 monitor/retry/host-key 三件套）。会话生命周期的编排单一
+归宿在 tunnel/ssh_session.SshSession（ADR-007 收敛：转发会话与 NFS 会话
+原是两份逐行镜像）。
 
 Interface:
   start()           — start proxy background + SSH connection sequence
   handle_retry()    — check retry scheduler, connect if due (call before icon)
   check_ssh()       — SSH status check + host-key handling (call after icon)
-  handle_retry_forwards() / check_forwards() — 转发会话的同款 tick 半边
+  check_forwards()  — 转发会话的 tick 半边（SshSession.tick：到期重连 +
+                      健康检查；check 即 reconcile）
   start_forward(id) / stop_forward(id) — 转发会话启停
   restart_forward(id, cfg_fn)          — 重载配置后重建指定转发会话
   apply_autostarts()                   — 按 forward_autostart 收敛补启
@@ -31,57 +34,10 @@ import threading
 from tunnel.proxy import ProxyRuntime, SSHMonitor
 from tunnel.retry_scheduler import RetryScheduler
 from tunnel.host_key_flow import HostKeyFlow
+from tunnel.ssh_session import SshSession, check_and_recover
 from shared.stats import Stats
 
 logger = logging.getLogger("magic-proxy.connection")
-
-
-class _ForwardSession:
-    """一条转发隧道的运行会话（纯 -L，无 -D）。
-
-    monitor / retry / host-key 三件套按会话独立实例化——SSHMonitor 与
-    RetryScheduler 实例隔离干净；单活时代共享一个 HostKeyFlow 时两个
-    generation 会互吞告警，每会话一份后天然消失。
-    """
-
-    def __init__(self, tunnel_id, log_sink, tunnel_fn, password_fn):
-        self.tunnel_id = tunnel_id
-        self.monitor = SSHMonitor(line_sink=log_sink)
-        self.retry = RetryScheduler()
-        self._tunnel_fn = tunnel_fn      # () -> tunnel dict or None
-        self._password_fn = password_fn  # (tunnel) -> str
-        self.host_key = HostKeyFlow(
-            ssh_monitor=self.monitor,
-            get_tunnel=tunnel_fn,
-            get_socks5_port=lambda: None,  # 转发模式无 -D
-            get_password=lambda: (
-                password_fn(tunnel_fn()) if tunnel_fn() else ""),
-            on_connect=self._start_now,
-            on_reconnect=self.connect,
-        )
-
-    def connect(self):
-        """发起连接序列：重试计数清零 + host-key 信任检查（首连信任流）。"""
-        self.retry.cancel()
-        self.host_key.start_check()
-
-    def _start_now(self):
-        tunnel = self._tunnel_fn()
-        if tunnel:
-            self.monitor.start(tunnel, None, self._password_fn(tunnel))
-
-    def reconnect_now(self):
-        """#86 僵尸重建：connected 主动拆（不等 ServerAlive 判死）再连。"""
-        if self.monitor.status == "connecting":
-            return
-        if self.monitor.status == "connected":
-            self.monitor.stop()
-        self.connect()
-
-    def stop(self, blocking=True):
-        self.retry.cancel()
-        self.host_key.cancel()
-        self.monitor.stop(blocking=blocking)
 
 
 class ConnectionCoordinator:
@@ -117,7 +73,7 @@ class ConnectionCoordinator:
             on_connect=self._start_proxy_ssh,
             on_reconnect=self.start_ssh,
         )
-        # 多活转发会话注册表：tunnel_id → _ForwardSession
+        # 多活转发会话注册表：tunnel_id → SshSession
         self._forward_sessions = {}
         self._ssh_log_sink = ssh_log_sink
         # 代理会话实际启动时的隧道 id——restart 的降级判定必须用「跑着
@@ -194,9 +150,8 @@ class ConnectionCoordinator:
 
     def forward_sessions(self):
         """转发会话快照 [(tunnel_id, name, status)]——菜单/UI 投影用。"""
-        return [(s.tunnel_id, s.monitor.current_name or s.tunnel_id,
-                 s.monitor.status)
-                for s in self._forward_sessions.values()]
+        return [(tid, s.monitor.current_name or tid, s.monitor.status)
+                for tid, s in self._forward_sessions.items()]
 
     # ── lifecycle ───────────────────────────────────────
 
@@ -228,41 +183,18 @@ class ConnectionCoordinator:
         try:
             if self._paused:
                 return
-            self._check_monitor(
+            check_and_recover(
                 self._ssh, self._retry, self._host_key, self.socks5_port)
         finally:
             self._lifecycle_lock.release()
 
-    @staticmethod
-    def _check_monitor(monitor, retry, host_key, probe_port):
-        """单会话健康检查的共享形状（代理/转发会话同款）。
-
-        #85：error 也放行——每拍继续 handle_error（timer 存活时自去重），
-        耗尽退避表后按封顶节奏无限重试，不再永久躺平等手动。
-        """
-        if monitor.status not in ("connecting", "connected",
-                                  "stopped", "error"):
-            return
-        monitor.check(probe_port)
-        if monitor.status == "connected":
-            retry.reset()
-        elif monitor.status == "error":
-            if monitor.is_host_key_changed and not host_key.change_prompted:
-                host_key.begin_replacement()
-            else:
-                retry.handle_error()
-
-    def handle_retry_forwards(self):
-        """转发会话的重试半边（tick 调用，先于图标）。"""
-        for session in list(self._forward_sessions.values()):
-            if session.retry.consume_due():
-                if session.monitor.status in ("stopped", "error"):
-                    session.connect()
-
     def check_forwards(self):
-        """转发会话的健康检查半边（tick 调用，后于图标）。
+        """转发会话的 tick 半边（tick 调用，后于图标）。
 
-        隧道被删 / forwards 被清空的会话在此收敛停掉（check 即 reconcile）。
+        每会话走 SshSession.tick（到期重连 + 健康检查合一——原
+        handle_retry_forwards / check_forwards 两拍收敛为一拍；转发会话
+        不喂主图标，两拍拆分本就只服务代理会话语义）。隧道被删 /
+        forwards 被清空的会话在此收敛停掉（check 即 reconcile）。
         """
         if not self._lifecycle_lock.acquire(blocking=False):
             return
@@ -276,9 +208,7 @@ class ConnectionCoordinator:
                     logger.info("转发会话收敛停止：%s（无隧道或无转发规则）",
                                 tunnel_id)
                     continue
-                self._check_monitor(
-                    session.monitor, session.retry, session.host_key,
-                    self._forward_probe_port(tunnel))
+                session.tick()
         finally:
             self._lifecycle_lock.release()
 
@@ -320,10 +250,12 @@ class ConnectionCoordinator:
                 if session.monitor.status in ("stopped", "error"):
                     session.connect()
                 return True, ""
-            session = _ForwardSession(
-                tunnel_id, self._ssh_log_sink,
-                tunnel_fn=lambda tid=tunnel_id: self._tunnel_by_id(tid),
-                password_fn=self._get_tunnel_password)
+            session = SshSession(
+                self._ssh_log_sink,
+                identity_fn=lambda tid=tunnel_id: self._tunnel_by_id(tid),
+                password_fn=self._get_tunnel_password,
+                probe_port_fn=lambda tid=tunnel_id:
+                    self._forward_probe_port(self._tunnel_by_id(tid)))
             self._forward_sessions[tunnel_id] = session
             session.connect()
             logger.info("转发会话启动：%s", tunnel.get("name", tunnel_id))

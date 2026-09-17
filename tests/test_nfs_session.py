@@ -41,7 +41,7 @@ class TestInjectedTunnel(unittest.TestCase):
 
     def test_tunnel_gone_returns_none(self):
         s = _session(_tunnel())
-        s._tunnel_fn = lambda: None
+        s._identity_fn = lambda: None
         self.assertIsNone(s._injected_tunnel())
 
     def test_local_port_recorded(self):

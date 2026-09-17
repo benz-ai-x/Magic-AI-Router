@@ -30,6 +30,12 @@ ExitOnForwardFailure 互顶死循环（prepare 的端口冲突校验拦同端口
 代价：同一 host 可能跑两条 ssh 进程（host-key 信任流共享 known_hosts，
 无额外交互）。
 
+> **收敛注记（2026-09-18，架构评审候选 1 落地）**：两份镜像成为现实后，
+> 三件套编排/连接序列/僵尸重建/健康泵收敛为 deep module
+> `tunnel/ssh_session.SshSession`；`_ForwardSession` 已删，
+> `NfsSession` 成为只持有 NFS 投影的薄子类（"one adapter = hypothetical,
+> two = real"）。本决策的实质（独立会话 + 仅 NFS 的 -L）不变。
+
 ### 决策 3：远程提权——sudo -S 密码走 stdin 管道（用户确认）
 
 `run_remote`（ssh_launch 新增）与 probe 同源的 host-key 三件套 + 认证
