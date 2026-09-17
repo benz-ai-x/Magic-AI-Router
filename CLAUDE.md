@@ -140,7 +140,7 @@ suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM �
 
 **线程模型：** 主线程跑 rumps NSRunLoop（菜单栏）。后台 daemon 线程跑：asyncio 事件循环（代理服务 ProxyRuntime）、Suanpan 网关（uvicorn）、config server（http.server）。
 
-**菜单结构：** 状态行 → 代理隧道 ▸（含连接控制）→ AI 路由 ▸ → 抓包 ▸ → 页脚
+**菜单结构（五组）：** 状态区（着色圆点 + 流量行）→ 代 理 ▸（-D 会话：启停/系统代理/角色单选/经代理启动）→ 端口映射 ▸（-L 多活会话）→ AI 路由 ▸ → 抓 包 ▸ → 系 统 ▸ → 页脚（偏好/日志/复制 AI 助手指令/关于/退出）；菜单项图标走 SF Symbols（`menu_builder._apply_icon`，旧系统静默降级）
 
 **偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 网络设置）+ AI 路由（供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。
 

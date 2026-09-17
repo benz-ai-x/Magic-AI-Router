@@ -3,6 +3,16 @@
 All notable changes to Magic-AI-Router are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [v0.9.1] — 2026-09-17 — 菜单栏重组：代理/端口映射分离 + SF Symbols 图标
+
+### Changed
+- **菜单五组分区**（HTML 原型定稿）：状态区（着色圆点图标取代 emoji，流量行图标化）→ **代 理 ▸**（只管唯一 -D 会话：启停/暂停/重连/系统代理/代理角色单选/经代理启动 ▸）→ **端口映射 ▸**（只管纯 -L 多活会话：代理隧道显示「随代理运行」信息行，其余隧道各自启停/单会话重连/端口摘要，无规则给指引）→ AI 路由 ▸ / 抓 包 ▸ → **系 统 ▸**（防睡眠/登录启动从页脚收进来）→ 精简页脚
+- **SF Symbols 图标体系**：`menu_builder._ICON` 符号表（SF 1/2 · macOS 11 基线）+ `_symbol_image`（尺寸/着色配置链）+ `_apply_icon`（挂 `NSMenuItem.setImage_`，任何失败静默降级纯文本）；状态行动态系统色明暗自适应
+- 防睡眠/登录启动开关文案 refs 化，随 refresh_titles 动态刷新（不再依赖整菜单重建）
+
+### Added
+- 页脚新增「复制 AI 助手指令」直通项（免开设置窗；app 公开 `copy_agent_instructions` 回调）
+
 ## [v0.9.0] — 2026-09-16 — 多隧道并行（代理隧道 + 转发会话）
 
 ### Added

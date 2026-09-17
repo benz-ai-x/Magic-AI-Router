@@ -35,7 +35,7 @@ from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")
 LOG_PATH = os.path.join(LOG_DIR, "MagicProxy.log")
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 VERSION_DISPLAY = version_display(VERSION, build_stamp())
 
 log_buffer = LogBuffer()
@@ -622,6 +622,10 @@ class MagicProxyApp(rumps.App):
         except Exception as e:
             logger.exception("show_preferences failed")
             rumps.alert(title="Magic AI Router", message=f"打开设置失败:\n\n{e!r}")
+
+    def copy_agent_instructions(self, _):
+        """菜单栏页脚「复制 AI 助手指令」（v0.9.1）——免开设置窗直通。"""
+        self._copy_agent_instructions()
 
     def _copy_agent_instructions(self):
         """复制 AI 助手指令上剪贴板——文案归 config_server.agent_instructions

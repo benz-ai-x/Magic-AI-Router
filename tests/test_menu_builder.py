@@ -2,6 +2,8 @@
 import unittest
 from unittest.mock import MagicMock
 
+import rumps
+
 from shellui.menu_builder import MenuBuilder, MenuState
 
 
@@ -59,46 +61,80 @@ class TestMultiActiveTunnels(unittest.TestCase):
             forward_states=(("t-2", "AWS-ap", "connected"),))).struct_key()
         self.assertNotEqual(key_idle, key_fwd)
 
-    def _tunnel_submenus(self, forward_states, cfg=None):
+    def _submenu(self, title, cfg=None, forward_states=(), ssh_status="connected"):
+        """直接构建子菜单（真实 rumps.MenuItem 树——MockApp 的 menu 不会
+        真建树）；返回 (parent, [子行 MenuItem])。"""
         app = MagicMock()
-        # make_switch_tunnel/toggle_forward_session/make_reconnect_tunnel
-        # 都返回可调用（rumps callback 形状）
-        app.make_switch_tunnel.return_value = lambda _s: None
-        app.toggle_forward_session.return_value = lambda _s: None
-        app.make_reconnect_tunnel.return_value = lambda _s: None
-        app.reconnect = lambda _s: None
         with unittest.mock.patch("shellui.menu_builder.chromium_proxy.installed_apps",
-                                 return_value=[]):
+                                 return_value=[{"name": "ChatGPT"}]):
             mb = MenuBuilder(app, lambda: _state(
-                ssh_status="connected", config=cfg or self._cfg(),
+                ssh_status=ssh_status, config=cfg or self._cfg(),
                 forward_states=forward_states))
-            # 直接构建隧道子菜单（返回真实 rumps.MenuItem 树——MockApp 的
-            # menu 不会真建树）
-            parent = mb._build_tunnel_submenu()
-        return [item for item in list(parent.values()) if hasattr(item, "values")]
+            builder = {"代 理": mb._build_proxy_submenu,
+                       "端口映射": mb._build_forward_submenu,
+                       "系 统": mb._build_system_submenu}[title]
+            parent = builder()
+        rows = list(parent.values())
+        self._titles = [r.title for r in rows if hasattr(r, "title")]
+        return parent, [r for r in rows if hasattr(r, "values")]
 
-    def test_per_tunnel_submenu_structure(self):
-        subs = self._tunnel_submenus(
-            (("t-2", "AWS-ap", "connected"),))
-        titles = [s.title for s in subs]
-        self.assertIn("Aws-eu — 已连接・代理", titles)
-        self.assertIn("AWS-ap — 转发中", titles)
-        by_name = {s.title.split(" — ")[0]: list(s.values()) for s in subs}
-        proxy_items = [i.title for i in by_name["Aws-eu"]]
-        fwd_items = [i.title for i in by_name["AWS-ap"]]
-        self.assertIn("✓ 设为代理隧道", proxy_items)
-        self.assertIn("重新连接", proxy_items)
-        self.assertIn("设为代理隧道", fwd_items)
-        self.assertIn("停止端口转发", fwd_items)
-        self.assertIn("重新连接", fwd_items)
+    def test_proxy_submenu_structure(self):
+        parent, subs = self._submenu("代 理")
+        titles = self._titles
+        self.assertIn("暂停代理", titles)          # connected 语境
+        self.assertIn("重新连接", titles)
+        self.assertIn("系统代理：关", titles)
+        self.assertIn("代理隧道（SOCKS5 上游）", titles)
+        self.assertIn("✓ Aws-eu", titles)          # 角色单选：当前打 ✓
+        self.assertIn("AWS-ap", titles)
+        launch = [t for t in titles if t == "经代理启动 App"]
+        self.assertEqual(len(launch), 1)
+        launch_rows = [s for s in subs if s.title == "经代理启动 App"]
+        self.assertIn("ChatGPT", [i.title for i in list(launch_rows[0].values())])
 
-    def test_idle_tunnel_offers_start_with_hint_when_no_forwards(self):
+    def test_forward_submenu_structure(self):
+        parent, subs = self._submenu(
+            "端口映射", forward_states=(("t-2", "AWS-ap", "connected"),))
+        titles = self._titles
+        self.assertIn("Aws-eu — 随代理运行", titles)   # 代理隧道信息行
+        running = [s for s in subs if s.title.startswith("AWS-ap")]
+        self.assertTrue(running, titles)
+        self.assertIn("— 转发中", running[0].title)
+        self.assertIn("9001→81", running[0].title)     # 转发摘要
+        items = [i.title for i in list(running[0].values())]
+        self.assertIn("停止端口转发", items)
+        self.assertIn("重新连接", items)
+
+    def test_forward_submenu_idle_and_no_rules(self):
         cfg = self._cfg()
         cfg["tunnels"][1]["forwards"] = []
-        subs = self._tunnel_submenus((), cfg=cfg)
-        by_name = {s.title.split(" — ")[0]: list(s.values()) for s in subs}
-        fwd_items = [i.title for i in by_name["AWS-ap"]]
-        self.assertIn("启动端口转发（需先配置转发规则）", fwd_items)
+        parent, subs = self._submenu("端口映射", cfg=cfg)
+        titles = self._titles
+        idle = [s for s in subs if s.title.startswith("AWS-ap")]
+        self.assertIn("— 未启动", idle[0].title)
+        items = [i.title for i in list(idle[0].values())]
+        self.assertIn("启动端口转发（需先配置转发规则）", items)
+        # t-1 有规则 → 不出现全局空态提示
+        self.assertNotIn("在偏好设置 → 隧道里添加转发规则", titles)
+
+    def test_forward_submenu_empty_state_hint(self):
+        cfg = self._cfg()
+        for t in cfg["tunnels"]:
+            t["forwards"] = []
+        parent, _ = self._submenu("端口映射", cfg=cfg)
+        titles = self._titles
+        self.assertIn("在偏好设置 → 隧道里添加转发规则", titles)
+
+    def test_forward_submenu_proxy_row_reflects_disconnected(self):
+        parent, _ = self._submenu("端口映射", ssh_status="stopped")
+        titles = self._titles
+        self.assertIn("Aws-eu — 未随代理运行", titles)
+
+    def test_system_submenu_and_refs(self):
+        _, _subs = self._submenu("系 统")
+        titles = self._titles
+        self.assertIn("阻止睡眠", titles)   # fixture 文案（=防睡眠开关）
+        self.assertIn("开机启动", titles)   # fixture 文案（=登录启动开关）
 
     def test_status_line_appends_forward_count(self):
         mb = MenuBuilder(MagicMock(), lambda: _state(
@@ -109,3 +145,23 @@ class TestMultiActiveTunnels(unittest.TestCase):
         mb.refresh_titles()
         title = mb.refs["proxy_status"].title
         self.assertIn("1 条转发", title)
+        self.assertNotIn("🟢", title, "状态行 emoji 已退役（颜色由图标承载）")
+
+
+class TestIconInfrastructure(unittest.TestCase):
+    """SF Symbols 图标基建：正常返回图像，异常静默降级不抛。"""
+
+    def test_unknown_symbol_returns_none(self):
+        from shellui import menu_builder
+        self.assertIsNone(menu_builder._symbol_image("definitely-not-a-symbol"))
+
+    def test_apply_icon_tolerates_none_item_and_bad_key(self):
+        from shellui import menu_builder
+        menu_builder._apply_icon(None, "proxy_menu")  # 不抛即过
+        menu_builder._apply_icon(rumps.MenuItem("x", callback=None),
+                                 "no-such-key")
+
+    def test_status_color_kinds(self):
+        from shellui import menu_builder
+        for kind in ("ok", "warn", "err", "idle"):
+            self.assertIsNotNone(menu_builder._status_color(kind))
