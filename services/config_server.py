@@ -166,10 +166,11 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
     def __init__(self, address, handler, *, expected_token=None,
-                 on_sp_saved=None, capture_state_fn=None,
+                 on_sp_saved=None, on_mp_saved=None, capture_state_fn=None,
                  tunnel_states_fn=None):
         self.expected_token = expected_token
         self.on_sp_saved = on_sp_saved
+        self.on_mp_saved = on_mp_saved
         self.capture_state_fn = capture_state_fn
         self.tunnel_states_fn = tunnel_states_fn
         super().__init__(address, handler)
@@ -468,12 +469,18 @@ class _Handler(BaseHTTPRequestHandler):
         if not plan.ok:
             self._json(422, {"ok": False, "errors": plan.errors})
             return
-        # on_sp_saved 只在完整提交后（含 MP 段成功）触发
-        result = store.commit(
-            plan,
-            on_committed=(self.server.on_sp_saved
-                          if (sp_in is not None
-                              and self.server.on_sp_saved) else None))
+        # 提交完整成功后按「本事务涉及的段」触发回调：MP 段 → 刷新应用
+        # 内存副本（app 侧 converge launch_at_login 等），SP 段 → 网关
+        # reload。commit 的 on_committed 是单钩子，这里按段组合。
+        committed_callbacks = []
+        if mp_in is not None and getattr(self.server, "on_mp_saved", None):
+            committed_callbacks.append(self.server.on_mp_saved)
+        if sp_in is not None and getattr(self.server, "on_sp_saved", None):
+            committed_callbacks.append(self.server.on_sp_saved)
+        on_committed = (
+            (lambda: [cb() for cb in committed_callbacks])
+            if committed_callbacks else None)
+        result = store.commit(plan, on_committed=on_committed)
         if not result.ok:
             self._json(422, {"ok": False, "errors": result.errors})
         else:
@@ -488,14 +495,16 @@ class ConfigServer:
     bind_host="0.0.0.0" + 配置卷里的固定 token。
     """
 
-    def __init__(self, on_sp_saved=None, port=CONFIG_PORT, capture_state=None,
-                 bind_host="127.0.0.1", token=None, tunnel_states_fn=None):
+    def __init__(self, on_sp_saved=None, on_mp_saved=None, port=CONFIG_PORT,
+                 capture_state=None, bind_host="127.0.0.1", token=None,
+                 tunnel_states_fn=None):
         self._port = port
         self._bind_host = bind_host
         self._server = None
         self._thread = None
         self._token = token if token is not None else secrets.token_hex(16)
         self._on_sp_saved = on_sp_saved
+        self._on_mp_saved = on_mp_saved
         # Optional getter → bool ("capture mode actually running now");
         # injected by app.py, stubbed in tests. None ⇒ /api/state reports False.
         self._capture_state = capture_state
@@ -542,6 +551,7 @@ class ConfigServer:
                 (self._bind_host, self._port), _Handler,
                 expected_token=self._token,
                 on_sp_saved=self._on_sp_saved,
+                on_mp_saved=self._on_mp_saved,
                 capture_state_fn=self._capture_state,
                 tunnel_states_fn=self._tunnel_states_fn)
         except OSError:

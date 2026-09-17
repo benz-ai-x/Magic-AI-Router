@@ -117,6 +117,7 @@ class MagicProxyApp(rumps.App):
             on_menu_dirty=lambda: setattr(self._menu_builder, "last_struct_key", None),
             initial_sys_proxy_on=self._config.get("system_proxy_default", False),
             tunnel_states_fn=lambda: self._conn.forward_sessions(),
+            on_mp_saved=self._on_mp_saved,
         )
         self._suanpan = self._lifecycle.suanpan
         self._capture_ctrl = self._lifecycle.capture_ctrl
@@ -306,6 +307,32 @@ class MagicProxyApp(rumps.App):
 
     def _notify(self, subtitle, message=""):
         rumps.notification("Magic AI Router", subtitle, message)
+
+    def _on_mp_saved(self):
+        """UI 保存 MP 段后的内存副本收敛（配置服务线程调用）。
+
+        旧缺口：PUT 只落盘 + reload 网关，app 内存副本直到下一次重连才
+        重读——防睡眠/抓包设置/代理角色在窗口期全按旧值行动。此处重读
+        替换引用后，tick 与各使用点自然收敛（与 reconnect 的 reload_cfg
+        同款跨线程纪律，#68）。
+        """
+        try:
+            cfg = load_config()
+        except IdentityMigrationError:
+            return  # prepare 已拦病态写入，此为防御；旧副本继续服务
+        if not cfg:
+            return
+        new_config = merge_config(cfg)
+        old_login = bool(self._config.get("launch_at_login", False))
+        new_login = bool(new_config.get("launch_at_login", False))
+        self._config = new_config
+        self._dirty()
+        # 登录启动是唯一的配置外副作用：UI 保存路径此前只写文件不注册
+        # LaunchAgent（只有菜单路径注册）——两条写径在此对齐
+        if old_login != new_login:
+            ok, err = login_item.set_launch_at_login(new_login)
+            if not ok:
+                logger.warning("UI 保存后同步登录启动失败：%s", err)
 
     # ── connection ───────────────────────────────────────
 

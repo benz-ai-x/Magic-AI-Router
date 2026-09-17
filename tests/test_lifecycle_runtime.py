@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 from services.lifecycle_runtime import LifecycleRuntime, _should_prevent_sleep
 
 
-def _make_coordinator():
+def _make_coordinator(on_mp_saved=None):
     from sysctl.instance_owner import InstanceOwner
     import tempfile
     import os
@@ -34,6 +34,7 @@ def _make_coordinator():
         paused_fn=lambda: False,
         on_menu_dirty=lambda: None,
         instance_owner=owner,
+        on_mp_saved=on_mp_saved,
     )
 
 
@@ -312,3 +313,16 @@ class TestStartAllFailureBranches(unittest.TestCase):
         reload.assert_called_once()
         start.assert_not_called()
 
+
+
+class TestOnMpSavedWiring(unittest.TestCase):
+    """on_mp_saved（app 内存副本收敛钩子）经构造函数直达 ConfigServer。"""
+
+    def test_on_mp_saved_passes_through_to_config_server(self):
+        marker = lambda: None
+        svc = _make_coordinator(on_mp_saved=marker)
+        self.assertIs(svc._config_server._on_mp_saved, marker)
+
+    def test_default_is_none(self):
+        svc = _make_coordinator()
+        self.assertIsNone(svc._config_server._on_mp_saved)

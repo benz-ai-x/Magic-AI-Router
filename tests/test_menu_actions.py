@@ -511,3 +511,58 @@ class TestCheckPortsEdge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMpSavedConverge(unittest.TestCase):
+    """UI 保存 MP 段后的内存副本收敛（_on_mp_saved）：重读磁盘刷新内存 +
+    登录启动与菜单路径对齐（配置外副作用补注册/注销）。"""
+
+    def _make_saved_app(self, current):
+        a = _make_app(dict(current))
+        return a
+
+    def test_refreshes_in_memory_config_and_marks_menu_dirty(self):
+        a = self._make_saved_app({"launch_at_login": False})
+        disk = {"launch_at_login": False, "prevent_sleep": True}
+        with patch.object(app, "load_config", return_value=disk), \
+             patch.object(app, "merge_config", side_effect=lambda c: c), \
+             patch.object(app.login_item, "set_launch_at_login") as reg:
+            a._on_mp_saved()
+        self.assertIs(a._config["prevent_sleep"], True)
+        self.assertIsNone(a._menu_builder.last_struct_key)
+        reg.assert_not_called()
+
+    def test_launch_at_login_change_syncs_launch_agent(self):
+        a = self._make_saved_app({"launch_at_login": False})
+        with patch.object(app, "load_config",
+                          return_value={"launch_at_login": True}), \
+             patch.object(app, "merge_config", side_effect=lambda c: c), \
+             patch.object(app.login_item, "set_launch_at_login",
+                          return_value=(True, "")) as reg:
+            a._on_mp_saved()
+        reg.assert_called_once_with(True)
+
+    def test_unchanged_launch_at_login_does_not_re_register(self):
+        a = self._make_saved_app({"launch_at_login": True})
+        with patch.object(app, "load_config",
+                          return_value={"launch_at_login": True}), \
+             patch.object(app, "merge_config", side_effect=lambda c: c), \
+             patch.object(app.login_item, "set_launch_at_login") as reg:
+            a._on_mp_saved()
+        reg.assert_not_called()
+
+    def test_identity_migration_error_keeps_old_config(self):
+        from shared.identity import IdentityMigrationError
+        a = self._make_saved_app({"prevent_sleep": False})
+        with patch.object(app, "load_config",
+                          side_effect=IdentityMigrationError("dup")), \
+             patch.object(app.login_item, "set_launch_at_login") as reg:
+            a._on_mp_saved()
+        self.assertIs(a._config.get("prevent_sleep"), False)
+        reg.assert_not_called()
+
+    def test_missing_config_file_is_noop(self):
+        a = self._make_saved_app({"prevent_sleep": False})
+        with patch.object(app, "load_config", return_value=None):
+            a._on_mp_saved()  # 不得抛
+        self.assertIs(a._config.get("prevent_sleep"), False)
