@@ -1137,6 +1137,9 @@ function tunnelHTML(){
   </section>`;
   const t=ts[activeTunnel];
   const tname=t.name||t.ssh_host||'Server '+(activeTunnel+1);
+  // 代理角色标记的表单真相：current_tunnel 只经 setProxyTunnel 显式变更
+  // （t.is_proxy 是服务端「实际跑着」的装饰快照，未保存窗口两者可不同）
+  const isCur=activeTunnel===(S.mp.current_tunnel||0);
   return `<section class="view">
     <p class="module-intro">管理 SSH 隧道连接。隧道变更保存后需「重新连接」生效（端口转发保存后自动重连）；「测试连接」探测已保存配置，转发行的「测试」探测当前填写值。</p>
     <div class="panel"><div class="md-layout">
@@ -1148,7 +1151,8 @@ function tunnelHTML(){
       <div class="md-detail">
         <div class="detail-bar"><h2>${esc(t.name||'Server '+(activeTunnel+1))}</h2>
           <div class="section-actions">
-            ${t.is_proxy?'':`<button class="btn btn-sm" aria-label="${t.forward_running?'停止':'启动'}端口转发 ${esc(tname)}" onclick="toggleForwardSession(this,'${esc(t.id||'')}','${t.forward_running?'stop':'start'}')">${t.forward_running?'停止转发':'启动转发'}</button>`}
+            ${isCur?'<span class="fw-badge" title="该隧道是代理会话的 SSH 上游（SOCKS5 -D）">代理隧道</span>':`<button class="btn btn-sm" aria-label="设为代理隧道 ${esc(tname)}" onclick="setProxyTunnel()">设为代理隧道</button>`}
+            ${(isCur||t.is_proxy)?'':`<button class="btn btn-sm" aria-label="${t.forward_running?'停止':'启动'}端口转发 ${esc(tname)}" onclick="toggleForwardSession(this,'${esc(t.id||'')}','${t.forward_running?'stop':'start'}')">${t.forward_running?'停止转发':'启动转发'}</button>`}
             <button class="btn btn-sm" aria-label="测试连接 ${esc(tname)}" onclick="testTunnel(this)">测试连接</button>
             <button class="btn btn-sm" aria-label="重新连接 ${esc(tname)}" onclick="reconnectProxy(this,'${esc(t.id||'')}')">重新连接</button>
             <button class="btn btn-sm btn-danger" aria-label="删除隧道 ${esc(tname)}" onclick="cdel(this,function(){removeTunnel(${activeTunnel})})">删除</button>
@@ -1189,8 +1193,18 @@ function tunnelHTML(){
 }
 function toggleAuth(sel){const c=sel.closest('.detail-body');c.querySelectorAll('[data-auth]').forEach(el=>el.style.display=el.dataset.auth===sel.value?'':'none');collectAndRecompute();}
 function selectTunnel(i){collectTunnel();recomputeDirty();activeTunnel=i;renderView();}
+// 代理角色唯一显式写径（设置窗侧）：标记为 dirty 待保存；应用要经
+// 「重新连接」（切换会断现有代理会话，必须显式触发，不随保存自动断）
+function setProxyTunnel(){
+  const t=S.mp.tunnels[activeTunnel];if(!t)return;
+  if(activeTunnel===(S.mp.current_tunnel||0))return;
+  S.mp.current_tunnel=activeTunnel;recomputeDirty();renderView();
+  toast(`已标记「${t.name||t.ssh_host||('Server '+(activeTunnel+1))}」为代理隧道——保存后经「重新连接」生效`);
+}
 function addTunnel(){collectTunnel();S.mp.tunnels.push({name:'',ssh_user:'',ssh_host:'',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[],forward_autostart:false});activeTunnel=S.mp.tunnels.length-1;recomputeDirty();renderView();}
-function removeTunnel(i){if(!S.mp.tunnels.length)return;collectTunnel();S.mp.tunnels.splice(i,1);activeTunnel=Math.max(0,Math.min(i,S.mp.tunnels.length-1));recomputeDirty();renderView();}
+// 删除时保全代理角色指向的隧道身份：删前方隧道下标前移；删代理隧道
+// 自身则钳到剩余首条（无隧道时置 0，后端对空列表另有归一）
+function removeTunnel(i){if(!S.mp.tunnels.length)return;collectTunnel();S.mp.tunnels.splice(i,1);const cur=S.mp.current_tunnel||0;if(i<cur)S.mp.current_tunnel=cur-1;else if(i===cur)S.mp.current_tunnel=Math.max(0,Math.min(cur,S.mp.tunnels.length-1));activeTunnel=Math.max(0,Math.min(i,S.mp.tunnels.length-1));recomputeDirty();renderView();}
 function addForward(){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t)return;(t.forwards=t.forwards||[]).push({local_port:0,remote_host:'127.0.0.1',remote_port:0});recomputeDirty();renderView();}
 function removeForward(fi){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t||!(t.forwards||[]).length)return;t.forwards.splice(fi,1);recomputeDirty();renderView();}
 function collectTunnel(){
@@ -1801,7 +1815,10 @@ function collect(forSave){
 // ════════════════════════════════════════════════════════════════
 // LAYER 3 — wiring: registry attachment, listeners, bootstrap
 // ════════════════════════════════════════════════════════════════
-Object.assign(VIEWS.tunnel,{render:tunnelHTML,collect(){collectTunnel();S.mp.current_tunnel=Math.max(0,Math.min(activeTunnel,S.mp.tunnels.length-1));}});
+// collect 只读表单，绝不写 current_tunnel——代理角色唯一的写径是
+// setProxyTunnel（显式动作）。旧版在此隐式写 activeTunnel，查看另一条
+// 隧道后保存会把代理静默切过去（实测 bug：保存后隧道变成另一连接串）
+Object.assign(VIEWS.tunnel,{render:tunnelHTML,collect(){collectTunnel();}});
 Object.assign(VIEWS.proxy,{render:proxyHTML,collect:collectProxy});
 Object.assign(VIEWS.system,{render:systemHTML,collect:collectSystem});
 Object.assign(VIEWS.providers,{render:providerHTML,collect:collectProvider});

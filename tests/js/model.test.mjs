@@ -1088,3 +1088,21 @@ test("validateConfig hardens forward row shape like prepare (direct-state edges)
   assert.ok(Array.isArray(L.validateConfig(mk({ local_port: 9000, remote_host: 12345, remote_port: 80 }))),
     "数字形态 remote_host 不得抛 TypeError");
 });
+
+// ── 代理角色显式化：角色切换是隧道页的一个可计数变更（经 setProxyTunnel）──
+test("viewSnapshot counts an explicit proxy-role switch as one tunnel-page change", () => {
+  const mk = cur => L.normalizeState({ mp: { current_tunnel: cur, tunnels: [
+    { id: "t-a", ssh_host: "a", ssh_port: 22 },
+    { id: "t-b", ssh_host: "b", ssh_port: 22 },
+  ] } });
+  const base = mk(0), changed = mk(1);
+  const p = L.dirtyProjection(base, changed, {}, {});
+  assert.equal(p.total, 1);
+  assert.deepEqual([...p.views], ["tunnel"]);
+  assert.equal(
+    L.countChanges(L.viewSnapshot("tunnel", base).tunnels,
+                   L.viewSnapshot("tunnel", changed).tunnels),
+    0,
+    "角色切换只动 current_tunnel，隧道本体零变更",
+  );
+});
