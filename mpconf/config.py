@@ -40,7 +40,11 @@ DEFAULT_CONFIG = {
     "socks5_port": 1080,
     "http_listen_port": 8888,
     "system_proxy_default": False,
+    # 代理角色（v0.9.2 起双表示）：current_tunnel_id（稳定 id）是唯一
+    # 持久真相——删除/调序隧道不再让角色漂移；current_tunnel 下标仅为
+    # 旧版本读兼容 + merge 派生投影（每次按 id 回写）
     "current_tunnel": 0,
+    "current_tunnel_id": "",
     "tunnels": [],
     "capture_port": DEFAULT_CAPTURE_PORT,
     "capture_dir": DEFAULT_CAPTURE_DIR,
@@ -282,11 +286,26 @@ def merge_config(cfg):
         merged["retention_days"] = max(0, int(merged["retention_days"]))
     except (TypeError, ValueError):
         merged["retention_days"] = 7
-    try:
-        idx = int(merged["current_tunnel"])
-    except (TypeError, ValueError):
-        idx = 0
-    merged["current_tunnel"] = idx if 0 <= idx < len(merged["tunnels"]) else 0
+    # 代理角色解析（单一语义，读/存路径共用）：有效 id → 旧下标（兼容
+    # 无 id 旧档/手编配置）→ 首条。解析后双写回：id 是真相，下标是投影
+    resolved = None
+    cid = merged.get("current_tunnel_id")
+    if isinstance(cid, str) and cid:
+        resolved = next((t for t in merged["tunnels"]
+                         if isinstance(t, dict) and t.get("id") == cid), None)
+    if resolved is None:
+        try:
+            idx = int(merged.get("current_tunnel", 0))
+        except (TypeError, ValueError):
+            idx = 0
+        if 0 <= idx < len(merged["tunnels"]):
+            resolved = merged["tunnels"][idx]
+    if resolved is None and merged["tunnels"]:
+        resolved = merged["tunnels"][0]
+    merged["current_tunnel_id"] = \
+        (resolved.get("id") or "") if isinstance(resolved, dict) else ""
+    merged["current_tunnel"] = next(
+        (i for i, t in enumerate(merged["tunnels"]) if t is resolved), 0)
     for _key in ("prevent_sleep", "launch_at_login"):
         if not isinstance(merged.get(_key), bool):
             merged[_key] = False

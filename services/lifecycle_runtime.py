@@ -85,6 +85,7 @@ class LifecycleRuntime:
         initial_sys_proxy_on=False,
         instance_owner=None,
         tunnel_states_fn=None,
+        on_mp_saved=None,
     ):
         self._config_fn = config_fn
         self._owner = instance_owner or InstanceOwner()
@@ -105,6 +106,7 @@ class LifecycleRuntime:
         cfg = config_fn() or {}
         self._config_server = ConfigServer(
             on_sp_saved=self._on_sp_saved,
+            on_mp_saved=on_mp_saved,
             port=cfg.get("config_port", 9528),
             capture_state=self._capture_state_bool,
             tunnel_states_fn=tunnel_states_fn,

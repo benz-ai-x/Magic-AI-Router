@@ -117,6 +117,7 @@ class MagicProxyApp(rumps.App):
             on_menu_dirty=lambda: setattr(self._menu_builder, "last_struct_key", None),
             initial_sys_proxy_on=self._config.get("system_proxy_default", False),
             tunnel_states_fn=lambda: self._conn.forward_sessions(),
+            on_mp_saved=self._on_mp_saved,
         )
         self._suanpan = self._lifecycle.suanpan
         self._capture_ctrl = self._lifecycle.capture_ctrl
@@ -307,6 +308,32 @@ class MagicProxyApp(rumps.App):
     def _notify(self, subtitle, message=""):
         rumps.notification("Magic AI Router", subtitle, message)
 
+    def _on_mp_saved(self):
+        """UI 保存 MP 段后的内存副本收敛（配置服务线程调用）。
+
+        旧缺口：PUT 只落盘 + reload 网关，app 内存副本直到下一次重连才
+        重读——防睡眠/抓包设置/代理角色在窗口期全按旧值行动。此处重读
+        替换引用后，tick 与各使用点自然收敛（与 reconnect 的 reload_cfg
+        同款跨线程纪律，#68）。
+        """
+        try:
+            cfg = load_config()
+        except IdentityMigrationError:
+            return  # prepare 已拦病态写入，此为防御；旧副本继续服务
+        if not cfg:
+            return
+        new_config = merge_config(cfg)
+        old_login = bool(self._config.get("launch_at_login", False))
+        new_login = bool(new_config.get("launch_at_login", False))
+        self._config = new_config
+        self._dirty()
+        # 登录启动是唯一的配置外副作用：UI 保存路径此前只写文件不注册
+        # LaunchAgent（只有菜单路径注册）——两条写径在此对齐
+        if old_login != new_login:
+            ok, err = login_item.set_launch_at_login(new_login)
+            if not ok:
+                logger.warning("UI 保存后同步登录启动失败：%s", err)
+
     # ── connection ───────────────────────────────────────
 
     def cancel_connection(self, _):
@@ -344,10 +371,22 @@ class MagicProxyApp(rumps.App):
 
     def make_switch_tunnel(self, idx):
         def switch(_):
-            if idx == self._config.get("current_tunnel", 0) and self._conn.ssh.status == "connected":
+            tunnels = self._config.get("tunnels", [])
+            tunnel = tunnels[idx] if 0 <= idx < len(tunnels) else None
+            if tunnel is None:
                 return
-            if not self._update_mp_config(
-                    lambda c: {**c, "current_tunnel": idx}):
+            if tunnel is self._conn.current_tunnel \
+                    and self._conn.ssh.status == "connected":
+                return
+            # 角色写双字段：id 是真相；下标投影供旧版本读兼容（磁盘侧
+            # tunnels 均已经 load 赋过 id）
+            tid = tunnel.get("id") or ""
+            def _switch_role(c):
+                ts = [t for t in c.get("tunnels", []) if isinstance(t, dict)]
+                i = next((k for k, t in enumerate(ts) if t.get("id") == tid),
+                         min(idx, max(0, len(ts) - 1)))
+                return {**c, "current_tunnel_id": tid, "current_tunnel": i}
+            if not self._update_mp_config(_switch_role):
                 return
             self.reconnect(None)
         return switch

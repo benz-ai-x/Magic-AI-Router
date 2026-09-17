@@ -7,12 +7,14 @@ from http.client import HTTPConnection
 from unittest.mock import MagicMock, patch
 
 from services import config_server
-def _start_server():
+def _start_server(on_sp_saved=None, on_mp_saved=None):
     """Start a config server on a random port, return (server, port)."""
     import threading
-    s = config_server.ConfigServer()
+    s = config_server.ConfigServer(on_sp_saved=on_sp_saved,
+                                   on_mp_saved=on_mp_saved)
     s._server = config_server._ThreadingHTTPServer(
-        ("127.0.0.1", 0), config_server._Handler, expected_token=s._token)
+        ("127.0.0.1", 0), config_server._Handler, expected_token=s._token,
+        on_sp_saved=on_sp_saved, on_mp_saved=on_mp_saved)
     port = s._server.server_address[1]
     s._thread = threading.Thread(target=s._server.serve_forever, daemon=True)
     s._thread.start()
@@ -1015,3 +1017,83 @@ class TestMultiActiveDecorations(unittest.TestCase):
             t = plan.mp_candidate["tunnels"][0]
             self.assertNotIn("is_proxy", t)
             self.assertNotIn("forward_running", t)
+
+
+class TestPutSectionCallbacks(unittest.TestCase):
+    """PUT 提交成功后按「事务涉及的段」触发回调：MP 段 → on_mp_saved
+    （app 刷新内存副本），SP 段 → on_sp_saved（网关 reload）。失败不触发。"""
+
+    def setUp(self):
+        self.mp_saved = MagicMock()
+        self.sp_saved = MagicMock()
+        self.server, self.port = _start_server(self.sp_saved, self.mp_saved)
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def _put(self, body_obj, commit_ok=True):
+        from mpconf.config_state import CommitPlan, SaveResult
+        plan = (CommitPlan(True, [], body_obj.get("mp"), body_obj.get("sp"))
+                if commit_ok else CommitPlan(False, ["bad"]))
+        result = (SaveResult(True, None, []) if commit_ok
+                  else SaveResult(False, "mp", ["bad"]))
+
+        def _commit(_plan, on_committed=None):
+            # 真实 commit 的语义替身：成功才触发 on_committed
+            if commit_ok and on_committed is not None:
+                on_committed()
+            return result
+
+        with patch("services.config_server.ConfigStateStore") as store_cls:
+            store_cls.return_value.prepare.return_value = plan
+            store_cls.return_value.commit.side_effect = _commit
+            return _request(self.port, "PUT", "/api/state",
+                            token=self.token, body=json.dumps(body_obj))
+
+    def test_mp_only_put_fires_on_mp_saved_only(self):
+        status, _ = self._put({"mp": {"tunnels": []}})
+        self.assertEqual(status, 200)
+        self.mp_saved.assert_called_once()
+        self.sp_saved.assert_not_called()
+
+    def test_sp_only_put_fires_on_sp_saved_only(self):
+        status, _ = self._put({"sp": {"providers": {}}})
+        self.assertEqual(status, 200)
+        self.sp_saved.assert_called_once()
+        self.mp_saved.assert_not_called()
+
+    def test_both_sections_fire_both_callbacks(self):
+        status, _ = self._put({"mp": {"tunnels": []}, "sp": {"providers": {}}})
+        self.assertEqual(status, 200)
+        self.mp_saved.assert_called_once()
+        self.sp_saved.assert_called_once()
+
+    def test_failed_commit_fires_nothing(self):
+        status, _ = self._put({"mp": {"tunnels": []}}, commit_ok=False)
+        self.assertEqual(status, 422)
+        self.mp_saved.assert_not_called()
+        self.sp_saved.assert_not_called()
+
+
+class TestProxyRoleDecorationById(unittest.TestCase):
+    """is_proxy 装饰按角色 id 真相解析（v0.9.2）：下标漂移不再误导 UI。"""
+
+    def test_is_proxy_resolves_by_id_over_index(self):
+        cfg = {"tunnels": [
+            {"id": "t-1", "ssh_host": "a", "forwards": []},
+            {"id": "t-2", "ssh_host": "b", "forwards": []}],
+            "current_tunnel": 0, "current_tunnel_id": "t-2"}
+        server = config_server.ConfigServer()
+        server._server = config_server._ThreadingHTTPServer(
+            ("127.0.0.1", 0), config_server._Handler,
+            expected_token=server._token)
+        port = server._server.server_address[1]
+        import threading
+        threading.Thread(target=server._server.serve_forever, daemon=True).start()
+        self.addCleanup(server.stop)
+        with patch.object(config_server, "_read_mp", return_value=cfg):
+            status, body = _request(port, "GET", "/api/state", token=server._token)
+        mp = json.loads(body)["mp"]
+        self.assertFalse(mp["tunnels"][0]["is_proxy"])
+        self.assertTrue(mp["tunnels"][1]["is_proxy"])
