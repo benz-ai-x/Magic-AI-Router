@@ -463,7 +463,7 @@ async def handle_client(client_reader, client_writer, socks_addr, stats):
 
 
 class SSHMonitor(SubprocessMonitor):
-    """Manages an SSH SOCKS5 tunnel subprocess."""
+    """Manages one SSH tunnel subprocess (proxy 模式 -D 或转发模式纯 -L)."""
 
     _PROCESS_NAME = "SSH"
     _STATUS_STARTING = "connecting"
@@ -472,6 +472,9 @@ class SSHMonitor(SubprocessMonitor):
     def __init__(self, *, line_sink=None):
         super().__init__(line_sink=line_sink)
         self._current_name = ""
+        # 就绪探测模式（start 时按 socks5_port 是否为 None 决定）：代理
+        # 会话探 SOCKS5 握手；转发会话探第一条 -L 本地端口的 TCP 监听
+        self._probe_socks5 = True
 
     @property
     def current_name(self) -> str:
@@ -486,12 +489,16 @@ class SSHMonitor(SubprocessMonitor):
         return (self._status == "error"
                 and ssh_launch.host_key_changed(self._error_msg))
 
-    def start(self, tunnel: dict, socks5_port: int, password: str = ""):
-        """Start the SSH tunnel subprocess for the given tunnel config."""
+    def start(self, tunnel: dict, socks5_port, password: str = ""):
+        """Start the SSH tunnel subprocess for the given tunnel config.
+
+        socks5_port=None → 转发模式（无 -D，纯 -L，见 build_tunnel_command）。
+        """
         self.stop()
 
         # argv 策略（host-key 三件套 / 认证注入 / keepalive）单一归宿在
         # ssh_launch；本类只持有子进程生命周期（SubprocessMonitor）。
+        self._probe_socks5 = socks5_port is not None
         sc = ssh_launch.build_tunnel_command(tunnel, socks5_port, password)
         self._current_name = tunnel.get("name", sc.destination)
 
@@ -502,11 +509,13 @@ class SSHMonitor(SubprocessMonitor):
             sc.close_password_fd()
 
     def _probe_ready(self, port):
-        """SOCKS5 handshake probe — sends method negotiation, expects success."""
+        """按会话模式探测：代理 SOCKS5 握手；转发纯 TCP 监听。"""
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             s.settimeout(PORT_PROBE_TIMEOUT)
             s.connect(("127.0.0.1", port))
+            if not self._probe_socks5:
+                return True
             s.sendall(b"\x05\x01\x00")
             if s.recv(2) != b"\x05\x00":
                 raise OSError("listener is not a SOCKS5 proxy")

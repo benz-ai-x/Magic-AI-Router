@@ -236,3 +236,54 @@ class TestDirtyStateMachine(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMultiActiveMessages(unittest.TestCase):
+    """多活（v0.9）：reconnectProxy 定向 tunnel_id + forwardSession 启停。"""
+
+    def test_reconnect_guarded_with_tunnel_id(self):
+        core = BridgeCore()
+        self.assertEqual(
+            core.handle_message(
+                {"type": "reconnectProxy",
+                 "payload": {"if_connected": True, "tunnel_id": "t-abc"}}),
+            [{"type": "reconnectProxy", "if_connected": True,
+              "tunnel_id": "t-abc"}])
+
+    def test_reconnect_explicit_with_tunnel_id(self):
+        core = BridgeCore()
+        self.assertEqual(
+            core.handle_message(
+                {"type": "reconnectProxy", "payload": {"tunnel_id": "t-abc"}}),
+            [{"type": "reconnectProxy", "if_connected": False,
+              "tunnel_id": "t-abc"}])
+
+    def test_reconnect_non_string_tunnel_id_dropped(self):
+        core = BridgeCore()
+        self.assertEqual(
+            core.handle_message(
+                {"type": "reconnectProxy", "payload": {"tunnel_id": 42}}),
+            [{"type": "reconnectProxy", "if_connected": False}])
+
+    def test_forward_session_valid_payload(self):
+        core = BridgeCore()
+        for action in ("start", "stop"):
+            with self.subTest(action=action):
+                self.assertEqual(
+                    core.handle_message(
+                        {"type": "forwardSession",
+                         "payload": {"tunnel_id": "t-abc", "action": action}}),
+                    [{"type": "forwardSession", "tunnel_id": "t-abc",
+                      "action": action}])
+
+    def test_forward_session_bad_payload_safe_noop(self):
+        core = BridgeCore()
+        for payload in ({"tunnel_id": "t-abc", "action": "nuke"},
+                        {"action": "start"},
+                        {"tunnel_id": "", "action": "start"},
+                        {"tunnel_id": 7, "action": "start"}):
+            with self.subTest(payload=payload):
+                with self.assertLogs("magic-proxy.bridge", level="WARNING"):
+                    self.assertEqual(
+                        core.handle_message(
+                            {"type": "forwardSession", "payload": payload}), [])

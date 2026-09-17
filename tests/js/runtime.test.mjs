@@ -260,3 +260,30 @@ test("collectTunnel reads forward rows into the active tunnel", () => {
     ]), "行序即数组序；空白地址 trim 后缺省 127.0.0.1，空端口为 0");
   assert.equal(rt.run("dirty"), true, "新增转发行必须点亮保存按钮");
 });
+
+test("collectTunnel reads the forward_autostart switch", () => {
+  const rt = makeRuntime();
+  rt.run(`
+    S=normalizeState({mp:{tunnels:[{name:'t1',ssh_user:'',ssh_host:'h',ssh_port:22,
+      auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[],forward_autostart:false}]}});
+    baselineState=cloneData(S);baselineRoles={};ccRoles={};
+    activeView='tunnel';activeTunnel=0;recomputeDirty();
+    const fields={name:{value:'t1'},addr:{value:'h'},ssh_port:{value:'22'},
+      auth:{value:'key'},key:{value:''},
+      fw_autostart:{getAttribute:()=> 'true'}};
+    window.__detail={querySelector:function(sel){
+      const m=sel.match(/data-tf="(\\w+)"/);
+      if(m&&m[1]==='compress')return{getAttribute:()=>'true'};
+      if(m&&m[1]==='fw_autostart')return fields.fw_autostart;
+      if(m&&fields[m[1].replace('fw_','')])return fields[m[1]];
+      return null;
+    },querySelectorAll:function(){return[];}};
+    document.querySelector=function(sel){
+      return sel.includes('detail-body')?window.__detail:null;
+    };
+  `);
+  rt.run("collectTunnel();recomputeDirty()");
+  assert.equal(rt.run("S.mp.tunnels[0].forward_autostart"), true,
+    "autostart 开关经 collect 读回");
+  assert.equal(rt.run("dirty"), true, "开关翻转点亮保存按钮");
+});

@@ -974,6 +974,8 @@ test("viewSnapshot projects tunnel forwards with collect-compatible defaults", (
   assert.deepEqual(L.viewSnapshot("tunnel", loaded).tunnels[0].forwards, [
     { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 },
   ]);
+  assert.equal(L.viewSnapshot("tunnel", loaded).tunnels[0].forward_autostart, false,
+    "forward_autostart 入快照（用户可编辑）；is_proxy/forward_running 不入");
   // 缺省口径：空端口=0、空地址=127.0.0.1——collect 填回后不产生假 dirty
   const bare = L.viewSnapshot("tunnel",
     L.normalizeState({ mp: { tunnels: [{ ssh_host: "h", forwards: [{}] }] } }));
@@ -1005,38 +1007,30 @@ test("forwardsChanged detects edits, additions and removals per tunnel id", () =
   assert.equal(L.forwardsChanged(base, removed), true);
 });
 
-test("forwardsChanged only fires for the CURRENT tunnel's forwards", () => {
+test("changedForwardTunnels returns per-tunnel diff ids (multi-active)", () => {
   const base = { mp: { current_tunnel: 0, tunnels: [
     { id: "t-1", name: "prod", forwards: [
       { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }] },
     { id: "t-2", forwards: [] }] } };
-  const mk = (t1fw, t2fw, cur = 0) => ({ mp: { current_tunnel: cur, tunnels: [
+  const mk = (t1fw, t2fw) => ({ mp: { current_tunnel: 0, tunnels: [
     { id: "t-1", name: "renamed", forwards: t1fw },
     { id: "t-2", forwards: t2fw }] } });
   const sameFw = [{ local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 }];
-  assert.equal(L.forwardsChanged(base, mk(sameFw, [])), false,
-    "当前隧道改名/其他字段变化不触发");
+  // 改名/其他字段不触发；逐隧道精确定位有变者（路由守卫在 saveFlow 分流）
+  assert.deepEqual(L.changedForwardTunnels(base, mk(sameFw, [])), [],
+    "其他字段变化不触发");
+  assert.deepEqual(L.changedForwardTunnels(base, mk(sameFw, [
+    { local_port: 9001, remote_host: "db", remote_port: 5432 }])), ["t-2"],
+    "非代理隧道的转发变更被精确定位（运行中的将由 saveFlow 定向守卫）");
+  assert.deepEqual(L.changedForwardTunnels(base, mk([
+    { local_port: 9000, remote_host: "10.0.0.5", remote_port: 8000 }], [])), ["t-1"],
+    "代理隧道 forwards 变更同样入列");
+  assert.deepEqual(L.changedForwardTunnels(base, mk(sameFw, [
+    { local_port: 9001, remote_host: "db", remote_port: 5432 }])), ["t-2"]);
+  // v0.8 兼容别名
+  assert.equal(L.forwardsChanged(base, mk(sameFw, [])), false);
   assert.equal(L.forwardsChanged(base, mk(sameFw, [
-    { local_port: 9001, remote_host: "db", remote_port: 5432 }])), false,
-    "改非当前隧道的转发不打断当前连接（单活——它没在跑）");
-  assert.equal(L.forwardsChanged(base, mk([
-    { local_port: 9000, remote_host: "10.0.0.5", remote_port: 8000 }], [])), true,
-    "当前隧道 forwards 变更才触发守卫重连");
-  assert.equal(L.forwardsChanged(base, mk(sameFw, [], 1)), false,
-    "切换当前隧道（身份变了）走既有手动重连流，不自动重启");
-  assert.equal(L.forwardsChanged(base, mk(sameFw, [
-    { local_port: 9001, remote_host: "db", remote_port: 5432 }], 1)), false,
-    "切换身份 + 改新隧道转发：仍是手动流（重启会连到另一台，超出自动应用语义）");
-});
-
-test("forwardsChanged ignores unsaved current tunnel without id", () => {
-  const base = { mp: { current_tunnel: 0, tunnels: [{ id: "t-1", forwards: [] }] } };
-  const withNew = { mp: { current_tunnel: 1, tunnels: [
-    { id: "t-1", forwards: [] },
-    { name: "new", forwards: [
-      { local_port: 9000, remote_host: "h", remote_port: 80 }] }] } };
-  assert.equal(L.forwardsChanged(base, withNew), false,
-    "未保存的新隧道成为当前：本身尚未连接，走手动流");
+    { local_port: 9001, remote_host: "db", remote_port: 5432 }])), true);
 });
 
 test("validateConfig rejects invalid forward rows", () => {
@@ -1054,18 +1048,26 @@ test("validateConfig rejects invalid forward rows", () => {
     .some(e => e.includes("远程地址")));
 });
 
-test("validateConfig rejects same-tunnel duplicate local ports but allows cross-tunnel", () => {
+test("validateConfig rejects duplicate local ports within AND across tunnels", () => {
   const dup = L.normalizeState({ mp: { tunnels: [
     { ssh_host: "h", ssh_port: 22, name: "t1", forwards: [
       { local_port: 9000, remote_host: "a", remote_port: 1 },
       { local_port: 9000, remote_host: "b", remote_port: 2 }] }] } });
   assert.ok(L.validateConfig(dup).some(e => e.includes("重复")));
+  // 多活（v0.9）：任意隧道可并行——跨隧道同本地端口会让两条 ssh 互顶
   const cross = L.normalizeState({ mp: { tunnels: [
     { ssh_host: "h1", ssh_port: 22, name: "t1", forwards: [
       { local_port: 9000, remote_host: "a", remote_port: 1 }] },
     { ssh_host: "h2", ssh_port: 22, name: "t2", forwards: [
       { local_port: 9000, remote_host: "b", remote_port: 2 }] }] } });
-  assert.deepEqual(L.validateConfig(cross), [], "跨隧道同端口合法（单活）");
+  assert.ok(L.validateConfig(cross).some(e => e.includes("端口冲突")),
+    "跨隧道同端口必须拦（v0.8 单活豁免随多活作废）");
+  const distinct = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "h1", ssh_port: 22, name: "t1", forwards: [
+      { local_port: 9000, remote_host: "a", remote_port: 1 }] },
+    { ssh_host: "h2", ssh_port: 22, name: "t2", forwards: [
+      { local_port: 9001, remote_host: "b", remote_port: 2 }] }] } });
+  assert.deepEqual(L.validateConfig(distinct), []);
 });
 
 test("validateConfig rejects forward local port conflicting with reserved ports", () => {

@@ -52,6 +52,90 @@ def _human(n, suffix="B"):
     return f"{n:.2f} T{suffix}"
 
 
+# ── SF Symbols 图标体系（macOS 11+；旧系统/未知符号静默降级纯文本）──
+# 符号全部取 SF 1/2（macOS 11 基线）；_apply_icon 任何失败都不抛。
+_ICON = {
+    # 分区父项
+    "proxy_menu": "bolt.fill",       # 代 理（-D 会话）
+    "forward_menu": "arrowshape.turn.up.right",  # 端口映射（-L 转发）
+    "router": "cpu", "capture": "eye", "system": "gearshape",
+    # 代理区
+    "connect": "play.fill", "cancel": "stop.fill", "pause": "pause.fill",
+    "refresh": "arrow.clockwise", "sysproxy": "globe",
+    "tunnel_row": "server.rack", "launch": "arrow.up.right.square",
+    # 端口映射区
+    "fw_start": "play.circle", "fw_stop": "stop.circle",
+    # AI 路由 / 抓包
+    "cycle": "arrow.triangle.2.circlepath",
+    "doc": "doc.on.doc", "clipboard": "doc.on.clipboard",
+    "folder": "folder", "jsonl": "doc.text",
+    # 系统区 / 页脚 / 状态区
+    "sleep": "moon.zzz", "login": "arrow.up.circle",
+    "prefs": "slider.horizontal.3", "search": "doc.text.magnifyingglass",
+    "about": "info.circle", "quit": "power",
+    "updown": "arrow.up.arrow.down", "circle": "circle.fill",
+}
+
+
+def _symbol_image(name, point_size=None, color=None):
+    """SF Symbol → NSImage；不可用（旧系统/符号缺失/异常）返回 None。"""
+    try:
+        from AppKit import NSImage, NSImageSymbolConfiguration
+        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            name, None)
+        if img is None:
+            return None
+        cfgs = []
+        if point_size is not None:
+            from AppKit import NSFontWeightRegular
+            cfgs.append(NSImageSymbolConfiguration
+                        .configurationWithPointSize_weight_(
+                            point_size, NSFontWeightRegular))
+        if color is not None:
+            cfgs.append(NSImageSymbolConfiguration
+                        .configurationWithTintColor_(color))
+        for i in range(1, len(cfgs)):
+            cfgs[i] = cfgs[i - 1].configByApplyingConfiguration_(cfgs[i])
+        if cfgs:
+            img = img.imageWithSymbolConfiguration_(cfgs[-1])
+        return img
+    except Exception:
+        return None
+
+
+def _apply_icon(item, key, point_size=None, color=None):
+    """给 rumps.MenuItem 挂 SF Symbol 图标（菜单重建随建随挂）。"""
+    if item is None:
+        return
+    img = _symbol_image(_ICON.get(key, key), point_size=point_size, color=color)
+    if img is not None:
+        try:
+            item._menuitem.setImage_(img)
+        except Exception:
+            pass  # 图标是增强，绝不阻断菜单构建
+
+
+def _status_color(kind):
+    """状态点着色（动态系统色，明暗模式自适应）。"""
+    try:
+        from AppKit import NSColor
+        return {"ok": NSColor.systemGreenColor(),
+                "warn": NSColor.systemYellowColor(),
+                "err": NSColor.systemRedColor(),
+                "idle": NSColor.systemGrayColor()}[kind]
+    except Exception:
+        return None
+
+
+def _line_status_kind(status, paused=False):
+    """状态行圆点的着色档：connected=ok / connecting·paused=warn /
+    error=err / 其余=idle。"""
+    if paused:
+        return "warn"
+    return {"connected": "ok", "connecting": "warn",
+            "error": "err"}.get(status, "idle")
+
+
 # ── interface types ──────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -75,9 +159,16 @@ class MenuState:
     current_tunnel: dict | None
     prevent_sleep_title: str
     launch_login_title: str
+    # 多活（v0.9）：转发会话快照 [(tunnel_id, name, status)]——隧道子菜单
+    # 与状态行的转发计数消费；默认 () 保持既有测试构造兼容
+    forward_states: tuple = ()
 
 
 # ── builder ──────────────────────────────────────────────────────
+
+# 转发会话行尾状态（随各自 monitor）
+_FW_TAIL = {"connected": " — 转发中", "connecting": " — 转发启动中",
+            "error": " — 转发异常"}
 
 class MenuBuilder:
     """Builds and refreshes the menu bar UI from a state snapshot.
@@ -115,6 +206,7 @@ class MenuBuilder:
             st.capture_error_hint,
             st.suanpan_running,
             st.suanpan_error[:50] if st.suanpan_error else "",
+            tuple(st.forward_states),  # 转发会话状态变化 → 重建子菜单
         )
 
     # ── full build ────────────────────────────────────────
@@ -126,9 +218,11 @@ class MenuBuilder:
 
         self._build_header()
         app.menu.add(None)
-        app.menu.add(self._build_tunnel_submenu())
+        app.menu.add(self._build_proxy_submenu())
+        app.menu.add(self._build_forward_submenu())
         app.menu.add(self._build_suanpan_submenu())
         app.menu.add(self._build_capture_submenu())
+        app.menu.add(self._build_system_submenu())
         app.menu.add(None)
         self._build_footer()
         self.refresh_titles()
@@ -139,12 +233,19 @@ class MenuBuilder:
         s = st.ssh_status
         refs = self.refs
 
-        # Proxy status line
+        # Proxy status line —— 着色圆点承载状态色（状态字段在 struct_key
+        # 内，变化即重建换色；emoji 已退役）
         refs["proxy_status"] = rumps.MenuItem("__proxy_status__", callback=None)
+        _apply_icon(refs["proxy_status"], "circle", point_size=10,
+                    color=_status_color(_line_status_kind(s, st.paused)))
         app.menu.add(refs["proxy_status"])
 
         # Router status line
         refs["router_status"] = rumps.MenuItem("__router_status__", callback=None)
+        _apply_icon(refs["router_status"], "circle", point_size=10,
+                    color=_status_color(
+                        "ok" if st.suanpan_running
+                        else ("err" if st.suanpan_error else "idle")))
         app.menu.add(refs["router_status"])
 
         # Connecting log lines
@@ -161,25 +262,38 @@ class MenuBuilder:
         # Traffic line (connected only)
         if s == "connected" and not st.paused:
             refs["traffic"] = rumps.MenuItem("__traffic__", callback=None)
+            _apply_icon(refs["traffic"], "updown", point_size=10,
+                        color=_status_color("idle"))
             app.menu.add(refs["traffic"])
 
-    def _build_tunnel_submenu(self):
+    def _build_proxy_submenu(self):
+        """代 理 ▸ —— 只管那条唯一的 -D 会话（SOCKS5 上游）：启停/暂停/
+        重连、系统代理、代理角色单选、经代理启动。"""
         st = self._get_state()
         a = self._app
-        parent = rumps.MenuItem("代理隧道", callback=None)
+        parent = rumps.MenuItem("代 理", callback=None)
+        _apply_icon(parent, "proxy_menu")
 
         # Connect control
         s = st.ssh_status
         if s == "connecting":
-            parent.add(rumps.MenuItem("取消连接", callback=a.cancel_connection, key="r"))
+            item = rumps.MenuItem("取消连接", callback=a.cancel_connection, key="r")
+            _apply_icon(item, "cancel")
+            parent.add(item)
         else:
             if st.paused:
-                parent.add(rumps.MenuItem("恢复代理", callback=a.toggle_pause, key="p"))
+                item = rumps.MenuItem("恢复代理", callback=a.toggle_pause, key="p")
+                _apply_icon(item, "connect")
+                parent.add(item)
             elif s == "connected":
-                parent.add(rumps.MenuItem("暂停代理", callback=a.toggle_pause, key="p"))
-            parent.add(rumps.MenuItem(
+                item = rumps.MenuItem("暂停代理", callback=a.toggle_pause, key="p")
+                _apply_icon(item, "pause")
+                parent.add(item)
+            item = rumps.MenuItem(
                 "重新连接" if s in ("connected", "error") else "连接代理",
-                callback=a.reconnect, key="r"))
+                callback=a.reconnect, key="r")
+            _apply_icon(item, "refresh")
+            parent.add(item)
 
         # System proxy toggle
         parent.add(None)
@@ -189,70 +303,185 @@ class MenuBuilder:
             sysp_title = "系统代理：开"
         else:
             sysp_title = "系统代理：关"
-        parent.add(rumps.MenuItem(sysp_title, callback=a.toggle_system_proxy, key="g"))
+        item = rumps.MenuItem(sysp_title, callback=a.toggle_system_proxy, key="g")
+        _apply_icon(item, "sysproxy")
+        parent.add(item)
 
-        # Tunnel selection
+        # 代理角色单选（哪条隧道当 SOCKS5 上游）
         tunnels = st.config.get("tunnels", [])
         if tunnels:
             parent.add(None)
+            parent.add(rumps.MenuItem("代理隧道（SOCKS5 上游）", callback=None))
             current_idx = st.config.get("current_tunnel", 0)
             for i, t in enumerate(tunnels):
-                marker = "✓   " if i == current_idx else "    "
+                marker = "✓ " if i == current_idx else ""
                 name = t.get("name") or f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}"
-                parent.add(rumps.MenuItem(f"{marker}{name}", callback=a.make_switch_tunnel(i)))
+                item = rumps.MenuItem(f"{marker}{name}",
+                                      callback=a.make_switch_tunnel(i))
+                _apply_icon(item, "tunnel_row")
+                parent.add(item)
 
         # Proxied app launches
         apps_list = chromium_proxy.installed_apps()
         if apps_list:
             parent.add(None)
+            sub = rumps.MenuItem("经代理启动 App", callback=None)
+            _apply_icon(sub, "launch")
             for entry in apps_list:
-                parent.add(rumps.MenuItem(
-                    f"经代理启动 {entry['name']}", callback=a.make_launch_proxied(entry)))
+                item = rumps.MenuItem(
+                    entry["name"], callback=a.make_launch_proxied(entry))
+                _apply_icon(item, "launch")
+                sub.add(item)
+            parent.add(sub)
 
+        return parent
+
+    def _build_forward_submenu(self):
+        """端口映射 ▸ —— 只管纯 -L 转发会话（多活）：代理隧道自身显示
+        「随代理运行」信息行；其余隧道各自启停/单会话重连。"""
+        st = self._get_state()
+        a = self._app
+        parent = rumps.MenuItem("端口映射", callback=None)
+        _apply_icon(parent, "forward_menu")
+
+        tunnels = st.config.get("tunnels", [])
+        current_idx = st.config.get("current_tunnel", 0)
+        fw_running = {tid: status for tid, _n, status in (st.forward_states or ())}
+        any_rules = False
+        for i, t in enumerate(tunnels):
+            tid = t.get("id") or f"#{i}"
+            name = t.get("name") or f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}"
+            forwards = t.get("forwards") or []
+            any_rules = any_rules or bool(forwards)
+            if i == current_idx:
+                # 代理隧道自身：其 -L 随代理会话跑，此处仅呈现状态
+                on = st.ssh_status == "connected"
+                row = rumps.MenuItem(
+                    f"{name} — {'随代理运行' if on else '未随代理运行'}",
+                    callback=None)
+                _apply_icon(row, "circle", point_size=9,
+                            color=_status_color("ok" if on else "idle"))
+                parent.add(row)
+                parent.add(None)
+                continue
+            if tid in fw_running:
+                tail = _FW_TAIL.get(fw_running[tid], " — 转发重试中")
+            else:
+                tail = " — 未启动"
+            summary = " · ".join(
+                f"{f.get('local_port')}→{f.get('remote_port')}"
+                for f in forwards if isinstance(f, dict)) if forwards else ""
+            title = f"{name}{tail}" + (f" · {summary}" if summary else "")
+            row = rumps.MenuItem(title, callback=None)
+            _apply_icon(row, "tunnel_row")
+            if tid in fw_running:
+                item = rumps.MenuItem("停止端口转发",
+                                      callback=a.toggle_forward_session(tid))
+                _apply_icon(item, "fw_stop")
+                row.add(item)
+                item = rumps.MenuItem("重新连接",
+                                      callback=a.make_reconnect_tunnel(tid))
+                _apply_icon(item, "refresh")
+                row.add(item)
+            elif forwards:
+                item = rumps.MenuItem("启动端口转发",
+                                      callback=a.toggle_forward_session(tid))
+                _apply_icon(item, "fw_start")
+                row.add(item)
+            else:
+                row.add(rumps.MenuItem("启动端口转发（需先配置转发规则）",
+                                       callback=None))
+            parent.add(row)
+
+        if tunnels and not any_rules:
+            parent.add(None)
+            parent.add(rumps.MenuItem("在偏好设置 → 隧道里添加转发规则",
+                                      callback=None))
         return parent
 
     def _build_capture_submenu(self):
         a = self._app
         st = self._get_state()
-        parent = rumps.MenuItem("抓包", callback=None)
-        parent.add(rumps.MenuItem(
-            st.capture_menu_title, callback=a.toggle_capture, key="m"))
+        parent = rumps.MenuItem("抓 包", callback=None)
+        _apply_icon(parent, "capture")
+        item = rumps.MenuItem(st.capture_menu_title, callback=a.toggle_capture, key="m")
+        _apply_icon(item, "capture")
+        parent.add(item)
         if st.capture_error_hint:
             parent.add(rumps.MenuItem(st.capture_error_hint, callback=None))
         parent.add(None)
-        parent.add(rumps.MenuItem("打开抓包目录", callback=a.open_capture_dir))
-        parent.add(rumps.MenuItem("今日 JSONL", callback=a.open_today_jsonl))
+        item = rumps.MenuItem("打开抓包目录", callback=a.open_capture_dir)
+        _apply_icon(item, "folder")
+        parent.add(item)
+        item = rumps.MenuItem("今日 JSONL", callback=a.open_today_jsonl)
+        _apply_icon(item, "jsonl")
+        parent.add(item)
         return parent
 
     def _build_suanpan_submenu(self):
         a = self._app
         st = self._get_state()
         parent = rumps.MenuItem("AI 路由", callback=None)
-        parent.add(rumps.MenuItem(
+        _apply_icon(parent, "router")
+        item = rumps.MenuItem(
             "停止路由" if st.suanpan_running else "启动路由",
-            callback=a.toggle_suanpan))
+            callback=a.toggle_suanpan)
+        _apply_icon(item, "cancel" if st.suanpan_running else "connect")
+        parent.add(item)
         if st.suanpan_running:
-            parent.add(rumps.MenuItem("重启路由", callback=a.restart_suanpan))
-            parent.add(rumps.MenuItem("重新加载配置", callback=a.reload_suanpan))
+            item = rumps.MenuItem("重启路由", callback=a.restart_suanpan)
+            _apply_icon(item, "cycle")
+            parent.add(item)
+            item = rumps.MenuItem("重新加载配置", callback=a.reload_suanpan)
+            _apply_icon(item, "refresh")
+            parent.add(item)
         parent.add(None)
-        parent.add(rumps.MenuItem("复制连接地址", callback=a.copy_suanpan_url))
-        parent.add(rumps.MenuItem("复制配置样例", callback=a.copy_suanpan_example))
+        item = rumps.MenuItem("复制连接地址", callback=a.copy_suanpan_url)
+        _apply_icon(item, "doc")
+        parent.add(item)
+        item = rumps.MenuItem("复制配置样例", callback=a.copy_suanpan_example)
+        _apply_icon(item, "clipboard")
+        parent.add(item)
+        return parent
+
+    def _build_system_submenu(self):
+        """系 统 ▸ —— 防睡眠 / 登录启动从页脚收进来（v0.9.1 重组）。"""
+        a = self._app
+        st = self._get_state()
+        parent = rumps.MenuItem("系 统", callback=None)
+        _apply_icon(parent, "system")
+        item = rumps.MenuItem(
+            st.prevent_sleep_title, callback=a.toggle_prevent_sleep, key="n")
+        _apply_icon(item, "sleep")
+        self.refs["prevent_sleep"] = item
+        parent.add(item)
+        item = rumps.MenuItem(
+            st.launch_login_title, callback=a.toggle_launch_at_login, key="k")
+        _apply_icon(item, "login")
+        self.refs["launch_login"] = item
+        parent.add(item)
         return parent
 
     def _build_footer(self):
         app = self._app
         a = self._app
-        st = self._get_state()
-        app.menu.add(rumps.MenuItem("偏好设置…", callback=a.show_preferences, key=","))
-        app.menu.add(rumps.MenuItem("查看日志", callback=a.show_log_window, key="l"))
+        item = rumps.MenuItem("偏好设置…", callback=a.show_preferences, key=",")
+        _apply_icon(item, "prefs")
+        app.menu.add(item)
+        item = rumps.MenuItem("查看日志", callback=a.show_log_window, key="l")
+        _apply_icon(item, "search")
+        app.menu.add(item)
+        item = rumps.MenuItem("复制 AI 助手指令",
+                              callback=a.copy_agent_instructions)
+        _apply_icon(item, "clipboard")
+        app.menu.add(item)
         app.menu.add(None)
-        app.menu.add(rumps.MenuItem(
-            st.prevent_sleep_title, callback=a.toggle_prevent_sleep, key="n"))
-        app.menu.add(rumps.MenuItem(
-            st.launch_login_title, callback=a.toggle_launch_at_login, key="k"))
-        app.menu.add(None)
-        app.menu.add(rumps.MenuItem("关于 Magic AI Router", callback=a.about))
-        app.menu.add(rumps.MenuItem("退出", callback=a.quit_app, key="q"))
+        item = rumps.MenuItem("关于 Magic AI Router", callback=a.about)
+        _apply_icon(item, "about")
+        app.menu.add(item)
+        item = rumps.MenuItem("退出", callback=a.quit_app, key="q")
+        _apply_icon(item, "quit")
+        app.menu.add(item)
 
     # ── dynamic title refresh ─────────────────────────────
 
@@ -264,37 +493,47 @@ class MenuBuilder:
         tunnel_name = tunnel_name or (
             f"{tunnel.get('ssh_user', '')}@{tunnel.get('ssh_host', '')}" if tunnel else "未配置")
 
-        # Proxy status line
+        # Proxy status line —— 颜色由行首圆点图标承载（emoji 已退役）
         if st.paused:
-            proxy_text = f"🟡  AI Proxy · {tunnel_name} · 已暂停"
+            proxy_text = f"AI Proxy · {tunnel_name} · 已暂停"
         elif s == "connected":
-            proxy_text = f"🟢  AI Proxy · {tunnel_name}"
+            proxy_text = f"AI Proxy · {tunnel_name}"
         elif s == "connecting":
-            proxy_text = f"🟡  AI Proxy · {tunnel_name} · 连接中…"
+            proxy_text = f"AI Proxy · {tunnel_name} · 连接中…"
         elif s == "error":
-            proxy_text = f"🔴  AI Proxy · {tunnel_name} · 连接失败"
+            proxy_text = f"AI Proxy · {tunnel_name} · 连接失败"
         else:
-            proxy_text = "⚫  AI Proxy"
+            proxy_text = "AI Proxy"
+        # 多活：转发会话在跑时状态行附转发计数（主图标语义不变——只反映
+        # 代理会话，:8888 上游只依赖它）
+        fw_up = sum(1 for _tid, _n, status in (st.forward_states or ())
+                    if status == "connected")
+        if fw_up:
+            proxy_text += f" ｜ {fw_up} 条转发"
         self._set_title("proxy_status", proxy_text)
 
         # Router status line
         if st.suanpan_running:
-            router_text = f"🟢  AI Router · {st.suanpan_listen_address}"
+            router_text = f"AI Router · {st.suanpan_listen_address}"
         elif st.suanpan_error:
-            router_text = f"🔴  AI Router · {st.suanpan_error[:40]}"
+            router_text = f"AI Router · {st.suanpan_error[:40]}"
         else:
-            router_text = "⚫  AI Router"
+            router_text = "AI Router"
         self._set_title("router_status", router_text)
 
-        # Traffic line
+        # Traffic line —— 方向箭头由行首图标承载
         if "traffic" in self.refs:
             snap = st.stats_snapshot
             traffic_text = (
-                f"▼ {_human(snap['rate_down'], 'B/s')}"
-                f"  ·  ▲ {_human(snap['rate_up'], 'B/s')}"
+                f"{_human(snap['rate_down'], 'B/s')}"
+                f"  ·  {_human(snap['rate_up'], 'B/s')}"
                 f"  ·  {snap['active_connections']} 连接"
             )
             self._set_title("traffic", traffic_text)
+
+        # 系统区开关文案（refs 化，不依赖整菜单重建）
+        self._set_title("prevent_sleep", st.prevent_sleep_title)
+        self._set_title("launch_login", st.launch_login_title)
 
     def _set_title(self, key, text):
         item = self.refs.get(key)

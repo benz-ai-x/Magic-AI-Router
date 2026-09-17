@@ -84,6 +84,7 @@ class LifecycleRuntime:
         on_menu_dirty,
         initial_sys_proxy_on=False,
         instance_owner=None,
+        tunnel_states_fn=None,
     ):
         self._config_fn = config_fn
         self._owner = instance_owner or InstanceOwner()
@@ -106,6 +107,7 @@ class LifecycleRuntime:
             on_sp_saved=self._on_sp_saved,
             port=cfg.get("config_port", 9528),
             capture_state=self._capture_state_bool,
+            tunnel_states_fn=tunnel_states_fn,
         )
 
     # ── 直属子模块的合法暴露面（app.py 菜单/桥接需要直接引用）──────

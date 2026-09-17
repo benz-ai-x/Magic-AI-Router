@@ -9,9 +9,14 @@ webview_window.py is only a thin ObjC adapter over BridgeCore.
 Protocol v1 (single "bridge" script-message channel, {type, payload} JSON):
   JS → PY  {type:"dirtyState",     payload:{dirty: bool}}
            {type:"pickKeyFile",    payload:{field: "sshKey"}}
-           {type:"reconnectProxy", payload:{}}            — 无条件重连（用户显式点击）
+           {type:"reconnectProxy", payload:{}}            — 无条件重连代理（用户显式点击）
            {type:"reconnectProxy", payload:{if_connected: true}} — 守卫重连：仅当
              隧道当前已连接才执行（保存端口转发后的自动应用；未连接绝不拉起）
+           {type:"reconnectProxy", payload:{if_connected: true, tunnel_id: id}}
+             — 定向守卫重连：tunnel_id 指定转发会话时按该会话自身的
+             连接态守卫（多活；不填 tunnel_id = 代理会话）
+           {type:"forwardSession", payload:{tunnel_id: id, action: "start"|"stop"}}
+             — 转发会话启停（设置窗 detail-bar 按钮；多活 v0.9）
            {type:"openPath",       payload:{kind: "captureDir"}}
   PY → JS  {type:"keyFilePicked", payload:{field, path}}
            delivered via window.__native.receive(<json>)
@@ -38,6 +43,10 @@ ACTION_SHOW_OPEN_PANEL = "showOpenPanel"
 ACTION_RECONNECT_PROXY = "reconnectProxy"
 ACTION_OPEN_PATH = "openPath"
 ACTION_COPY_AGENT_INSTRUCTIONS = "copyAgentInstructions"
+ACTION_FORWARD_SESSION = "forwardSession"
+
+# forwardSession 的合法动作闭集（action 字段）
+FORWARD_SESSION_ACTIONS = frozenset({"start", "stop"})
 
 
 def _plain(obj):
@@ -101,8 +110,23 @@ class BridgeCore:
             # owns threading and the actual connection orchestration.
             # if_connected: 守卫变体——保存端口转发后的自动应用，未连接
             # 的隧道绝不因此被拉起（显式点击路径不带此旗标）。
-            return [{"type": ACTION_RECONNECT_PROXY,
-                     "if_connected": bool(payload.get("if_connected"))}]
+            # tunnel_id: 定向到该转发会话（多活）；缺省 = 代理会话。
+            action = {"type": ACTION_RECONNECT_PROXY,
+                      "if_connected": bool(payload.get("if_connected"))}
+            tid = payload.get("tunnel_id")
+            if isinstance(tid, str) and tid:
+                action["tunnel_id"] = tid
+            return [action]
+        if mtype == "forwardSession":
+            # 多活：设置窗「启动/停止端口转发」——转发会话启停经原生侧
+            # （会话编排归 coordinator，JS 无运行时状态）
+            tid = payload.get("tunnel_id")
+            act = payload.get("action")
+            if isinstance(tid, str) and tid and act in FORWARD_SESSION_ACTIONS:
+                return [{"type": ACTION_FORWARD_SESSION,
+                         "tunnel_id": tid, "action": act}]
+            logger.warning("forwardSession bad payload: %r", payload)
+            return []
         if mtype == "openPath":
             kind = payload.get("kind")
             if kind in OPENABLE_KINDS:

@@ -199,6 +199,8 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .fw-status.ok{color:var(--ok)}
 .fw-status.err{color:var(--danger)}
 .fw-empty td{padding:16px 12px;color:var(--muted);font-size:13px;text-align:center}
+/* multi-active tunnel badges */
+.fw-badge{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;line-height:1.5;background:color-mix(in oklch,var(--accent),transparent 88%);color:var(--accent)}
 /* statusbar */
 .statusbar{grid-area:status;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-top:1px solid var(--border);color:var(--muted);font-size:12px}
 .statusbar #status-left.dirty{color:var(--accent);font-weight:550}
@@ -378,8 +380,11 @@ function viewSnapshot(view,state,roles){
       ssh_port:numberDefault(t.ssh_port,22),auth_type:t.auth_type||'key',
       ssh_key:t.ssh_key||'',ssh_compression:t.ssh_compression!==false,
       password:t.password||(t.has_password?'__saved_password__':''),
+      forward_autostart:t.forward_autostart===true,
       // collect 的缺省口径：空端口=0、空地址=127.0.0.1（与服务端 merge
-      // 归一同一语义），未触碰行不产生假 dirty
+      // 归一同一语义），未触碰行不产生假 dirty。
+      // is_proxy/forward_running 是服务端运行态装饰（不入快照——非用户
+      // 可编辑面，prepare 的 READONLY_DECORATED_FIELDS 剥除）
       forwards:(t.forwards||[]).map(f=>({
         local_port:numberDefault(f.local_port,0),
         remote_host:f.remote_host||'127.0.0.1',
@@ -472,14 +477,17 @@ function validateConfig(S){
     if(seen[p])errors.push(`端口冲突：${seen[p]} 与 ${label} 同为 ${p}`);
     else seen[p]=label;
   });
-  // 转发本地端口对保留端口冲突；跨隧道同端口合法（同一时间只有一条
-  // 隧道活跃）——转发不写入 seen，镜像 prepare 同一判定
+  // 转发本地端口全局唯一（多活 v0.9：任意隧道可并行，抢同端口会让两条
+  // ssh 在 ExitOnForwardFailure 下互顶）；镜像 prepare 同一判定
   (S.mp.tunnels||[]).forEach(t=>{
     const tn=t.name||t.ssh_host||'隧道';
     (t.forwards||[]).forEach(f=>{
       const lp=f.local_port;
-      if(lp&&seen[lp])
-        errors.push(`端口冲突：${seen[lp]} 与 ${tn} 端口转发本地端口 同为 ${lp}`);
+      const ref=`${tn} 端口转发本地端口`;
+      if(lp){
+        if(seen[lp])errors.push(`端口冲突：${seen[lp]} 与 ${ref} 同为 ${lp}`);
+        else seen[lp]=ref;
+      }
     });
   });
   Object.entries(S.sp.providers||{}).forEach(([k,p])=>{
@@ -734,15 +742,21 @@ function dirtyProjection(base,S,baseRoles,roles){
   return{views,counts,total:[...counts.values()].reduce((s,n)=>s+n,0)};
 }
 function forwardsChanged(base,S){
-  // 守卫重连的精确判定：保存前后「同一身份的当前隧道」forwards 有变
-  // 才值得重启。单活语义下其他隧道根本没在跑——改它们的转发不打断
-  // 当前连接；切换当前隧道（身份变了，重启会连到另一台）与未保存的
-  // 新隧道一律走既有手动重连流，不在此自动重启。
-  const cur=st=>((st&&st.mp&&st.mp.tunnels)||[])[numberDefault(st&&st.mp&&st.mp.current_tunnel,0)]||null;
+  // 兼容别名（v0.8 语义消费者）：当前代理隧道的 forwards 是否有变。
+  return changedForwardTunnels(base,S).length>0;
+}
+function changedForwardTunnels(base,S){
+  // 多活（v0.9）：返回 forwards 有变的隧道 id 数组——saveFlow 对「正在
+  // 运行的」逐隧道触发守卫重连（代理隧道走代理守卫；转发会话按各自
+  // 连接态定向守卫），未运行的不拉起。
   const sig=t=>((t&&t.forwards)||[]).map(f=>`${f.local_port}|${f.remote_host}|${f.remote_port}`).join(';');
-  const a=cur(base),b=cur(S);
-  if(!a||!b||!a.id||!b.id||a.id!==b.id)return false;
-  return sig(a)!==sig(b);
+  const byId=st=>{const m={};((st&&st.mp&&st.mp.tunnels)||[]).forEach(t=>{if(t&&t.id)m[t.id]=t;});return m;};
+  const a=byId(base),b=byId(S);
+  const out=[];
+  for(const id of new Set([...Object.keys(a),...Object.keys(b)])){
+    if(sig(a[id])!==sig(b[id]))out.push(id);
+  }
+  return out;
 }
 async function saveFlow(snap,deps,forceRulesSync){
   const{S,ccRoles,baselineState,baselineRoles}=snap;
@@ -758,7 +772,7 @@ async function saveFlow(snap,deps,forceRulesSync){
   }
   const mpChanged=proj.views.has('tunnel')||proj.views.has('proxy');
   const spChanged=proj.views.has('providers')||proj.views.has('rules');
-  const fwChanged=forwardsChanged(baselineState,S);
+  const fwChangedIds=changedForwardTunnels(baselineState,S);
   let configSaved=false,syncMessage='';
   deps.setSaving(true,syncRules?(dirty?'保存并同步中…':'同步中…'):'保存中…');
   try{
@@ -796,10 +810,21 @@ async function saveFlow(snap,deps,forceRulesSync){
       if(mpChanged&&spChanged)msg+=' — 代理需重新连接（隧道页「重新连接」或菜单栏），AI 路由已自动重载';
       else if(mpChanged)msg+=' — 点击隧道页「重新连接」或菜单栏生效';
       else if(spChanged)msg+=' — AI 路由已自动重载';
-      if(fwChanged){
-        // 守卫重连（保存后自动应用端口转发）：原生侧只在隧道已连接时
-        // 执行重启，未连接的隧道绝不因此被拉起
-        if(deps.reconnectForwards)deps.reconnectForwards();
+      if(fwChangedIds.length&&deps.reconnectForwards){
+        // 多活守卫重连：代理隧道保持 v0.8 语义（保存前后同身份的当前
+        // 隧道才触发）；运行中的转发会话按 tunnel_id 定向守卫——原生侧
+        // 按各自连接态拦，未连接/未运行的绝不拉起
+        const curOf=st=>(((st&&st.mp&&st.mp.tunnels)||[])[numberDefault(st&&st.mp&&st.mp.current_tunnel,0)])||null;
+        const baseCur=curOf(baselineState),saveCur=curOf(S);
+        const sameProxy=!!(baseCur&&saveCur&&baseCur.id&&baseCur.id===saveCur.id);
+        const proxyId=saveCur&&saveCur.id;
+        fwChangedIds.forEach(id=>{
+          if(id===proxyId){
+            if(sameProxy)deps.reconnectForwards(null);
+          }else if(((S.mp.tunnels||[]).find(t=>t&&t.id===id)||{}).forward_running){
+            deps.reconnectForwards(id);
+          }
+        });
         msg+='；端口转发变更已触发自动重连';
       }
       if(syncMessage)msg+='；'+syncMessage;
@@ -1066,8 +1091,9 @@ async function saveAll(forceRulesSync){
       stampSaved:at=>{lastSavedAt=at;},
       setSaving:setSavingState,
       // 端口转发保存后的守卫重连（if_connected：原生侧仅在隧道已连接时
-      // 执行——浏览器直开无桥接时 no-op）
-      reconnectForwards:()=>nativeSend('reconnectProxy',{if_connected:true}),
+      // 执行——浏览器直开无桥接时 no-op；tunnelId 定向转发会话，null=代理）
+      reconnectForwards:(tunnelId)=>nativeSend('reconnectProxy',
+        {if_connected:true,...(tunnelId?{tunnel_id:tunnelId}:{})}),
       now:()=>new Date().toLocaleTimeString('zh-CN'),
     },
     forceRulesSync);
@@ -1116,14 +1142,15 @@ function tunnelHTML(){
     <div class="panel"><div class="md-layout">
       <div class="md-master">
         <div class="section-bar"><h2 class="section-title">隧道</h2><span class="count">${ts.length} 个隧道</span></div>
-        <div class="md-list">${ts.map((tn,i)=>`<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectTunnel(${i})"><span class="dot ${i===(S.mp.current_tunnel||0)?'':'off'}" title="${i===(S.mp.current_tunnel||0)?'当前使用的隧道':'非当前隧道'}"></span><span><strong>${esc(tn.name||tn.ssh_host||'Server '+(i+1))}</strong><span class="sub">${tn.ssh_host?esc((tn.ssh_user?tn.ssh_user+'@':'')+tn.ssh_host+(tn.ssh_port&&tn.ssh_port!==22?':'+tn.ssh_port:'')):'（需填写地址）'}</span></span></button>`).join('')}</div>
+        <div class="md-list">${ts.map((tn,i)=>`<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectTunnel(${i})"><span class="dot ${i===(S.mp.current_tunnel||0)?'':'off'}" title="${i===(S.mp.current_tunnel||0)?'代理隧道（SOCKS5 上游）':'非代理隧道（可启动端口转发）'}"></span><span><strong>${esc(tn.name||tn.ssh_host||'Server '+(i+1))}</strong>${tn.forward_running?'<span class="fw-badge">转发中</span>':''}<span class="sub">${tn.ssh_host?esc((tn.ssh_user?tn.ssh_user+'@':'')+tn.ssh_host+(tn.ssh_port&&tn.ssh_port!==22?':'+tn.ssh_port:'')):'（需填写地址）'}</span></span></button>`).join('')}</div>
         <div class="md-master-footer"><button class="btn" onclick="addTunnel()">+ 添加隧道</button></div>
       </div>
       <div class="md-detail">
         <div class="detail-bar"><h2>${esc(t.name||'Server '+(activeTunnel+1))}</h2>
           <div class="section-actions">
+            ${t.is_proxy?'':`<button class="btn btn-sm" aria-label="${t.forward_running?'停止':'启动'}端口转发 ${esc(tname)}" onclick="toggleForwardSession(this,'${esc(t.id||'')}','${t.forward_running?'stop':'start'}')">${t.forward_running?'停止转发':'启动转发'}</button>`}
             <button class="btn btn-sm" aria-label="测试连接 ${esc(tname)}" onclick="testTunnel(this)">测试连接</button>
-            <button class="btn btn-sm" aria-label="重新连接 ${esc(tname)}" onclick="reconnectProxy(this)">重新连接</button>
+            <button class="btn btn-sm" aria-label="重新连接 ${esc(tname)}" onclick="reconnectProxy(this,'${esc(t.id||'')}')">重新连接</button>
             <button class="btn btn-sm btn-danger" aria-label="删除隧道 ${esc(tname)}" onclick="cdel(this,function(){removeTunnel(${activeTunnel})})">删除</button>
           </div></div>
         <div class="detail-body">
@@ -1147,7 +1174,10 @@ function tunnelHTML(){
           </div>
           <div class="form-section"><div class="fw-head"><h3>端口转发</h3>
             <button class="btn btn-sm" onclick="addForward()">+ 添加转发</button></div>
-            <p class="fw-hint">把远程服务器的端口映射到本机 127.0.0.1（ssh -L）；保存后自动重连生效。行内「测试」对当前填写的值做一次 SSH 探测（无需先保存）。</p>
+            <p class="fw-hint">把远程服务器的端口映射到本机 127.0.0.1（ssh -L）；保存后自动重连生效。行内「测试」对当前填写的值做一次 SSH 探测（无需先保存）。多隧道可并行——非代理隧道用上方「启动转发」独立运行。</p>
+            <div class="toggle-row" style="border:0;padding:0 0 12px"><label>随应用启动转发</label>
+              <div class="switch-line"><span class="switch-label">${t.forward_autostart===true?'已启用':'已停用'}</span>
+              <button class="switch" data-tf="fw_autostart" role="switch" aria-checked="${t.forward_autostart===true}" aria-label="随应用启动转发" onclick="toggleSwitch(this)"></button></div></div>
             <table class="rules-table fw-table"><thead><tr>
               <th style="width:16%">本地端口</th><th style="width:44%">远程地址（服务器侧）</th><th style="width:14%">远程端口</th><th>操作</th>
             </tr></thead><tbody>${fwRows(t)}</tbody></table>
@@ -1159,7 +1189,7 @@ function tunnelHTML(){
 }
 function toggleAuth(sel){const c=sel.closest('.detail-body');c.querySelectorAll('[data-auth]').forEach(el=>el.style.display=el.dataset.auth===sel.value?'':'none');collectAndRecompute();}
 function selectTunnel(i){collectTunnel();recomputeDirty();activeTunnel=i;renderView();}
-function addTunnel(){collectTunnel();S.mp.tunnels.push({name:'',ssh_user:'',ssh_host:'',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]});activeTunnel=S.mp.tunnels.length-1;recomputeDirty();renderView();}
+function addTunnel(){collectTunnel();S.mp.tunnels.push({name:'',ssh_user:'',ssh_host:'',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[],forward_autostart:false});activeTunnel=S.mp.tunnels.length-1;recomputeDirty();renderView();}
 function removeTunnel(i){if(!S.mp.tunnels.length)return;collectTunnel();S.mp.tunnels.splice(i,1);activeTunnel=Math.max(0,Math.min(i,S.mp.tunnels.length-1));recomputeDirty();renderView();}
 function addForward(){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t)return;(t.forwards=t.forwards||[]).push({local_port:0,remote_host:'127.0.0.1',remote_port:0});recomputeDirty();renderView();}
 function removeForward(fi){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t||!(t.forwards||[]).length)return;t.forwards.splice(fi,1);recomputeDirty();renderView();}
@@ -1174,6 +1204,7 @@ function collectTunnel(){
   // 残留旧值会让 dirty 卡住并把幽灵密码静默写入。
   const pw=v('pw');t.password=pw||null;
   const cb=d.querySelector('[data-tf="compress"]');t.ssh_compression=cb&&cb.getAttribute('aria-checked')==='true';
+  const fab=d.querySelector('[data-tf="fw_autostart"]');t.forward_autostart=fab&&fab.getAttribute('aria-checked')==='true';
   // 端口转发行按 DOM 顺序读回（行序即数组序）；缺省口径与 viewSnapshot
   // 同一语义：空端口=0、空地址=127.0.0.1
   const fws=[];
@@ -1237,13 +1268,23 @@ async function testForward(fi,btn){
   btn.disabled=false;btn.textContent='测试';
 }
 // 重连 = 菜单栏「重新连接」等价动作（Python 端停隧道→重读配置→重启），
-// 经 bridge 触发；浏览器直开设置页时无桥接，回退提示。
-function reconnectProxy(btn){
+// 经 bridge 触发；tunnelId 定向该隧道的转发会话（多活），缺省 = 代理会话。
+// 浏览器直开设置页时无桥接，回退提示。
+function reconnectProxy(btn,tunnelId){
   if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
     if(btn){btn.disabled=true;btn.textContent='重连中…';
       setTimeout(()=>{btn.disabled=false;btn.textContent='重新连接';},4000);}
-    nativeSend('reconnectProxy');
+    nativeSend('reconnectProxy',tunnelId?{tunnel_id:tunnelId}:{});
   }else toast('重新连接需在应用的设置窗内使用');
+}
+// 多活：非代理隧道的转发会话启停（会话编排归原生侧 coordinator）
+function toggleForwardSession(btn,tunnelId,action){
+  if(!tunnelId){toast('该隧道尚未保存，请先保存再启动转发',true);return;}
+  if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
+    nativeSend('forwardSession',{tunnel_id:tunnelId,action:action==='stop'?'stop':'start'});
+    btn.disabled=true;
+    setTimeout(()=>{recomputeDirty();renderView();},1200);
+  }else toast('端口转发启停需在应用的设置窗内使用');
 }
 
 // ── proxy settings view (ports + capture + toggles) ────

@@ -362,3 +362,222 @@ class TestThreadContract(unittest.TestCase):
         self.assertEqual(errors, [],
                          f"并发 stop/check 抛出 AttributeError（#68）: {errors}")
 
+
+
+# ── 多活转发会话（v0.9） ─────────────────────────────────
+def _fwd(lp=9000, rp=8000):
+    return {"local_port": lp, "remote_host": "127.0.0.1", "remote_port": rp}
+
+
+def _multi_config():
+    """两条隧道：t1 当前（有 forwards），t2 转发候选。"""
+    return {
+        "socks5_port": 1080,
+        "http_listen_port": 8888,
+        "current_tunnel": 0,
+        "tunnels": [
+            {"id": "t-1", "name": "proxy", "ssh_host": "a", "ssh_user": "u",
+             "ssh_port": 22, "auth_type": "key", "forwards": [_fwd()]},
+            {"id": "t-2", "name": "fwd", "ssh_host": "b", "ssh_user": "u",
+             "ssh_port": 22, "auth_type": "key",
+             "forwards": [_fwd(lp=9001, rp=8001)]},
+        ],
+    }
+
+
+def _mutable_coordinator(cfg):
+    holder = {"cfg": cfg}
+
+    def get_config():
+        return holder["cfg"]
+    conn = ConnectionCoordinator(
+        stats=MagicMock(), ssh_log_sink=lambda line: None,
+        get_config=get_config, get_tunnel_password=lambda t: "")
+    return conn, holder
+
+
+class TestForwardSessions(unittest.TestCase):
+    def test_start_forward_guards(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        for tid, why in (("t-nope", "不存在"), ("t-1", "代理隧道自身"),
+                         ("t-2", "无转发规则")):
+            if tid == "t-2":
+                conn._config_hack = None  # noqa: F841 — t2 有 forwards，另测
+                continue
+            ok, reason = conn.start_forward(tid)
+            self.assertFalse(ok, why)
+            self.assertTrue(reason)
+        self.assertEqual(conn.forward_sessions(), [])
+        # t2 摘掉 forwards 后同样拒绝
+        cfg = _multi_config()
+        cfg["tunnels"][1]["forwards"] = []
+        conn2, _ = _mutable_coordinator(cfg)
+        ok, reason = conn2.start_forward("t-2")
+        self.assertFalse(ok)
+        self.assertIn("转发", reason)
+
+    def test_start_forward_creates_session_and_connects(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect") as c:
+            ok, reason = conn.start_forward("t-2")
+        self.assertTrue(ok, reason)
+        c.assert_called_once()
+        ids = [tid for tid, _, _ in conn.forward_sessions()]
+        self.assertEqual(ids, ["t-2"])
+
+    def test_stop_forward_idempotent(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+        with patch.object(session, "stop") as s:
+            conn.stop_forward("t-2")
+            conn.stop_forward("t-2")  # 幂等
+        s.assert_called_once()
+        self.assertEqual(conn.forward_sessions(), [])
+
+    def test_check_forwards_reconciles_deleted_tunnel(self):
+        conn, holder = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+        holder["cfg"] = {**_multi_config(), "tunnels":
+                         _multi_config()["tunnels"][:1]}
+        with patch.object(session, "stop") as s:
+            conn.check_forwards()
+        s.assert_called_once()
+        self.assertEqual(conn.forward_sessions(), [])
+
+    def test_check_forwards_reconciles_emptied_forwards(self):
+        conn, holder = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+        cfg = _multi_config()
+        cfg["tunnels"][1]["forwards"] = []
+        holder["cfg"] = cfg
+        with patch.object(session, "stop") as s:
+            conn.check_forwards()
+        s.assert_called_once()
+
+    def test_check_forwards_connected_resets_retry(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+        session.monitor._status = "connected"
+        with patch.object(session.monitor, "check") as chk, \
+             patch.object(session.retry, "reset") as rst:
+            conn.check_forwards()
+        chk.assert_called_once_with(9001)  # 探测口 = 第一条 -L 本地端口
+        rst.assert_called_once()
+
+    def test_any_connected_aggregates_sessions(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        self.assertFalse(conn.any_connected)
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+        self.assertFalse(conn.any_connected)
+        session.monitor._status = "connected"
+        self.assertTrue(conn.any_connected)
+        self.assertTrue(conn.any_forward_session_connected)
+
+
+class TestRestartDowngrade(unittest.TestCase):
+    def _restart_with(self, cfg, mutate=None):
+        conn, holder = _mutable_coordinator(cfg)
+        # 模拟代理会话实际跑在 t-1（_launched_proxy_id 是降级真相源）
+        conn._launched_proxy_id = "t-1"
+        if mutate:
+            mutate(holder)
+        with patch.object(conn, "_start_background"), \
+             patch.object(conn, "start_ssh"), \
+             patch.object(conn._ssh, "stop"), \
+             patch.object(conn._proxy_runtime, "stop"), \
+             patch.object(conn._retry, "cancel"), \
+             patch.object(conn._host_key, "cancel"):
+            conn.restart(lambda: None)  # reload 由调用方测试体控制 holder
+        return conn
+
+    def test_old_proxy_with_forwards_downgrades_to_forward_session(self):
+        def switch_current(holder):
+            holder["cfg"]["current_tunnel"] = 1
+        conn = self._restart_with(_multi_config(), switch_current)
+        ids = [tid for tid, _, _ in conn.forward_sessions()]
+        self.assertIn("t-1", ids)  # 旧代理降级续跑
+
+    def test_old_proxy_without_forwards_stops_cleanly(self):
+        cfg = _multi_config()
+        cfg["tunnels"][0]["forwards"] = []
+
+        def switch_current(holder):
+            holder["cfg"]["current_tunnel"] = 1
+        conn = self._restart_with(cfg, switch_current)
+        self.assertEqual(conn.forward_sessions(), [])
+
+    def test_same_proxy_no_downgrade_session_created(self):
+        conn = self._restart_with(_multi_config())
+        self.assertEqual(conn.forward_sessions(), [])
+
+
+class TestWakeTriggerForwards(unittest.TestCase):
+    def test_wake_rebuilds_forward_sessions(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        conn._paused = True  # 暂停只豁免代理会话；转发会话仍要重建
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+        session.monitor._status = "connected"
+        with patch.object(session.monitor, "stop") as mstop, \
+             patch.object(session, "connect") as mconn:
+            conn.handle_reconnect_trigger()
+        mstop.assert_called_once()
+        mconn.assert_called_once()
+
+    def test_apply_autostarts_skips_proxy_and_running(self):
+        cfg = _multi_config()
+        cfg["tunnels"][0]["forward_autostart"] = True   # 代理隧道：跳过
+        cfg["tunnels"][1]["forward_autostart"] = True   # 正常补启
+        conn, _ = _mutable_coordinator(cfg)
+        with patch.object(conn, "start_forward") as sf:
+            conn.apply_autostarts()
+        sf.assert_called_once_with("t-2")
+        # 已在跑的不再重复启动
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        with patch.object(conn, "start_forward") as sf2:
+            conn.apply_autostarts()
+        sf2.assert_not_called()
+
+
+class TestRestartForwardExplicitSemantics(unittest.TestCase):
+    """评审 Spec-A：显式重连对 error/stopped 态会话同样重建（死按钮修复）。"""
+
+    def test_error_state_session_reconnects(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+        session.monitor._status = "error"
+        with patch.object(session, "stop"), \
+             patch.object(session, "connect") as mconn:
+            self.assertTrue(conn.restart_forward("t-2", lambda: None))
+        mconn.assert_called_once()
+
+    def test_tunnel_deleted_during_restart_removes_session(self):
+        conn, holder = _mutable_coordinator(_multi_config())
+        with patch("tunnel.connection_coordinator._ForwardSession.connect"):
+            conn.start_forward("t-2")
+        session = conn._forward_sessions["t-2"]
+
+        def drop_t2():
+            holder["cfg"] = {**_multi_config(),
+                             "tunnels": _multi_config()["tunnels"][:1]}
+        with patch.object(session, "stop"):
+            self.assertTrue(conn.restart_forward("t-2", drop_t2))
+        self.assertEqual(conn.forward_sessions(), [])
+
+    def test_unknown_session_returns_false(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        self.assertFalse(conn.restart_forward("t-nope", lambda: None))

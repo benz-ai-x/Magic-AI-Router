@@ -157,10 +157,17 @@ def _forward_args(tunnel):
 
 
 def build_tunnel_command(tunnel, socks5_port, password=""):
-    """长驻隧道（ssh -D + 逐条 -L）的完整调用描述；spawn 由 SSHMonitor 负责。"""
+    """长驻隧道的完整调用描述；spawn 由 SSHMonitor 负责。
+
+    socks5_port=None → 纯转发模式（多活模型里的「转发会话」）：跳过 -D，
+    只携带 -L。socks5_port 全局唯一，只有代理隧道（current_tunnel）以
+    代理模式启动，其余隧道并行时必须是转发模式——两条 -D 同端口会因
+    ExitOnForwardFailure 直接退出。
+    """
     port = str(tunnel.get("ssh_port", 22))
+    dyn_args = [] if socks5_port is None else ["-D", str(socks5_port)]
     ssh_args = (
-        ["-D", str(socks5_port), "-N", "-o", "ExitOnForwardFailure=yes"]
+        dyn_args + ["-N", "-o", "ExitOnForwardFailure=yes"]
         + _forward_args(tunnel)
         + _host_key_args()
         + ["-o", "ServerAliveInterval=20", "-o", "ServerAliveCountMax=3",

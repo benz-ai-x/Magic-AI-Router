@@ -43,7 +43,8 @@
 - `auth_type`: `"key"`（默认，用 ssh_key）或 `"password"`（需 sshpass，密码走 Keychain）
 - `http_listen_port`: 本地 HTTP 代理监听端口（整型；旧 `"host:port"` 字符串 `http_listen` 读时兼容）
 - `current_tunnel`: 当前使用的隧道索引
-- `forwards`: per-tunnel 本地端口转发（`ssh -L`，绑定恒 127.0.0.1）——远程 `remote_host:remote_port` 映射到本机 `local_port`；`remote_host` 缺省 `"127.0.0.1"`（服务器侧）。改 forwards 后需重连隧道生效（设置窗保存时已连接则自动重连）；同隧道 `local_port` 互斥且不得撞全局保留端口（8888/8080/9527/9528/socks5）
+- `forwards`: per-tunnel 本地端口转发（`ssh -L`，绑定恒 127.0.0.1）——远程 `remote_host:remote_port` 映射到本机 `local_port`；`remote_host` 缺省 `"127.0.0.1"`（服务器侧）。`local_port` **全局唯一**（多活：任意隧道可并行运行——同端口会让两条 ssh 互顶）且不得撞保留端口（8888/8080/9527/9528/socks5）。保存时已连接的隧道自动守卫重连应用
+- `forward_autostart`: 该隧道的转发会话随应用启动自动恢复（默认 false）。多活模型：`current_tunnel` 是唯一携带 SOCKS5（-D）的**代理隧道**；其余隧道可各自「启动端口转发」并行运行（纯 -L 无 -D）
 
 ### ~/.suanpan.yaml — AI 路由配置
 

@@ -963,3 +963,55 @@ class TestConfigServerParameterization(unittest.TestCase):
         self.assertEqual(status, 200)
         status, _ = _request(port, "GET", "/api/state")
         self.assertEqual(status, 401)
+
+
+class TestMultiActiveDecorations(unittest.TestCase):
+    """多活（v0.9）：/api/state 的 is_proxy / forward_running 装饰注入。"""
+
+    def _state(self, tunnel_states_fn):
+        import threading
+        s = config_server.ConfigServer(tunnel_states_fn=tunnel_states_fn)
+        s._server = config_server._ThreadingHTTPServer(
+            ("127.0.0.1", 0), config_server._Handler,
+            expected_token=s._token, tunnel_states_fn=tunnel_states_fn)
+        port = s._server.server_address[1]
+        threading.Thread(target=s._server.serve_forever, daemon=True).start()
+        self.addCleanup(s.stop)
+        status, body = _request(port, "GET", "/api/state", token=s._token)
+        return json.loads(body)["mp"]
+
+    def test_is_proxy_and_forward_running_injected(self):
+        cfg = {"tunnels": [
+            {"id": "t-1", "ssh_host": "a", "forwards": []},
+            {"id": "t-2", "ssh_host": "b", "forwards": []}],
+            "current_tunnel": 0}
+        with patch.object(config_server, "_read_mp", return_value=cfg):
+            mp = self._state(lambda: [("t-2", "b", "connected")])
+        self.assertTrue(mp["tunnels"][0]["is_proxy"])
+        self.assertFalse(mp["tunnels"][0]["forward_running"])
+        self.assertFalse(mp["tunnels"][1]["is_proxy"])
+        self.assertTrue(mp["tunnels"][1]["forward_running"])
+
+    def test_states_fn_absent_decorates_all_false(self):
+        cfg = {"tunnels": [{"id": "t-1", "ssh_host": "a", "forwards": []}],
+               "current_tunnel": 0}
+        with patch.object(config_server, "_read_mp", return_value=cfg):
+            mp = self._state(None)
+        self.assertTrue(mp["tunnels"][0]["is_proxy"])
+        self.assertFalse(mp["tunnels"][0]["forward_running"])
+
+    def test_decorations_never_round_trip_into_plan(self):
+        """READONLY_DECORATED_FIELDS 扩名单——is_proxy/forward_running 永不落盘。"""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            store = config_server.ConfigStateStore(
+                mp_path=str(Path(d) / "m.json"),
+                sp_path=str(Path(d) / "s.yaml"))
+            plan = store.prepare(mp={"tunnels": [
+                {"id": "t-1", "ssh_host": "a", "forwards": [],
+                 "is_proxy": True, "forward_running": True}]})
+            self.assertTrue(plan.ok)
+            t = plan.mp_candidate["tunnels"][0]
+            self.assertNotIn("is_proxy", t)
+            self.assertNotIn("forward_running", t)

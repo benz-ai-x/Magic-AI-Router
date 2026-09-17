@@ -169,11 +169,21 @@ class TestPrepareValidation(unittest.TestCase):
         self.assertFalse(plan.ok)
         self.assertTrue(any("重复" in e for e in plan.errors), plan.errors)
 
-    def test_forward_cross_tunnel_same_local_port_allowed(self):
-        """同一时间只有一条隧道活跃——prod/staging 同构转发布局合法。"""
+    def test_forward_cross_tunnel_same_local_port_rejected(self):
+        """多活（v0.9）：任意隧道可并行——跨隧道同本地端口会让两条 ssh
+        在 ExitOnForwardFailure 下互顶死循环，prepare 必须拦（v0.8 的
+        单活豁免随多活作废）。"""
         plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
             {"name": "t1", "forwards": [self._fw()]},
             {"name": "t2", "forwards": [self._fw(rp=9001)]}]})
+        self.assertFalse(plan.ok)
+        self.assertTrue(any("端口冲突" in e and "t1" in e and "t2" in e
+                            for e in plan.errors), plan.errors)
+
+    def test_forward_distinct_cross_tunnel_ports_allowed(self):
+        plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
+            {"name": "t1", "forwards": [self._fw()]},
+            {"name": "t2", "forwards": [self._fw(lp=9001)]}]})
         self.assertTrue(plan.ok, plan.errors)
 
     def test_forward_conflicts_with_reserved_port_rejected(self):
@@ -675,9 +685,11 @@ class TestReadonlyDecoratedFields(unittest.TestCase):
 
     def test_declaration_covers_both_sides(self):
         from mpconf.config_state import READONLY_DECORATED_FIELDS
-        # 精确集（非成员性）：注入侧字段恰为此二，多列少列都漂移
+        # 精确集（非成员性）：注入侧字段恰为此集，多列少列都漂移
+        # （v0.9 增 is_proxy / forward_running 多活运行态装饰）
         self.assertEqual(READONLY_DECORATED_FIELDS,
-                         frozenset({"has_password", "capture_active"}))
+                         frozenset({"has_password", "capture_active",
+                                    "is_proxy", "forward_running"}))
 
     def test_prepare_strips_exactly_the_declared_fields(self):
         """注入字段全被剥除（持久化配置永不携带），未声明字段不受累。"""

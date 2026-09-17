@@ -78,7 +78,8 @@ def _schema_error_lines(exc) -> list:
 # 服务端注入的只读装饰字段（#52 单点声明）：config_server 读取时注入
 # 供 UI 展示，prepare 剥除保证持久化配置永不携带——两侧共用此名单，
 # 新增装饰字段不再靠注释对齐。
-READONLY_DECORATED_FIELDS = frozenset({"has_password", "capture_active"})
+READONLY_DECORATED_FIELDS = frozenset(
+    {"has_password", "capture_active", "is_proxy", "forward_running"})
 
 
 def _valid_http_origin(url) -> bool:
@@ -223,6 +224,27 @@ class ConfigStateStore:
                 _v = mp_c.get(_f)
                 if isinstance(_v, int) and not isinstance(_v, bool):
                     _port_refs.append((_f, _v))
+            # 多活（v0.9）：转发本地端口全局唯一——任意隧道可并行运行，
+            # 两条隧道抢同端口会让双方在 ExitOnForwardFailure 下互顶死
+            # 循环（v0.8 的「跨隧道合法」以单活为前提，随多活作废）
+            for _ti, _t in enumerate(mp_c.get("tunnels") or []):
+                if not isinstance(_t, dict):
+                    continue
+                _tname = _t.get("name") or f"#{_ti}"
+                _fw_seen = set()
+                for _f in _t.get("forwards") or []:
+                    if not isinstance(_f, dict):
+                        continue
+                    _lp = _f.get("local_port")
+                    if not isinstance(_lp, int) or isinstance(_lp, bool):
+                        continue
+                    if _lp in _fw_seen:
+                        errors.append(
+                            f"隧道 {_tname} 的转发本地端口 {_lp} 重复")
+                    else:
+                        _fw_seen.add(_lp)
+                        _port_refs.append(
+                            (f"隧道 {_tname} 端口转发本地端口", _lp))
         if sp_c is not None:
             _v = sp_c.get("listen_port")
             if isinstance(_v, int) and not isinstance(_v, bool):
@@ -234,30 +256,6 @@ class ConfigStateStore:
                     f"端口冲突：{_seen[_p]} 与 {_name} 同为 {_p}")
             else:
                 _seen[_p] = _name
-        # 端口转发本地端口：对保留端口冲突 + 同隧道内重复单独拦；跨隧道
-        # 同端口合法（同一时间只有一条隧道活跃——prod/staging 同构转发
-        # 布局是常见形态），故不并入 _port_refs 的全局重复判定
-        if mp_c is not None:
-            for _ti, _t in enumerate(mp_c.get("tunnels") or []):
-                if not isinstance(_t, dict):
-                    continue
-                _tname = _t.get("name") or f"#{_ti}"
-                _fw_seen = {}
-                for _f in _t.get("forwards") or []:
-                    if not isinstance(_f, dict):
-                        continue
-                    _lp = _f.get("local_port")
-                    if not isinstance(_lp, int) or isinstance(_lp, bool):
-                        continue
-                    _ref = f"隧道 {_tname} 端口转发本地端口"
-                    if _lp in _fw_seen:
-                        errors.append(
-                            f"隧道 {_tname} 的转发本地端口 {_lp} 重复")
-                    elif _lp in _seen:
-                        errors.append(
-                            f"端口冲突：{_seen[_lp]} 与 {_ref} 同为 {_lp}")
-                    else:
-                        _fw_seen[_lp] = True
 
         if errors:
             return CommitPlan(False, errors)
