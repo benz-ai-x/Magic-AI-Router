@@ -73,9 +73,10 @@ mpconf/ ── 配置栈
   config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串；
     代理角色双表示：current_tunnel_id 稳定 id 真相 + current_tunnel
     下标兼容投影，解析序 id→下标→首条）
+  validate.py ── mp 分域校验器（顶层数值 + 隧道级行[forwards/nfs] + 全局端口/挂载点冲突；prepare 的校验半边）
   config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
-    全量校验（含 schema + 端口冲突）/ commit（journal+MP+SP+Keychain+
-    回调次序）/ recover 幂等重放 / update_mp 菜单写径
+    分域校验 orchestrator / commit（journal+MP+SP+Keychain+回调次序）/
+    recover 幂等重放 / update_mp 菜单写径
   local_token.py ── 本地客户端 token（掩码布尔契约，明文不出 UI）
 
 tunnel/ ── SSH 隧道核心
@@ -144,6 +145,7 @@ services/ ── 服务
 
 suanpan/ ── AI 路由网关子包（Anthropic Messages API → 多家 LLM 后端）
   config.py ── Pydantic schema + 掩码契约 + null 节归一 + 文法消费
+  validate.py ── sp 分域校验器（数值 + schema + 供应商 URL + 路由引用；经 prepare lazy import 保持无网关依赖宿主降级）
   main.py ── FastAPI app factory + 路由 handler
   middleware.py ── APIKey（常量时间比较）+ BodyLimit 中间件
   proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread

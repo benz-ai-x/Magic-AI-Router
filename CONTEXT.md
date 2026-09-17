@@ -95,7 +95,7 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 ### 配置事务（ConfigStateStore）
 
-配置持久化的唯一事务边界（`mpconf/config_state.py`）：`load()` 区分 missing/valid/invalid/io_error（损坏不再折叠成空）；`prepare()` 在首次 mutation 前完成数值/URL/跨引用全量校验并派生 Keychain 变更计划（密码剥离出候选）；`commit()` 按序执行 journal（载荷内嵌）→ MP → SP → Keychain → 清 journal → 回调（`on_sp_saved` 只在完整提交后）；`recover()` 在启动时幂等重放 journal 补齐跨文件崩溃；`update_mp(mutate)` 是菜单开关的唯一写径——写前读新（磁盘真相）→ 单字段变更 → 同一事务管线，内存副本永不整文件覆写磁盘。invalid 主文件不覆盖最后已知良好的 `.bak`；首创建与保存同一 0600/0700 路径。
+配置持久化的唯一事务边界（`mpconf/config_state.py`）：`load()` 区分 missing/valid/invalid/io_error（损坏不再折叠成空）；`prepare()` 是分域校验的 **orchestrator**（架构评审候选 2：mp 顶层数值/隧道级行/全局端口与挂载点冲突在 `mpconf.validate`，sp schema/路由引用在 `suanpan.validate`——校验器与被校验知识同域演进，文案与顺序被测试钉死）并派生 Keychain 变更计划（密码剥离出候选）；`commit()` 按序执行 journal（载荷内嵌）→ MP → SP → Keychain → 清 journal → 回调（`on_sp_saved` 只在完整提交后）；`recover()` 在启动时幂等重放 journal 补齐跨文件崩溃；`update_mp(mutate)` 是菜单开关的唯一写径——写前读新（磁盘真相）→ 单字段变更 → 同一事务管线，内存副本永不整文件覆写磁盘。invalid 主文件不覆盖最后已知良好的 `.bak`；首创建与保存同一 0600/0700 路径。
 
 ### 配置存储（ConfigStore）
 

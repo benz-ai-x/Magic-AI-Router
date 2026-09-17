@@ -15,3 +15,7 @@ import os
 DEFAULT_CAPTURE_DIR = os.path.expanduser("~/.magic-proxy-captures")
 DEFAULT_CAPTURE_PORT = 8080
 DEFAULT_GATEWAY_PORT = 9527
+
+# 端口上界（mp 四端口 / sp listen / 端口转发 / NFS 本地端口共用——
+# 通用约束，归叶子层供 mpconf 与 suanpan 的校验器同一取值）
+PORT_MAX = 65535

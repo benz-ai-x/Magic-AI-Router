@@ -59,20 +59,11 @@ def _read_one(path: str, loader):
     return "valid", data, None
 
 
-# ── prepare：候选配置在首次 mutation 前的完整校验 ─────────────────────
-_MP_PORTS = ("socks5_port", "http_listen_port", "capture_port", "config_port")
-# 端口上界（mp 四端口 / sp listen / 端口转发共用——通用约束，非 suanpan 域私有）
-_PORT_MAX = 65535
-_RETENTION_MAX = 3650        # 十年封顶：再大属单位填错
-_BODY_LIMIT_MAX = 512        # MB
-_REQUEST_TIMEOUT_MAX = 86400
-
-
-def _schema_error_lines(exc) -> list:
-    """schema 校验错误行——格式化单一归宿 suanpan.friendly_config_error_lines。"""
-    from suanpan.config import friendly_config_error_lines
-    return [f"schema 校验失败 {seg}"
-            for seg in friendly_config_error_lines(exc)]
+# ── prepare：分域校验 orchestrator ──────────────────────────────
+# 校验器单一归宿：mpconf.validate（mp 顶层数值 + 隧道级行 + 全局端口/
+# 挂载点冲突）与 suanpan.validate（sp schema + 路由引用，经 lazy import
+# 保持 ADR-000 无网关依赖宿主的降级）。本文件只持事务边界（journal/
+# merge/掩码恢复/Keychain 差量），新域校验在域内生长。
 
 
 # 服务端注入的只读装饰字段（#52 单点声明）：config_server 读取时注入
@@ -81,16 +72,6 @@ def _schema_error_lines(exc) -> list:
 READONLY_DECORATED_FIELDS = frozenset(
     {"has_password", "capture_active", "is_proxy", "forward_running",
      "nfs_states"})
-
-
-def _valid_http_origin(url) -> bool:
-    if not isinstance(url, str):
-        return False
-    from urllib.parse import urlsplit
-    parts = urlsplit(url)
-    return (parts.scheme in ("http", "https")
-            and bool(parts.hostname)
-            and not parts.query and not parts.fragment)
 
 
 class ConfigStateStore:
@@ -107,243 +88,26 @@ class ConfigStateStore:
                           mp_err or sp_err)
 
     def prepare(self, mp=None, sp=None) -> CommitPlan:
-        """schema + 数值/URL + 跨引用全量校验。任何失败都不触碰磁盘。"""
+        """分域校验 orchestrator：任何失败都不触碰磁盘。
+
+        校验顺序与文案被测试钉死；merge 默认值必须在校验之后
+        （merge_config 会把非法端口/负保留静默重置为默认，前置会让
+        数值约束在真实入口永不触发）。
+        """
+        from mpconf import validate as _mp_validate
         errors = []
         mp_c = mp if isinstance(mp, dict) else None
         sp_c = sp if isinstance(sp, dict) else None
 
         if mp_c is not None:
-            for field in _MP_PORTS:
-                port = mp_c.get(field)
-                if port in (None, ""):
-                    continue
-                if not isinstance(port, int) or not 1 <= port <= _PORT_MAX:
-                    errors.append(f"{field} 端口无效（须 1..65535）")
-            retention = mp_c.get("retention_days")
-            if retention is not None and (
-                    not isinstance(retention, int)
-                    or not 0 <= retention <= _RETENTION_MAX):
-                errors.append(f"retention_days 无效（须 0..{_RETENTION_MAX}）")
-            # 端口转发行校验（merge 前：保存候选必须规整——字符串端口的
-            # 读时兼容只发生在 load 路径的 normalize_forwards）
-            for _ti, _t in enumerate(mp_c.get("tunnels") or []):
-                if not isinstance(_t, dict):
-                    continue
-                _tname = _t.get("name") or f"#{_ti}"
-                _forwards = _t.get("forwards")
-                if _forwards is None:
-                    continue
-                if not isinstance(_forwards, list):
-                    errors.append(f"隧道 {_tname} 的 forwards 必须是列表")
-                    continue
-                for _fi, _f in enumerate(_forwards):
-                    if not isinstance(_f, dict):
-                        errors.append(
-                            f"隧道 {_tname} 的第 {_fi + 1} 条端口转发必须是对象")
-                        continue
-                    for _key in ("local_port", "remote_port"):
-                        _v = _f.get(_key)
-                        if (not isinstance(_v, int) or isinstance(_v, bool)
-                                or not 1 <= _v <= _PORT_MAX):
-                            errors.append(
-                                f"隧道 {_tname} 第 {_fi + 1} 条转发的 "
-                                f"{_key} 无效（须 1..65535）")
-                    _rh = _f.get("remote_host")
-                    if _rh is None:
-                        _rh = "127.0.0.1"
-                    if (not isinstance(_rh, str) or not _rh.strip()
-                            or any(c.isspace() for c in _rh) or ":" in _rh):
-                        errors.append(
-                            f"隧道 {_tname} 第 {_fi + 1} 条转发的 remote_host "
-                            "无效（须主机名或 IPv4 地址，暂不支持 IPv6）")
-                # NFS 挂载节校验（ADR-007）：名字/路径/端口是运行时标识与
-                # 安全边界（远程路径进 root 脚本、本地目录进 mount_nfs
-                # argv），形状不对必须在落盘前拦下
-                _nfs = _t.get("nfs")
-                if _nfs is not None and not isinstance(_nfs, dict):
-                    errors.append(f"隧道 {_tname} 的 nfs 必须是对象")
-                elif isinstance(_nfs, dict):
-                    _nport = _nfs.get("local_port")
-                    if _nport not in (None, "") and (
-                            not isinstance(_nport, int)
-                            or isinstance(_nport, bool)
-                            or not 1 <= _nport <= _PORT_MAX):
-                        errors.append(
-                            f"隧道 {_tname} 的 NFS 本地端口无效（须 1..65535）")
-                    _mounts = _nfs.get("mounts")
-                    if _mounts is not None and not isinstance(_mounts, list):
-                        errors.append(f"隧道 {_tname} 的 nfs.mounts 必须是列表")
-                        _mounts = []
-                    _names = set()
-                    for _mi, _m in enumerate(_mounts or []):
-                        if not isinstance(_m, dict):
-                            errors.append(
-                                f"隧道 {_tname} 的第 {_mi + 1} 条 NFS 挂载"
-                                "必须是对象")
-                            continue
-                        _label = _m.get("name") or f"#{_mi + 1}"
-                        _mname = _m.get("name")
-                        if not isinstance(_mname, str) or not _mname.strip():
-                            errors.append(
-                                f"隧道 {_tname} 的第 {_mi + 1} 条 NFS 挂载"
-                                "名不能为空")
-                        elif _mname.strip() in _names:
-                            errors.append(
-                                f"隧道 {_tname} 的 NFS 挂载名 "
-                                f"{_mname.strip()} 重复")
-                        else:
-                            _names.add(_mname.strip())
-                        _rp = _m.get("remote_path")
-                        if (not isinstance(_rp, str)
-                                or not _rp.strip().startswith("/")):
-                            errors.append(
-                                f"NFS 挂载 {_label} 的远程路径必须是"
-                                "绝对路径（以 / 开头）")
-                        _ld = _m.get("local_dir")
-                        if (_ld not in (None, "")
-                                and (not isinstance(_ld, str)
-                                     or not _ld.strip().startswith("/"))):
-                            errors.append(
-                                f"NFS 挂载 {_label} 的本地目录必须是"
-                                "绝对路径（以 / 开头）")
-
+            errors += _mp_validate.numeric_errors(mp_c)
+            errors += _mp_validate.tunnel_rows_errors(mp_c)
         if sp_c is not None:
-            lp = sp_c.get("listen_port")
-            if lp is not None and (not isinstance(lp, int)
-                                   or not 1 <= lp <= _PORT_MAX):
-                errors.append("listen_port 端口无效（须 1..65535）")
-            # 顶层字段（#46 T1b：旧代码查不存在的 server 键——死校验分支，
-            # 顶层非法值静默落盘）。schema 见 suanpan/config.py AppConfig。
-            timeout = sp_c.get("request_timeout_s")
-            if timeout is not None and (not isinstance(timeout, int)
-                                        or not 0 < timeout <= _REQUEST_TIMEOUT_MAX):
-                errors.append(f"request_timeout_s 无效（须 >0 且 ≤{_REQUEST_TIMEOUT_MAX}）")
-            body_limit = sp_c.get("body_limit_mb")
-            if body_limit is not None and (not isinstance(body_limit, int)
-                                           or not 0 < body_limit <= _BODY_LIMIT_MAX):
-                errors.append(f"body_limit_mb 无效（须 >0 且 ≤{_BODY_LIMIT_MAX}）")
-            # pydantic schema 校验并入事务路径（#46 T1b）：旧径 commit 只有
-            # yaml.safe_dump，schema 非法但手检放行的配置会直写磁盘、
-            # 下次启动 load_config 才炸。deps 缺席时跳过（ADR-000
-            # lazy-import：无网关依赖的宿主仍可保存 mp）。
-            try:
-                from suanpan.config import AppConfig as _SpSchema
-            except ImportError:
-                _SpSchema = None
-            if _SpSchema is not None:
-                try:
-                    _SpSchema.model_validate(sp_c)
-                except Exception as _exc:
-                    errors.extend(_schema_error_lines(_exc))
-            providers = sp_c.get("providers") or {}
-            for name, p in providers.items():
-                if not _valid_http_origin((p or {}).get("base_url", "")):
-                    errors.append(f"供应商 {name} 的 base_url 必须是合法 http(s) origin")
-            routes = set()
-            rules = sp_c.get("rules")
-            if rules is not None and not isinstance(rules, list):
-                errors.append("rules 必须是列表")
-                rules = []
-            # 路由目标文法单一所有者（#70 S1）：parse_route_target 消费
-            # 路由侧双分隔符（"/" 优先 "," 兜底）——不再 split("/") 手写
-            from suanpan.router import parse_route_target as _parse_route
-            for r in rules or []:
-                if not isinstance(r, dict):
-                    # 形状守卫（#69 S11）：元素非 dict（如 "abc"）时
-                    # schema 校验已记错，此处不得再对它 .get() 裸抛
-                    continue
-                target = r.get("route_to", "")
-                routes.add(_parse_route(str(target))[0])
-            router = sp_c.get("router")
-            if router is not None and not isinstance(router, dict):
-                errors.append("router 必须是映射")
-                router = {}
-            _default_target = (router or {}).get("default") or ""
-            if _default_target:
-                routes.add(_parse_route(str(_default_target))[0])
-            routes.discard("")
-            for prov in sorted(routes):
-                if prov and prov not in providers:
-                    errors.append(f"route_to/default 引用了不存在的供应商：{prov}")
-
-        # 端口冲突检查上收事务边界（#70 S10）：JS validateConfig 只在
-        # 浏览器层——agent 直接 curl /api/state 可绕过；prepare 兜底拦
-        # 同值冲突（落盘后才由 bind 失败就太迟）
-        _port_refs = []
-        if mp_c is not None:
-            for _f in _MP_PORTS:
-                _v = mp_c.get(_f)
-                if isinstance(_v, int) and not isinstance(_v, bool):
-                    _port_refs.append((_f, _v))
-            # 多活（v0.9）：转发本地端口全局唯一——任意隧道可并行运行，
-            # 两条隧道抢同端口会让双方在 ExitOnForwardFailure 下互顶死
-            # 循环（v0.8 的「跨隧道合法」以单活为前提，随多活作废）
-            for _ti, _t in enumerate(mp_c.get("tunnels") or []):
-                if not isinstance(_t, dict):
-                    continue
-                _tname = _t.get("name") or f"#{_ti}"
-                _fw_seen = set()
-                for _f in _t.get("forwards") or []:
-                    if not isinstance(_f, dict):
-                        continue
-                    _lp = _f.get("local_port")
-                    if not isinstance(_lp, int) or isinstance(_lp, bool):
-                        continue
-                    if _lp in _fw_seen:
-                        errors.append(
-                            f"隧道 {_tname} 的转发本地端口 {_lp} 重复")
-                    else:
-                        _fw_seen.add(_lp)
-                        _port_refs.append(
-                            (f"隧道 {_tname} 端口转发本地端口", _lp))
-                # NFS 隧道与转发会话并行运行——本地端口同一命名空间。
-                # 只查「实际在用」的 nfs（enabled 或配置了挂载）：merge 会
-                # 给每条隧道填默认 nfs 节（enabled=False、无挂载、12049），
-                # 纯默认节点不占端口，不得让两条隧道互报假冲突
-                _nfs = _t.get("nfs")
-                if isinstance(_nfs, dict) and (
-                        _nfs.get("enabled") is True or _nfs.get("mounts")):
-                    _np = _nfs.get("local_port")
-                    if (isinstance(_np, int) and not isinstance(_np, bool)
-                            and 1 <= _np <= _PORT_MAX):
-                        _port_refs.append(
-                            (f"隧道 {_tname} NFS 本地端口", _np))
-            # NFS 挂载点全局唯一（解析默认值与运行时同一归宿）：两个挂载
-            # 抢同一目录，后挂的会顶掉先挂的
-            from mpconf.config import resolve_mount_dir as _resolve_dir
-            _dirs_seen = {}
-            for _ti, _t in enumerate(mp_c.get("tunnels") or []):
-                if not isinstance(_t, dict):
-                    continue
-                _tname = _t.get("name") or f"#{_ti}"
-                _nfs = _t.get("nfs")
-                _nfs_mounts = (_nfs.get("mounts")
-                               if isinstance(_nfs, dict) else None) or []
-                for _m in _nfs_mounts:
-                    if not isinstance(_m, dict):
-                        continue
-                    _label = str(_m.get("name") or "?").strip()
-                    if not _label:
-                        continue  # 空名已在前段拦下
-                    _dir = _resolve_dir(_m)
-                    _who = f"隧道 {_tname} 的挂载 {_label}"
-                    if _dir in _dirs_seen:
-                        errors.append(
-                            f"挂载点冲突：{_dirs_seen[_dir]} 与 {_who} "
-                            f"同为 {_dir}")
-                    else:
-                        _dirs_seen[_dir] = _who
-        if sp_c is not None:
-            _v = sp_c.get("listen_port")
-            if isinstance(_v, int) and not isinstance(_v, bool):
-                _port_refs.append(("listen_port", _v))
-        _seen = {}
-        for _name, _p in _port_refs:
-            if _p in _seen:
-                errors.append(
-                    f"端口冲突：{_seen[_p]} 与 {_name} 同为 {_p}")
-            else:
-                _seen[_p] = _name
+            from suanpan import validate as _sp_validate
+            errors += _sp_validate.sp_errors(sp_c)
+        if mp_c is not None or sp_c is not None:
+            errors += _mp_validate.port_conflict_errors(mp_c, sp_c)
+            errors += _mp_validate.mount_dir_conflict_errors(mp_c)
 
         if errors:
             return CommitPlan(False, errors)
