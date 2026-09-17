@@ -39,3 +39,4 @@ docker/data/
 .ruff_cache/
 .chrome-mcp/
 .claude/settings.local.json
+.zcode/
