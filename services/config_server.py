@@ -353,8 +353,8 @@ class _Handler(BaseHTTPRequestHandler):
             # app 侧注入，测试/容器形态缺席即全 False）
             try:
                 states_fn = self.server.tunnel_states_fn
-                states = {tid: st for tid, _n, st
-                          in (states_fn() if states_fn else [])}
+                states = {s.tunnel_id: s.status
+                          for s in (states_fn() if states_fn else [])}
             except Exception:
                 logger.exception("tunnel_states_fn failed")
                 states = {}
@@ -367,9 +367,8 @@ class _Handler(BaseHTTPRequestHandler):
                 mfn = self.server.mount_states_fn
                 mount_states = {}
                 for entry in (mfn() if mfn else []):
-                    if isinstance(entry, (tuple, list)) and len(entry) >= 4:
-                        mount_states.setdefault(entry[0], {})[entry[2]] = \
-                            entry[3]
+                    mount_states.setdefault(entry.tunnel_id, {})[entry.name] \
+                        = entry.status
             except Exception:
                 logger.exception("mount_states_fn failed")
                 mount_states = {}

@@ -21,6 +21,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple
 
 from mount import mount_control
 from mount.nfs_session import NfsSession
@@ -38,6 +39,19 @@ STATUS_MOUNTING = "mounting"
 STATUS_MOUNTED = "mounted"
 STATUS_UNMOUNTING = "unmounting"
 STATUS_ERROR = "error"
+
+
+class MountState(NamedTuple):
+    """单个挂载项的运行态快照（菜单/UI/配置服务共用投影）。
+
+    NamedTuple 保位置兼容；消费面用字段访问（tunnel_id/tunnel_name/
+    name/status/error）——形状契约从位置元组升为命名字段。
+    """
+    tunnel_id: str
+    tunnel_name: str
+    name: str
+    status: str
+    error: str
 
 
 class _MountState:
@@ -89,8 +103,8 @@ class MountCoordinator:
     # ── 公开状态投影 ─────────────────────────────────────
 
     def mount_states(self):
-        """[(tunnel_id, tunnel_name, mount_name, status, error)]——菜单/
-        UI 快照。列出所有 nfs 配置了挂载的项（desired 与否都列）。"""
+        """[MountState]——菜单/UI 快照。列出所有 nfs 配置了挂载的项
+        （desired 与否都列）。"""
         with self._lock:
             result = []
             for tid, tunnel in self._tunnels_by_id().items():
@@ -103,10 +117,10 @@ class MountCoordinator:
                         continue
                     key = (tid, row["name"])
                     state = self._states.get(key)
-                    result.append((tid, tname, row["name"],
-                                   state.status if state else
-                                   STATUS_UNMOUNTED,
-                                   state.error if state else ""))
+                    result.append(MountState(
+                        tid, tname, row["name"],
+                        state.status if state else STATUS_UNMOUNTED,
+                        state.error if state else ""))
             return result
 
     def any_mounted(self):

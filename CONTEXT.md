@@ -31,7 +31,7 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 多活模型（v0.9，决策落档 [ADR-005](docs/adr/005-multi-active-tunnels.md)）的两种运行角色：
 
 - **代理隧道** = `current_tunnel_id`（稳定 id，角色唯一真相；`current_tunnel` 下标为兼容投影）指定的隧道：唯一携带 `-D socks5_port` 的会话（含自己的 `-L`），是 :8888 HTTP 代理的 SOCKS5 上游。主图标/状态行/系统代理/暂停语义全部只反映代理会话。切换代理角色（菜单单选 / 设置窗「设为代理隧道」显式按钮）= 旧代理隧道**降级续跑**（有 forwards 转纯转发会话，无则停）+ 新隧道以代理模式重启。
-- **转发会话** = 其他隧道的纯 `-L` 会话（无 `-D`）：`tunnel/ssh_session.SshSession` 实例（**SSH 会话 deep module**，ADR-007 收敛落地——三件套组装/连接序列/僵尸重建/每秒健康泵 `tick()` 的单一归宿，转发会话与 NFS 会话共用，原 `_ForwardSession` 与 `NfsSession` 的两份逐行镜像已删）。`forward_autostart` 持久字段控制随应用启动自动恢复；`apply_autostarts` 收敛补启。唤醒事件触发全部活跃会话僵尸重建。端口全局唯一性（含跨隧道）在 prepare 与 JS 双层拦——多活下两条隧道抢同端口会在 `ExitOnForwardFailure` 下互顶死循环（v0.8 的单活豁免作废）。
+- **转发会话** = 其他隧道的纯 `-L` 会话（无 `-D`）：`tunnel/ssh_session.SshSession` 实例（**SSH 会话 deep module**，ADR-007 收敛落地——三件套组装/连接序列/僵尸重建/每秒健康泵 `tick()` 的单一归宿，转发会话与 NFS 会话共用，原 `_ForwardSession` 与 `NfsSession` 的两份逐行镜像已删）。`forward_autostart` 持久字段控制随应用启动自动恢复；`apply_autostarts` 收敛补启。唤醒事件触发全部活跃会话僵尸重建。运行态投影是 `ForwardState`（NamedTuple，字段即契约），与 NFS 的 `MountState` 同款——消费面（菜单/UI/配置服务装饰）用字段访问。端口全局唯一性（含跨隧道）在 prepare 与 JS 双层拦——多活下两条隧道抢同端口会在 `ExitOnForwardFailure` 下互顶死循环（v0.8 的单活豁免作废）。
 
 ### 端口转发（Local Forward）
 

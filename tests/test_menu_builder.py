@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 import rumps
 
 from shellui.menu_builder import MenuBuilder, MenuState, _proxy_tunnel_index
+from tunnel.connection_coordinator import ForwardState
+from mount.coordinator import MountState
 
 
 def _state(**overrides):
@@ -58,7 +60,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
             config=self._cfg(), forward_states=())).struct_key()
         key_fwd = MenuBuilder(MagicMock(), lambda: _state(
             config=self._cfg(),
-            forward_states=(("t-2", "AWS-ap", "connected"),))).struct_key()
+            forward_states=(ForwardState("t-2", "AWS-ap", "connected"),))).struct_key()
         self.assertNotEqual(key_idle, key_fwd)
 
     def _submenu(self, title, cfg=None, forward_states=(), ssh_status="connected"):
@@ -94,7 +96,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
 
     def test_forward_submenu_structure(self):
         parent, subs = self._submenu(
-            "端口映射", forward_states=(("t-2", "AWS-ap", "connected"),))
+            "端口映射", forward_states=(ForwardState("t-2", "AWS-ap", "connected"),))
         titles = self._titles
         self.assertIn("Aws-eu — 随代理运行", titles)   # 代理隧道信息行
         running = [s for s in subs if s.title.startswith("AWS-ap")]
@@ -139,8 +141,8 @@ class TestMultiActiveTunnels(unittest.TestCase):
     def test_status_line_appends_forward_count(self):
         mb = MenuBuilder(MagicMock(), lambda: _state(
             ssh_status="connected", config=self._cfg(),
-            forward_states=(("t-2", "AWS-ap", "connected"),
-                            ("t-3", "x", "connecting"))))
+            forward_states=(ForwardState("t-2", "AWS-ap", "connected"),
+                            ForwardState("t-3", "x", "connecting"))))
         mb.build()
         mb.refresh_titles()
         title = mb.refs["proxy_status"].title
@@ -195,8 +197,8 @@ class TestMountSubmenu(unittest.TestCase):
 
     @staticmethod
     def _mounts():
-        return (("t-1", "Aws-eu", "data", "mounted", ""),
-                ("t-1", "Aws-eu", "ws", "unmounted", ""))
+        return (MountState("t-1", "Aws-eu", "data", "mounted", ""),
+                MountState("t-1", "Aws-eu", "ws", "unmounted", ""))
 
     def _submenu(self, mount_states=(), cfg=None):
         app = MagicMock()
@@ -217,7 +219,7 @@ class TestMountSubmenu(unittest.TestCase):
         self.assertNotEqual(key_idle, key_mounted)
         # 状态迁移（unmounted→mounting）同样触发重建
         key_shift = MenuBuilder(MagicMock(), lambda: _state(
-            mount_states=(("t-1", "Aws-eu", "ws", "mounting", ""),))).struct_key()
+            mount_states=(MountState("t-1", "Aws-eu", "ws", "mounting", ""),))).struct_key()
         self.assertNotEqual(key_mounted, key_shift)
 
     def test_mount_rows_and_actions(self):
@@ -234,7 +236,7 @@ class TestMountSubmenu(unittest.TestCase):
         self.assertIn("挂载", items)
 
     def test_error_row_shows_message(self):
-        states = (("t-1", "srv", "data", "error", "挂载失败：权限不足"),)
+        states = (MountState("t-1", "srv", "data", "error", "挂载失败：权限不足"),)
         _, rows, titles = self._submenu(states)
         err = [r for r in rows if r.title.startswith("srv · data")]
         self.assertIn("— 异常", err[0].title)

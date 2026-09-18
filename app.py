@@ -453,7 +453,7 @@ class MagicProxyApp(rumps.App):
     def toggle_forward_session(self, tunnel_id):
         """菜单「启动/停止端口转发」：无会话则启，有则停。"""
         def act(_):
-            running = {tid for tid, _, _ in self._conn.forward_sessions()}
+            running = {s.tunnel_id for s in self._conn.forward_sessions()}
             if tunnel_id in running:
                 self._conn.stop_forward(tunnel_id)
             else:
@@ -491,8 +491,8 @@ class MagicProxyApp(rumps.App):
         """菜单「挂载/卸载」：在挂（mounted/mounting/unmounting）则卸，
         其余（unmounted/error）则挂。"""
         def act(_):
-            states = {(tid, n): st for tid, _tn, n, st, _e
-                      in self._mounts.mount_states()}
+            states = {(m.tunnel_id, m.name): m.status
+                      for m in self._mounts.mount_states()}
             if states.get((tunnel_id, name)) in (
                     "mounted", "mounting", "unmounting"):
                 self._mounts.stop_mount(tunnel_id, name)
@@ -786,8 +786,8 @@ class MagicProxyApp(rumps.App):
             if action.get("if_connected"):
                 if is_forward:
                     # 定向守卫：仅该转发会话已连接才重建，未运行不拉起
-                    states = {tid: st for tid, _, st
-                              in self._conn.forward_sessions()}
+                    states = {s.tunnel_id: s.status
+                              for s in self._conn.forward_sessions()}
                     if states.get(tunnel_id) != "connected":
                         logger.info(
                             "转发会话自动重连跳过：%s 未连接（status=%s）",

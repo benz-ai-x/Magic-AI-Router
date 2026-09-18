@@ -30,14 +30,27 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import NamedTuple
 
 from tunnel.proxy import ProxyRuntime, SSHMonitor
 from tunnel.retry_scheduler import RetryScheduler
 from tunnel.host_key_flow import HostKeyFlow
-from tunnel.ssh_session import SshSession, check_and_recover
+from tunnel.ssh_session import SshSession, check_and_recover, \
+    first_forward_port
 from shared.stats import Stats
 
 logger = logging.getLogger("magic-proxy.connection")
+
+
+class ForwardState(NamedTuple):
+    """一条转发会话的运行态快照（菜单/UI/配置服务共用投影）。
+
+    NamedTuple 保位置兼容（既有解包不破）；消费面用字段访问——
+    形状契约从「位置元组猜形状」升为命名字段。
+    """
+    tunnel_id: str
+    name: str
+    status: str
 
 
 class ConnectionCoordinator:
@@ -149,8 +162,9 @@ class ConnectionCoordinator:
         return t.get("id") if t else None
 
     def forward_sessions(self):
-        """转发会话快照 [(tunnel_id, name, status)]——菜单/UI 投影用。"""
-        return [(tid, s.monitor.current_name or tid, s.monitor.status)
+        """转发会话快照 [ForwardState]——菜单/UI 投影用。"""
+        return [ForwardState(tid, s.monitor.current_name or tid,
+                             s.monitor.status)
                 for tid, s in self._forward_sessions.items()]
 
     # ── lifecycle ───────────────────────────────────────
@@ -218,17 +232,6 @@ class ConnectionCoordinator:
                 return t
         return None
 
-    @staticmethod
-    def _forward_probe_port(tunnel):
-        """转发会话就绪探测口：第一条 -L 的本地端口。"""
-        for f in tunnel.get("forwards") or []:
-            if isinstance(f, dict):
-                lp = f.get("local_port")
-                if isinstance(lp, int) and not isinstance(lp, bool) \
-                        and 1 <= lp <= 65535:
-                    return lp
-        return None
-
     # ── 转发会话生命周期（多活） ─────────────────────────
 
     def start_forward(self, tunnel_id):
@@ -255,7 +258,7 @@ class ConnectionCoordinator:
                 identity_fn=lambda tid=tunnel_id: self._tunnel_by_id(tid),
                 password_fn=self._get_tunnel_password,
                 probe_port_fn=lambda tid=tunnel_id:
-                    self._forward_probe_port(self._tunnel_by_id(tid)))
+                    first_forward_port(self._tunnel_by_id(tid)))
             self._forward_sessions[tunnel_id] = session
             session.connect()
             logger.info("转发会话启动：%s", tunnel.get("name", tunnel_id))

@@ -382,7 +382,8 @@ class MenuBuilder:
 
         tunnels = st.config.get("tunnels", [])
         current_idx = _proxy_tunnel_index(st.config)
-        fw_running = {tid: status for tid, _n, status in (st.forward_states or ())}
+        fw_running = {f.tunnel_id: f.status
+                      for f in (st.forward_states or ())}
         any_rules = False
         for i, t in enumerate(tunnels):
             tid = t.get("id") or f"#{i}"
@@ -446,10 +447,10 @@ class MenuBuilder:
 
         any_mounts = False
         for entry in (st.mount_states or ()):
-            if not isinstance(entry, (tuple, list)) or len(entry) < 4:
-                continue
-            tid, tname, mname, status = entry[:4]
-            error = entry[4] if len(entry) > 4 else ""
+            # MountState（NamedTuple 投影）：字段即契约，不再防御式猜形状
+            tid, tname, mname, status, error = (
+                entry.tunnel_id, entry.tunnel_name, entry.name,
+                entry.status, entry.error)
             any_mounts = True
             tail = _MOUNT_TAIL.get(status, "")
             row = rumps.MenuItem(f"{tname} · {mname}{tail}", callback=None)
@@ -582,14 +583,13 @@ class MenuBuilder:
             proxy_text = "AI Proxy"
         # 多活：转发会话在跑时状态行附转发计数（主图标语义不变——只反映
         # 代理会话，:8888 上游只依赖它）
-        fw_up = sum(1 for _tid, _n, status in (st.forward_states or ())
-                    if status == "connected")
+        fw_up = sum(1 for f in (st.forward_states or ())
+                    if f.status == "connected")
         if fw_up:
             proxy_text += f" ｜ {fw_up} 条转发"
         # 挂载计数同款模式（ADR-007）：只数已挂载
         mounts_up = sum(1 for entry in (st.mount_states or ())
-                        if isinstance(entry, (tuple, list))
-                        and len(entry) >= 4 and entry[3] == "mounted")
+                        if entry.status == "mounted")
         if mounts_up:
             proxy_text += f" ｜ {mounts_up} 挂载"
         self._set_title("proxy_status", proxy_text)

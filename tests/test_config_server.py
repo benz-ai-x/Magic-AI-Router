@@ -988,7 +988,9 @@ class TestMultiActiveDecorations(unittest.TestCase):
             {"id": "t-2", "ssh_host": "b", "forwards": []}],
             "current_tunnel": 0}
         with patch.object(config_server, "_read_mp", return_value=cfg):
-            mp = self._state(lambda: [("t-2", "b", "connected")])
+            from tunnel.connection_coordinator import ForwardState
+            mp = self._state(
+                lambda: [ForwardState("t-2", "b", "connected")])
         self.assertTrue(mp["tunnels"][0]["is_proxy"])
         self.assertFalse(mp["tunnels"][0]["forward_running"])
         self.assertFalse(mp["tunnels"][1]["is_proxy"])

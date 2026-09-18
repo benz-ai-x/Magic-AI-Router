@@ -13,7 +13,7 @@ from tunnel import ssh_session
 from tunnel.ssh_session import SshSession, check_and_recover
 
 
-def _session(identity_fn=None, spawn_fn=None, probe_port_fn=None,
+def _session(identity_fn=None, spawn_fn=None, probe_port_fn=lambda: None,
              password_fn=None):
     holder = {"identity": identity_fn if identity_fn is not None
               else lambda: {"id": "t-1", "name": "srv", "forwards": [
@@ -108,17 +108,23 @@ class TestLifecycle(unittest.TestCase):
 
 
 class TestProbePort(unittest.TestCase):
+    """probe_port 恒经显式注入的 fn（隐式默认推导已删——曾是生产死路）。"""
+
     def test_explicit_fn_wins(self):
         s = _session(probe_port_fn=lambda: 13000)
         self.assertEqual(s.probe_port, 13000)
 
-    def test_default_first_forward_port(self):
-        s = _session()
-        self.assertEqual(s.probe_port, 9000)
-
-    def test_default_no_forwards_is_none(self):
-        s = _session(identity_fn=lambda: {"id": "t-1", "forwards": []})
-        self.assertIsNone(s.probe_port)
+    def test_first_forward_port_derivation_single_home(self):
+        from tunnel.ssh_session import first_forward_port
+        self.assertEqual(first_forward_port(
+            {"forwards": [{"local_port": 9000, "remote_host": "h",
+                           "remote_port": 80},
+                          {"local_port": True}]}), 9000)
+        self.assertIsNone(first_forward_port({"forwards": []}))
+        self.assertIsNone(first_forward_port(None))
+        # 防御分支：非法端口行跳过
+        self.assertIsNone(first_forward_port(
+            {"forwards": [{"local_port": 70000}]}))
 
 
 class TestTick(unittest.TestCase):
