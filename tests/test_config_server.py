@@ -1101,3 +1101,32 @@ class TestProxyRoleDecorationById(unittest.TestCase):
         mp = json.loads(body)["mp"]
         self.assertFalse(mp["tunnels"][0]["is_proxy"])
         self.assertTrue(mp["tunnels"][1]["is_proxy"])
+
+
+class TestNfsDecorationShape(unittest.TestCase):
+    """ADR-007 可见性链路：nfs_states 装饰携带 {status,error,fixable}——
+    error 不再丢弃（2026-09-18 真机案例：用户看到"没反应"正因错误
+    断在装饰层）。"""
+
+    def test_mount_decoration_carries_error_and_fixable(self):
+        import threading
+        from tunnel.connection_coordinator import ForwardState  # noqa: F401
+        from mount.coordinator import MountState
+        from shared.runtime_state import RuntimeProjection
+        cfg = {"tunnels": [{"id": "t-1", "ssh_host": "a", "forwards": []}],
+               "current_tunnel": 0}
+        proj = RuntimeProjection(mounts=(MountState(
+            "t-1", "srv", "data", "error", "远程路径不存在或未导出", "exports"),))
+        s = config_server.ConfigServer(runtime_state_fn=lambda: proj)
+        s._server = config_server._ThreadingHTTPServer(
+            ("127.0.0.1", 0), config_server._Handler,
+            expected_token=s._token, runtime_state_fn=lambda: proj)
+        port = s._server.server_address[1]
+        threading.Thread(target=s._server.serve_forever, daemon=True).start()
+        self.addCleanup(s.stop)
+        with patch.object(config_server, "_read_mp", return_value=cfg):
+            status, body = _request(port, "GET", "/api/state", token=s._token)
+        tunnels = json.loads(body)["mp"]["tunnels"]
+        self.assertEqual(tunnels[0]["nfs_states"]["data"], {
+            "status": "error", "error": "远程路径不存在或未导出",
+            "fixable": "exports"})

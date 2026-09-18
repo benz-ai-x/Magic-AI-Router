@@ -239,11 +239,35 @@ class TestMountNfs(unittest.TestCase):
         with patch.object(mount_control, "is_mounted", return_value=False), \
              patch.object(mount_control.subprocess, "run",
                           return_value=_proc(1, "",
-                                             "mount_nfs: /data: Permission "
-                                             "denied\nsecond line")):
+                                             "mount_nfs: exotic failure\n"
+                                             "second line")):
             r = mount_control.mount_nfs(1, "/data", "/Volumes/x")
-        self.assertIn("Permission denied", r["error"])
+        self.assertIn("exotic failure", r["error"])
         self.assertNotIn("second line", r["error"])
+        self.assertEqual(r["fixable"], "")
+
+    def test_enoent_classified_with_fix_hint(self):
+        """真机案例（2026-09-18）：未导出 → ENOENT 裸透如天书——分类出
+        行动指引 + 结构化 fixable（设置窗据此给一键修复按钮）。"""
+        with patch.object(mount_control, "is_mounted", return_value=False), \
+             patch.object(mount_control.subprocess, "run",
+                          return_value=_proc(1, "",
+                                             "mount_nfs: can't mount /p from "
+                                             "127.0.0.1 onto /Volumes/x: "
+                                             "No such file or directory")):
+            r = mount_control.mount_nfs(1, "/p", "/Volumes/x")
+        self.assertIn("一键安装", r["error"])
+        self.assertEqual(r["fixable"], mount_control.FIXABLE_EXPORTS)
+
+    def test_eacces_classified(self):
+        with patch.object(mount_control, "is_mounted", return_value=False), \
+             patch.object(mount_control.subprocess, "run",
+                          return_value=_proc(1, "",
+                                             "mount_nfs: /data: Permission "
+                                             "denied")):
+            r = mount_control.mount_nfs(1, "/data", "/Volumes/x")
+        self.assertIn("属主统一映射", r["error"])
+        self.assertEqual(r["fixable"], "")
 
 
 class TestUnmount(unittest.TestCase):

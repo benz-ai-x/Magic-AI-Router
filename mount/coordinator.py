@@ -44,24 +44,27 @@ STATUS_ERROR = "error"
 class MountState(NamedTuple):
     """单个挂载项的运行态快照（菜单/UI/配置服务共用投影）。
 
-    NamedTuple 保位置兼容；消费面用字段访问（tunnel_id/tunnel_name/
-    name/status/error）——形状契约从位置元组升为命名字段。
+    NamedTuple 保位置兼容；消费面用字段访问——形状契约从位置元组升为
+    命名字段。fixable 非空 = 存在结构化修复路径（"exports" = 远端未
+    导出，重跑一键安装可修），设置窗据此渲染「修复导出并重挂」按钮。
     """
     tunnel_id: str
     tunnel_name: str
     name: str
     status: str
     error: str
+    fixable: str = ""
 
 
 class _MountState:
     """单个挂载项的运行时状态（worker 线程写，tick 读）。"""
 
-    __slots__ = ("status", "error", "busy", "next_retry")
+    __slots__ = ("status", "error", "fixable", "busy", "next_retry")
 
     def __init__(self):
         self.status = STATUS_UNMOUNTED
         self.error = ""
+        self.fixable = ""
         self.busy = False
         self.next_retry = 0.0
 
@@ -120,7 +123,8 @@ class MountCoordinator:
                     result.append(MountState(
                         tid, tname, row["name"],
                         state.status if state else STATUS_UNMOUNTED,
-                        state.error if state else ""))
+                        state.error if state else "",
+                        state.fixable if state else ""))
             return result
 
     def any_mounted(self):
@@ -368,23 +372,27 @@ class MountCoordinator:
                 error = err
         if not error and not self._wait_tunnel(local_port):
             error = "等待 NFS 隧道就绪超时（连接未建立）"
+        fixable = ""
         if not error:
             r = mount_control.mount_nfs(local_port, row.get("remote_path"),
                                         mount_dir)
             if not r["ok"]:
                 error = r["error"]
+                fixable = r.get("fixable", "")
         with self._lock:
             state = self._states.setdefault(key, _MountState())
             state.busy = False
             if error:
                 state.status = STATUS_ERROR
                 state.error = error
+                state.fixable = fixable
                 state.next_retry = self._clock() + MOUNT_RETRY_BACKOFF
                 logger.warning("NFS 挂载失败 %s/%s：%s", tunnel_id, name,
                                error)
             else:
                 state.status = STATUS_MOUNTED
                 state.error = ""
+                state.fixable = ""
                 logger.info("NFS 挂载成功：%s → %s", row.get("remote_path"),
                             mount_dir)
 

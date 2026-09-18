@@ -323,3 +323,33 @@ class TestStaleMountSweep(CoordinatorTestBase):
         self.table["/Volumes/other"] = "fileserver:/x"
         self.coord.tick()
         self.assertEqual(self.executor.calls, [])
+
+
+class TestFixablePropagation(CoordinatorTestBase):
+    """可见性链路第一环：mount_nfs 失败的 fixable 分类透传到 MountState
+    ——设置窗的「修复导出并重挂」按钮依赖它。"""
+
+    def test_fixable_exports_reaches_mount_state(self):
+        self.mounted_result = {"ok": False, "error": "远程路径不存在或未导出",
+                               "fixable": "exports"}
+        self.coord.apply_autostarts()
+        self.coord.tick()
+        states = {m.name: m for m in self.coord.mount_states()}
+        self.assertEqual(states["data"].status, mc.STATUS_ERROR)
+        self.assertEqual(states["data"].fixable, "exports")
+
+    def test_success_clears_fixable(self):
+        # 先失败（带 fixable），再成功 → fixable 清空
+        self.mounted_result = {"ok": False, "error": "远程路径不存在或未导出",
+                               "fixable": "exports"}
+        self.coord.apply_autostarts()
+        self.coord.tick()
+        self.mounted_result = {"ok": True}
+        key = ("t-1", "data")
+        self.coord._states[key].next_retry = 0
+        self.coord._states[key].busy = False
+        self.coord._states[key].status = mc.STATUS_UNMOUNTED
+        self.coord.tick()
+        states = {m.name: m for m in self.coord.mount_states()}
+        self.assertEqual(states["data"].status, mc.STATUS_MOUNTED)
+        self.assertEqual(states["data"].fixable, "")

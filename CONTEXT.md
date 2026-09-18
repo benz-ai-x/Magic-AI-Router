@@ -69,6 +69,10 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 设置界面的两阶段保存状态机（`shellui/config_ui.html` LAYER 1 的 `saveFlow`）：校验 → 保存网关配置（PUT /api/state）→ CC 同步预览（失败关闭）→ 用户确认弹窗 → 写入 Claude Code → baseline 推进 → 分支 toast。一切副作用（fetch/弹窗/toast/baseline 写回）经 deps 注入——真实现与测试桩是同一 seam 的两个 adapter，node 测试直接钉住状态机。调用方（LAYER 2 的 `saveAll`）只做表单 collect 与接线；dirty 真相源在 JS，经 `dirtyProjection` 与保存流同口径。
 
+### 挂载错误可见性链路（2026-09-18 真机案例）
+
+用户加挂载项未先「一键安装」→ 远端无导出 → mount_nfs ENOENT 裸透如天书、且设置窗是不刷新的快照（`/api/state` 仅打开时拉一次）——错误永远不出现，表现为「没反应」。修复为四级链路：`mount_control._classify_mount_failure` 分类出中文指引 + **fixable**（"exports" = 重跑一键安装可修）→ `MountState.fixable` → `/api/state` 的 `nfs_states` 装饰携带 `{status,error,fixable}`（error 不再丢弃）→ 设置窗 nfs 视图 5s **定向轮询**（`mergeRuntimeDecorations` 纯函数只合并装饰字段、绝不碰表单；DOM 按锚点 id 更新不 renderView）+ 错误行内显示 + `fixable==="exports"` 时给「修复导出并重挂」按钮（POST nfs-setup-remote 后自动重挂）。
+
 ### 运行态投影（RuntimeProjection）
 
 跨域运行态的一次快照（`shared/runtime_state.py`，叶子层零域知识容器）：`capture_active`（语义单一归宿在抓包域 `CaptureController.actively_running`——enabled 且 mitmdump 就绪）+ `forwards: [ForwardState]` + `mounts: [MountState]`。app 一处组装（三个生产者），LifecycleRuntime → ConfigServer → HTTP handler 单一 seam 透传（架构评审 R3：曾经的 capture_state + tunnel_states_fn + mount_states_fn 三参穿三层）；`/api/state` 装饰（is_proxy/forward_running/nfs_states/capture_active）全部从这一个投影读。下一个运行态字段 = 生产者加一个字段，不再加构造参数。

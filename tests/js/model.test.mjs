@@ -1168,3 +1168,40 @@ test("viewSnapshot('nfs') ignores runtime decorations", () => {
     0,
   );
 });
+
+// ── 挂载运行态可见性（fixable 链路 + 定向合并不变量）──────────
+test("nfsStateOf normalizes object/string/absent shapes", () => {
+  assert.deepEqual(L.nfsStateOf({}, "x"), {status:"unmounted",error:"",fixable:""});
+  assert.deepEqual(L.nfsStateOf({x:"mounted"}, "x"), {status:"mounted",error:"",fixable:""});
+  assert.deepEqual(
+    L.nfsStateOf({x:{status:"error",error:"远程路径不存在或未导出",fixable:"exports"}}, "x"),
+    {status:"error",error:"远程路径不存在或未导出",fixable:"exports"});
+});
+
+test("mergeRuntimeDecorations updates decorations but never form fields", () => {
+  const S = L.normalizeState({mp:{tunnels:[
+    {id:"t-1", name:"本地编辑中的名字", ssh_host:"h", nfs:{enabled:true,local_port:12049,mounts:[]}}]}});
+  const fetched = {mp:{capture_active:true, tunnels:[
+    {id:"t-1", name:"远端名字", ssh_host:"OTHER", is_proxy:true, forward_running:true,
+     has_password:true, nfs_states:{data:{status:"error",error:"boom",fixable:"exports"}}}]}};
+  L.mergeRuntimeDecorations(S, fetched);
+  const t = S.mp.tunnels[0];
+  // 表单字段（dirty 真相）绝不覆盖
+  assert.equal(t.name, "本地编辑中的名字");
+  assert.equal(t.ssh_host, "h");
+  // 装饰字段定向更新
+  assert.equal(t.is_proxy, true);
+  assert.equal(t.forward_running, true);
+  assert.equal(t.has_password, true);
+  assert.deepEqual(t.nfs_states.data, {status:"error",error:"boom",fixable:"exports"});
+  assert.equal(S.mp.capture_active, true);
+});
+
+test("mergeRuntimeDecorations skips unmatched/anonymous tunnels", () => {
+  const S = L.normalizeState({mp:{tunnels:[
+    {id:"t-1", name:"keep"}, {name:"no-id"}]}});
+  const fetched = {mp:{tunnels:[{id:"t-2", name:"别的"}]}};
+  L.mergeRuntimeDecorations(S, fetched);
+  assert.equal(S.mp.tunnels[0].name, "keep");
+  assert.equal(S.mp.tunnels[1].name, "no-id");
+});

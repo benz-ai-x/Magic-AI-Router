@@ -196,6 +196,7 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .fw-table td{vertical-align:middle}
 .fw-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}
 .fw-status{font-size:12px;color:var(--muted)}
+.nfs-errmsg{color:var(--danger);font-size:11px;margin:4px 0 0;max-width:280px;word-break:break-all}
 .fw-status.ok{color:var(--ok)}
 .fw-status.err{color:var(--danger)}
 .fw-empty td{padding:16px 12px;color:var(--muted);font-size:13px;text-align:center}
@@ -370,6 +371,32 @@ function numberDefault(value,fallback){
 // 空值即回写 null，哨兵永不上 PUT 线、永不入 S.sp/S.mp 持久态。
 // NFS 视图投影（ADR-007）：collect 的缺省口径与本投影同一语义——空端口
 // =12049、空字段=''、auto_mount 严格布尔，未触碰的隧道不产生假 dirty。
+// nfs_states 装饰值归一（对象 {status,error,fixable}；字符串 = 旧形状
+// 兼容测试夹具）——可见性链路：分类(fixable)→投影→装饰→此处→状态单元格
+function nfsStateOf(states,name){
+  const v=(states||{})[name];
+  if(v==null)return{status:'unmounted',error:'',fixable:''};
+  if(typeof v==='string')return{status:v,error:'',fixable:''};
+  return{status:v.status||'unmounted',error:v.error||'',fixable:v.fixable||''};
+}
+// 运行态装饰定向合并：只动装饰字段，绝不覆盖表单字段（dirty 真相在
+// 表单）——曾有的坑：整页 renderView 会冲掉未保存的编辑
+function mergeRuntimeDecorations(S,fetched){
+  const fm=(fetched&&fetched.mp)||{};
+  const byId={};
+  (fm.tunnels||[]).forEach(t=>{if(t&&t.id)byId[t.id]=t;});
+  (S.mp.tunnels||[]).forEach(t=>{
+    if(!t||!t.id)return;
+    const f=byId[t.id];if(!f)return;
+    t.nfs_states=f.nfs_states||{};
+    t.is_proxy=f.is_proxy===true;
+    t.forward_running=f.forward_running===true;
+    t.has_password=f.has_password===true;
+  });
+  if('capture_active' in fm)S.mp.capture_active=fm.capture_active===true;
+  return S;
+}
+
 function nfsProjection(n){
   n=n||{};
   return{
@@ -1356,17 +1383,20 @@ function nfsMountRows(t){
   const ms=n.mounts||[];
   if(!ms.length)return `<tr class="fw-empty"><td colspan="5">暂无挂载项——点「+ 添加挂载」把远程目录挂到本机</td></tr>`;
   return ms.map((m,mi)=>{
-    const st=states[m.name]||'unmounted';
-    const [lbl,cls]=NFS_STATUS_LABEL[st]||NFS_STATUS_LABEL.unmounted;
+    const o=nfsStateOf(states,m.name);
+    const [lbl,cls]=NFS_STATUS_LABEL[o.status]||NFS_STATUS_LABEL.unmounted;
+    const isErr=o.status==='error';
     return `<tr data-nmr="${mi}">
       <td><input class="control" data-nmf="name" value="${esc(m.name||'')}" placeholder="data" aria-label="挂载 ${mi+1} 名称"></td>
       <td><input class="control mono" data-nmf="remote_path" value="${esc(m.remote_path||'')}" placeholder="/data" aria-label="挂载 ${mi+1} 远程路径"></td>
       <td><input class="control mono" data-nmf="local_dir" value="${esc(m.local_dir||'')}" placeholder="/Volumes/${esc(m.name||'名称')}" aria-label="挂载 ${mi+1} 本地目录"></td>
       <td><button class="switch" data-nmf="auto" role="switch" aria-checked="${m.auto_mount===true}" aria-label="挂载 ${mi+1} 随应用自动挂载" onclick="toggleSwitch(this)"></button></td>
-      <td><div class="fw-actions"><span class="fw-status ${cls}">${lbl}</span>
+      <td><div class="fw-actions"><span id="nfs-st-${mi}" class="fw-status ${cls}" title="${esc(o.error)}">${lbl}</span>
         <button class="btn btn-sm" aria-label="挂载 ${esc(m.name||('项'+(mi+1)))}" onclick="nfsMountAction(this,${mi},'mount')">挂载</button>
         <button class="btn btn-sm" aria-label="卸载 ${esc(m.name||('项'+(mi+1)))}" onclick="nfsMountAction(this,${mi},'unmount')">卸载</button>
-        <button class="btn btn-sm btn-danger" aria-label="删除挂载 ${mi+1}" onclick="removeNfsMount(${mi})">删除</button></div></td>
+        <button class="btn btn-sm btn-danger" aria-label="删除挂载 ${mi+1}" onclick="removeNfsMount(${mi})">删除</button></div>
+        <div id="nfs-err-${mi}" class="nfs-errmsg" ${isErr?'':'hidden'}>${isErr?esc(o.error.slice(0,90)):''}</div>
+        <button id="nfs-fix-${mi}" class="btn btn-sm" style="margin-top:4px" ${isErr&&o.fixable==='exports'?'':'hidden'} onclick="nfsFixExports(${mi},this)">修复导出并重挂</button></td>
     </tr>`;
   }).join('');
 }
@@ -1487,6 +1517,67 @@ async function nfsSetupRemote(btn){
   }catch(e){_setNfsResult('❌ 请求失败: '+e.message,'var(--danger)');}
   btn.disabled=false;btn.textContent='一键安装 / 更新导出';
 }
+// ── 挂载运行态可见性（2026-09-18 真机案例）：分类(fixable)→投影→
+// /api/state 装饰→此处定向轮询——设置窗曾是"不刷新的快照"，错误永远
+// 不会自己出现 ─────────────────────────────────────────────
+const NFS_POLL_MS=5000;
+let nfsPollTimer=null;
+function nfsStopPoll(){if(nfsPollTimer){clearTimeout(nfsPollTimer);nfsPollTimer=null;}}
+function nfsPollLoop(){
+  nfsStopPoll();
+  nfsPollTimer=setTimeout(async()=>{
+    if(activeView!=='nfs')return;
+    await nfsRefreshRuntime();
+    if(activeView==='nfs')nfsPollLoop();
+  },NFS_POLL_MS);
+}
+async function nfsRefreshRuntime(){
+  let d;try{const r=await fetch('/api/state',{headers:apiHeaders(null)});
+    if(!r.ok)return;d=await r.json();}catch(e){return;}
+  mergeRuntimeDecorations(S,d);   // 只合并装饰字段，表单不动
+  nfsUpdateStatusCells();          // 定向 DOM 更新，不 renderView
+}
+function nfsUpdateStatusCells(){
+  const t=(S.mp.tunnels||[])[activeTunnel];if(!t)return;
+  const states=t.nfs_states||{};
+  ((t.nfs||{}).mounts||[]).forEach((m,mi)=>{
+    if(!m||!m.name)return;
+    const o=nfsStateOf(states,m.name);
+    const [lbl,cls]=NFS_STATUS_LABEL[o.status]||NFS_STATUS_LABEL.unmounted;
+    const stEl=document.getElementById('nfs-st-'+mi);
+    if(stEl){stEl.textContent=lbl;stEl.className='fw-status '+(cls||'');stEl.title=o.error||'';}
+    const errEl=document.getElementById('nfs-err-'+mi);
+    if(errEl){const show=o.status==='error';errEl.hidden=!show;
+      if(show)errEl.textContent=(o.error||'').slice(0,90);}
+    const fixEl=document.getElementById('nfs-fix-'+mi);
+    if(fixEl)fixEl.hidden=!(o.status==='error'&&o.fixable==='exports');
+  });
+}
+async function nfsFixExports(mi,btn){
+  collectNfs();const ts=S.mp.tunnels||[],i=activeTunnel;
+  const t=ts[i];if(!t)return;
+  const n=t.nfs||{};
+  const row=(n.mounts||[])[mi];
+  const mounts=[...new Set((n.mounts||[]).map(m=>(m.remote_path||'').trim()).filter(p=>p&&p.startsWith('/')))];
+  if(!mounts.length){toast('请先填写有效的远程路径',true);return;}
+  const pwEl=document.querySelector('.md-detail [data-nf="sudo_pw"]');
+  const orig=btn.textContent;btn.disabled=true;btn.textContent='修复中…';
+  _setNfsResult('修复中…（重建远端导出表，秒级）','var(--muted)');
+  try{
+    const r=await fetch('/api/nfs-setup-remote',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),
+      body:JSON.stringify({tunnel:t,mounts,squash:n.squash_to_ssh_user===true,sudo_password:pwEl?pwEl.value:''})});
+    const d=await r.json();
+    if(d.ok){
+      _setNfsResult('✅ 导出已修复——重新挂载 '+((row&&row.name)||'')+' …','var(--ok)');
+      if(t.id&&row&&row.name)
+        nativeSend('nfsMountToggle',{tunnel_id:t.id,name:row.name,action:'mount'});
+      setTimeout(nfsRefreshRuntime,1500);
+    }else{
+      _setNfsResult('❌ 修复失败：'+(d.error||'')+(d.stage?`（阶段：${d.stage==='install'?'安装软件包':d.stage==='apply'?'应用导出':'前置检查'}）`:''),'var(--danger)');
+    }
+  }catch(e){_setNfsResult('❌ 请求失败: '+e.message,'var(--danger)');}
+  btn.disabled=false;btn.textContent=orig;
+}
 function nfsMountAction(btn,mi,action){
   collectNfs();const t=S.mp.tunnels[activeTunnel];if(!t)return;
   const m=((t.nfs||{}).mounts||[])[mi];
@@ -1495,7 +1586,9 @@ function nfsMountAction(btn,mi,action){
   if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
     nativeSend('nfsMountToggle',{tunnel_id:t.id,name:m.name,action});
     btn.disabled=true;
-    setTimeout(()=>{recomputeDirty();renderView();},1500);
+    // 定向补拉真实运行态（renderView 会冲掉未保存表单且用的还是旧 S）
+    setTimeout(nfsRefreshRuntime,1500);
+    setTimeout(nfsRefreshRuntime,4000);
   }else toast('挂载操作需在应用的设置窗内使用');
 }
 
@@ -2017,7 +2110,8 @@ function collect(forSave){
 // setProxyTunnel（显式动作）。旧版在此隐式写 activeTunnel，查看另一条
 // 隧道后保存会把代理静默切过去（实测 bug：保存后隧道变成另一连接串）
 Object.assign(VIEWS.tunnel,{render:tunnelHTML,collect(){collectTunnel();}});
-Object.assign(VIEWS.nfs,{render:nfsHTML,collect(){collectNfs();}});
+Object.assign(VIEWS.nfs,{render:nfsHTML,collect(){collectNfs();},
+  enter(){nfsPollLoop();},leave(){nfsStopPoll();}});
 Object.assign(VIEWS.proxy,{render:proxyHTML,collect:collectProxy});
 Object.assign(VIEWS.system,{render:systemHTML,collect:collectSystem});
 Object.assign(VIEWS.providers,{render:providerHTML,collect:collectProvider});

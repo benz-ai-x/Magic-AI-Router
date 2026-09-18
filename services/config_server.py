@@ -348,7 +348,8 @@ class _Handler(BaseHTTPRequestHandler):
                 mount_states = {}
                 for entry in (proj.mounts if proj else ()):
                     mount_states.setdefault(entry.tunnel_id, {})[entry.name] \
-                        = entry.status
+                        = {"status": entry.status, "error": entry.error,
+                           "fixable": entry.fixable}
             except Exception:
                 logger.exception("runtime_state_fn failed")
                 capture_active = False

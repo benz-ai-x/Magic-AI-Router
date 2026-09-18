@@ -187,20 +187,38 @@ def mount_nfs(local_port, remote_path, local_dir, timeout=MOUNT_TIMEOUT):
     if proc.returncode == 0 and is_mounted(local_dir):
         return {"ok": True}
     stderr = proc.stderr.decode("utf-8", "replace")
-    return {"ok": False, "error": _classify_mount_failure(stderr)}
+    message, fixable = _classify_mount_failure(stderr)
+    return {"ok": False, "error": message, "fixable": fixable}
+
+
+# 挂载失败的可修复类别（fixable）——UI 依赖它渲染「一键修复」按钮；
+# 空串 = 无结构化修复路径
+FIXABLE_EXPORTS = "exports"
 
 
 def _classify_mount_failure(stderr):
+    """mount_nfs stderr → (中文错误短语, fixable)。
+
+    真机案例（2026-09-18）：加挂载项未先「一键安装」→ 远端无导出 →
+    ENOENT 裸透给用户如同天书——分类出行动指引 + 结构化 fixable，
+    设置窗据此给一键修复入口。
+    """
     text = (stderr or "").strip()
     lowered = text.lower()
     if "a password is required" in lowered or "not authorized" in lowered:
-        return "需要管理员授权（挂载前会自动引导，请重试）"
+        return "需要管理员授权（挂载前会自动引导，请重试）", ""
+    if "no such file or directory" in lowered:
+        return ("远程路径不存在或未导出——请先执行「一键安装 / 更新导出」",
+                FIXABLE_EXPORTS)
+    if "permission denied" in lowered:
+        return ("无权限访问远程目录（属主/映射问题，可尝试开启属主统一"
+                "映射后重新一键安装）", "")
     if "no route" in lowered or "timed out" in lowered:
-        return "无法连到远程 NFS（隧道未就绪？）"
+        return "无法连到远程 NFS（隧道未就绪？）", ""
     if "unknown host" in lowered:
-        return "远程 NFS 未响应"
+        return "远程 NFS 未响应", ""
     first = text.splitlines()[0] if text else "未知错误"
-    return f"挂载失败：{first[:160]}"
+    return f"挂载失败：{first[:160]}", ""
 
 
 def unmount(local_dir, force=False, timeout=UMOUNT_TIMEOUT):
