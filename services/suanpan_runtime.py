@@ -24,14 +24,24 @@ DEFAULT_LISTEN = "127.0.0.1:9527"
 # Minimal default config written on first run so the config UI (port 9528
 # webview) is immediately usable.  Users then add providers via the settings
 # webview or by editing this file directly.
-_DEFAULT_CONFIG_YAML = """\
-listen_port: 9527
-request_timeout_s: 3600
-body_limit_mb: 50
-providers: {}
-router: {}
-rules: []
-"""
+def default_config_yaml(usage_log_path=None) -> str:
+    """suanpan 默认配置文本的单一归宿（架构评审 R4 收尾：docker bootstrap
+    曾自持一份内容不同的拷贝——usage_log 指数据卷，改默认只改一边会静默
+    漂移）。usage_log_path 非空时附 usage_log 节（容器数据卷，重建不丢）。
+
+    写径不在此（各形态自持纪律）：macOS 首创建经 ConfigStateStore 事务
+    管线（_ensure_config），Docker 引导期经 config_store 原子写。
+    """
+    lines = [
+        "listen_port: 9527",
+        "request_timeout_s: 3600",
+        "body_limit_mb: 50",
+    ]
+    if usage_log_path:
+        lines += ["usage_log:", "  enabled: true",
+                  f"  path: {usage_log_path}"]
+    lines += ["providers: {}", "router: {}", "rules: []"]
+    return "\n".join(lines) + "\n"
 
 
 class SuanpanRuntime:
@@ -74,7 +84,7 @@ class SuanpanRuntime:
             # 内置默认是可信静态内容：直构 plan 落 commit（原子写+0600），
             # 不走业务校验（默认里的占位 base_url 会被 prepare 拒绝）
             plan = CommitPlan(True, [], None,
-                              _yaml.safe_load(_DEFAULT_CONFIG_YAML))
+                              _yaml.safe_load(default_config_yaml()))
             if store.commit(plan).ok:
                 logger.info("Created default Suanpan config at %s", path)
 

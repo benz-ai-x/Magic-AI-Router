@@ -50,15 +50,10 @@ def bootstrap_default_config(sp_path: str, data_dir: str) -> bool:
         return False
     log_path = os.path.join(data_dir, "logs", "usage.jsonl")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    default_yaml = (
-        "listen_port: 9527\n"
-        "request_timeout_s: 3600\n"
-        "body_limit_mb: 50\n"
-        f"usage_log:\n  enabled: true\n  path: {log_path}\n"
-        "providers: {}\n"
-        "router: {}\n"
-        "rules: []\n"
-    )
+    # 默认配置内容单一归宿（架构评审 R4 收尾）：曾自持一份拷贝，改默认
+    # 只改一边会静默漂移
+    from services.suanpan_runtime import default_config_yaml
+    default_yaml = default_config_yaml(usage_log_path=log_path)
     from shared import config_store
     ok = config_store.atomic_write(sp_path, default_yaml, mode=0o600)
     if not ok:
