@@ -52,6 +52,17 @@ if [ -n "${MP_APP_PASSWORD:-}" ]; then
         --team-id "$MP_TEAM_ID" >/dev/null
 fi
 
+# ── 时间戳策略（2026-09-18 Apple TSA 全局拒接 443 的降级开关）─────
+# 缺省 --timestamp（Apple TSA）；MP_TIMESTAMP_URL=none → --timestamp=none
+# （公证仍接受，仅记「无安全时间戳」警告——撤销语义丢失，Apple TSA
+# 恢复后应移除该环境变量重发）；MP_TIMESTAMP_URL=http://… → 自选 TSA
+# （codesign 仅支持 http）。
+case "${MP_TIMESTAMP_URL:-}" in
+    none) TIMESTAMP_FLAG="--timestamp=none" ;;
+    "")   TIMESTAMP_FLAG="--timestamp" ;;
+    *)    TIMESTAMP_FLAG="--timestamp=${MP_TIMESTAMP_URL}" ;;
+esac
+
 # ── 1. codesign .app(深签 + hardened runtime + 时间戳)─────────
 # --deep 已覆盖 ADR-001 抓包模式打包进 Contents/Resources|Frameworks/mitmdump/
 # 的嵌套 mitmdump 可执行文件（build.sh 现默认 bundle，Task 5）——deep sign
@@ -59,7 +70,7 @@ fi
 # 不需要为 mitmdump 单独加一条 codesign 命令。下面额外对该嵌套二进制单独
 # verify 一次，把"确实签到了"变成可见证据而非隐含假设。
 echo "▶ 1/6  codesign .app"
-codesign --deep --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
+codesign --deep --force --options runtime $TIMESTAMP_FLAG --sign "$IDENTITY" "$APP"
 codesign --verify --strict --deep "$APP" && echo "  签名验证 OK"
 MITMDUMP_BIN="$APP/Contents/Resources/mitmdump/mitmdump"
 if [ -f "$MITMDUMP_BIN" ]; then
@@ -86,7 +97,7 @@ bash "$ROOT/scripts/build_dmg.sh" >/dev/null
 DMG="$ROOT/dist/$APP_NAME-$VERSION.dmg"
 [ -f "$DMG" ] || { echo "未生成预期 DMG: $DMG"; exit 1; }
 # dmg 必须也用 Developer ID 签名,否则 spctl --assess 报 "no usable signature"
-codesign --force --sign "$IDENTITY" --timestamp "$DMG"
+codesign --force --sign "$IDENTITY" $TIMESTAMP_FLAG "$DMG"
 
 # ── 5. 公证 dmg ────────────────────────────────────────────────
 echo "▶ 5/6  公证 dmg(等待 Apple 审核…)"
