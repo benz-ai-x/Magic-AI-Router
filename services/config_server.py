@@ -182,8 +182,7 @@ def nfs_check_remote(tunnel):
     normalized, password, sudo_password, error = _nfs_credentials(tunnel)
     if error:
         return {"ok": False, "error": error}
-    return remote_setup.check_remote(normalized, password=password,
-                                     sudo_password=sudo_password)
+    return remote_setup.check_remote(normalized, password=password)
 
 
 def nfs_setup_remote(tunnel, mounts, squash_to_ssh_user=False,
@@ -210,14 +209,12 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
     def __init__(self, address, handler, *, expected_token=None,
-                 on_sp_saved=None, on_mp_saved=None, capture_state_fn=None,
-                 tunnel_states_fn=None, mount_states_fn=None):
+                 on_sp_saved=None, on_mp_saved=None, runtime_state_fn=None):
         self.expected_token = expected_token
         self.on_sp_saved = on_sp_saved
         self.on_mp_saved = on_mp_saved
-        self.capture_state_fn = capture_state_fn
-        self.tunnel_states_fn = tunnel_states_fn
-        self.mount_states_fn = mount_states_fn
+        # RuntimeProjection 单一 seam（架构评审 R3）：三回调穿参塌缩为一
+        self.runtime_state_fn = runtime_state_fn
         super().__init__(address, handler)
 
 
@@ -340,39 +337,29 @@ class _Handler(BaseHTTPRequestHandler):
             sp = sp_config.sp_load_masked()
             # Read-only runtime status injected for the config UI;
             # READONLY_DECORATED_FIELDS（config_state 单点声明）的剥除
-            # 保证它永不回写文件。
+            # 保证它永不回写文件。运行态经 RuntimeProjection 单一 seam
+            # 读取（缺席/失败 → 空投影：capture_active=False、装饰全空）
             try:
-                fn = self.server.capture_state_fn
-                mp["capture_active"] = bool(fn and fn())
-            except Exception:
-                logger.exception("capture_state_fn failed")
-                mp["capture_active"] = False
-            # 多活（v0.9）：per-tunnel 运行态装饰——is_proxy 按代理角色
-            # （id 真相 + 旧下标回退，与 merge 同一解析序），forward_running
-            # 按转发会话快照（tunnel_states_fn seam，capture_state 同款；
-            # app 侧注入，测试/容器形态缺席即全 False）
-            try:
-                states_fn = self.server.tunnel_states_fn
+                fn = self.server.runtime_state_fn
+                proj = fn() if fn else None
+                capture_active = bool(proj and proj.capture_active)
                 states = {s.tunnel_id: s.status
-                          for s in (states_fn() if states_fn else [])}
-            except Exception:
-                logger.exception("tunnel_states_fn failed")
-                states = {}
-            cid = mp.get("current_tunnel_id") or ""
-            current_idx = mp.get("current_tunnel", 0)
-            # ADR-007：NFS 挂载运行态装饰（mount_states_fn seam，缺席即
-            # 空投影——测试/容器形态）；nfs_states 属 READONLY_
-            # DECORATED_FIELDS，prepare 剥除保证永不落盘
-            try:
-                mfn = self.server.mount_states_fn
+                          for s in (proj.forwards if proj else ())}
                 mount_states = {}
-                for entry in (mfn() if mfn else []):
+                for entry in (proj.mounts if proj else ()):
                     mount_states.setdefault(entry.tunnel_id, {})[entry.name] \
                         = entry.status
             except Exception:
-                logger.exception("mount_states_fn failed")
+                logger.exception("runtime_state_fn failed")
+                capture_active = False
+                states = {}
                 mount_states = {}
+            mp["capture_active"] = capture_active
+            cid = mp.get("current_tunnel_id") or ""
+            current_idx = mp.get("current_tunnel", 0)
             for i, t in enumerate(mp.get("tunnels", [])):
+                # 多活（v0.9）is_proxy 按代理角色（id 真相 + 旧下标回退，
+                # 与 merge 同一解析序）；forward_running/nfs_states 按投影
                 is_role = (t.get("id") == cid) if cid else i == current_idx
                 t["is_proxy"] = is_role
                 t["forward_running"] = t.get("id") in states
@@ -617,8 +604,7 @@ class ConfigServer:
     """
 
     def __init__(self, on_sp_saved=None, on_mp_saved=None, port=CONFIG_PORT,
-                 capture_state=None, bind_host="127.0.0.1", token=None,
-                 tunnel_states_fn=None, mount_states_fn=None):
+                 bind_host="127.0.0.1", token=None, runtime_state_fn=None):
         self._port = port
         self._bind_host = bind_host
         self._server = None
@@ -626,15 +612,10 @@ class ConfigServer:
         self._token = token if token is not None else secrets.token_hex(16)
         self._on_sp_saved = on_sp_saved
         self._on_mp_saved = on_mp_saved
-        # Optional getter → bool ("capture mode actually running now");
-        # injected by app.py, stubbed in tests. None ⇒ /api/state reports False.
-        self._capture_state = capture_state
-        # 多活：转发会话快照 getter → [(tunnel_id, name, status)]；
-        # None（测试/容器）⇒ forward_running 全 False
-        self._tunnel_states_fn = tunnel_states_fn
-        # ADR-007：NFS 挂载快照 getter → [(tunnel_id, tname, name, status,
-        # error)]；None（测试/容器）⇒ nfs_states 全空投影
-        self._mount_states_fn = mount_states_fn
+        # 运行态投影 getter → RuntimeProjection（架构评审 R3 单一 seam；
+        # capture/forwards/mounts 三参合一）。app 注入，测试/容器缺席即
+        # 空投影（capture_active=False、装饰全空）
+        self._runtime_state_fn = runtime_state_fn
 
     @property
     def token(self):
@@ -676,9 +657,7 @@ class ConfigServer:
                 expected_token=self._token,
                 on_sp_saved=self._on_sp_saved,
                 on_mp_saved=self._on_mp_saved,
-                capture_state_fn=self._capture_state,
-                tunnel_states_fn=self._tunnel_states_fn,
-                mount_states_fn=self._mount_states_fn)
+                runtime_state_fn=self._runtime_state_fn)
         except OSError:
             logger.warning("Config server: port %d unavailable", self._port)
             return False

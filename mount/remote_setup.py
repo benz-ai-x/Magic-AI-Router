@@ -152,7 +152,7 @@ def _parse_probe(stdout):
     }
 
 
-def check_remote(tunnel, password="", sudo_password=""):
+def check_remote(tunnel, password=""):
     """探测远程 NFS 状态：发行版 / 已装 / 2049 监听 / 现有导出表。
 
     返回 {"ok": True, "family", "installed", "listening", "exports"} 或
@@ -175,7 +175,7 @@ def check_remote(tunnel, password="", sudo_password=""):
     return result
 
 
-def _fetch_uid_gid(tunnel, password, sudo_password):
+def _fetch_uid_gid(tunnel, password):
     """取 SSH 用户的 uid/gid（squash 用）。失败返回 None（降级不 squash）。"""
     r = ssh_launch.run_remote(tunnel, "id -u; id -g", password=password,
                               timeout=PROBE_TIMEOUT)
@@ -198,13 +198,13 @@ def setup_remote(tunnel, mounts, password="", sudo_password="",
     """
     if not mounts:
         return {"ok": False, "error": "未配置远程挂载路径", "stage": "detect"}
-    probe = check_remote(tunnel, password=password, sudo_password=sudo_password)
+    probe = check_remote(tunnel, password=password)
     if not probe["ok"]:
         return {**probe, "stage": "detect"}
 
     uid_gid = None
     if squash_to_ssh_user:
-        uid_gid = _fetch_uid_gid(tunnel, password, sudo_password)
+        uid_gid = _fetch_uid_gid(tunnel, password)
 
     installed = probe["installed"] and probe["listening"]
     if not installed:

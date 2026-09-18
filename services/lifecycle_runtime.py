@@ -84,9 +84,8 @@ class LifecycleRuntime:
         on_menu_dirty,
         initial_sys_proxy_on=False,
         instance_owner=None,
-        tunnel_states_fn=None,
+        runtime_state_fn=None,
         on_mp_saved=None,
-        mount_states_fn=None,
     ):
         self._config_fn = config_fn
         self._owner = instance_owner or InstanceOwner()
@@ -109,9 +108,7 @@ class LifecycleRuntime:
             on_sp_saved=self._on_sp_saved,
             on_mp_saved=on_mp_saved,
             port=cfg.get("config_port", 9528),
-            capture_state=self._capture_state_bool,
-            tunnel_states_fn=tunnel_states_fn,
-            mount_states_fn=mount_states_fn,
+            runtime_state_fn=runtime_state_fn,
         )
 
     # ── 直属子模块的合法暴露面（app.py 菜单/桥接需要直接引用）──────
@@ -139,16 +136,10 @@ class LifecycleRuntime:
     def _capture_state_tuple(self):
         return (self._capture_ctrl.enabled, self._capture_ctrl.status)
 
-    def _capture_state_bool(self):
-        return bool(self._capture_ctrl.enabled
-                    and self._capture_ctrl.status == "running")
-
     # ── reload 链内化：配置服务线程 → 网关线程，不出模块 ──────────
     def _on_sp_saved(self):
-        # #71 W9：与 Docker 形态同一策略——运行中 reload、已停 start。
-        # macOS 首启失败后网页改对配置 → 保存必须能拉起死网关（此前
-        # 只 reload 对 stopped 空转，闭环只在 Docker 存在）。
-        self._suanpan.reload() if self._suanpan.running else self._suanpan.start()
+        # #71 W9 收敛：reload-or-start 语义单一归宿在 SuanpanRuntime
+        self._suanpan.reload_or_start()
 
     # ── 生命周期 ────────────────────────────────────────────────
     def start_all(self):
@@ -162,9 +153,9 @@ class LifecycleRuntime:
                          "本次启动不接管服务")
             return False
         # 跨文件提交崩溃恢复（issue #6）：journal 残留则幂等重放补齐
-        from mpconf.config_state import ConfigStateStore
-        if not ConfigStateStore().recover():
-            logger.warning("配置事务 journal 恢复失败——保留现场待人工检查")
+        # （与 Docker 形态同一归宿 recover_pending_txn）
+        from mpconf.config_state import recover_pending_txn
+        recover_pending_txn()
         config_port = (self._config_fn() or {}).get("config_port", 9528)
         report_port_occupancy(config_port, _read_suanpan_port())
         if not self._config_server.start():

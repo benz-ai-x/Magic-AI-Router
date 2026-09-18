@@ -52,6 +52,13 @@ class CaptureController:
         return self._monitor.status
 
     @property
+    def actively_running(self):
+        """「抓包实际在跑」的 bool 投影语义单一归宿（抓包域自知）：
+        enabled 且 mitmdump 就绪（starting 不算）。曾住
+        LifecycleRuntime._capture_state_bool，R3 运行态投影收敛时归域。"""
+        return self.enabled and self.status == "running"
+
+    @property
     def error_msg(self):
         if self._preflight_error:
             return self._preflight_error

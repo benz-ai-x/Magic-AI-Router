@@ -91,29 +91,12 @@ def create_app(config: AppConfig, config_path: str = "./suanpan.yaml") -> FastAP
             "last_id": models[-1]["id"] if models else None,
         }
 
-    @app.post("/v1/messages")
-    async def messages(request: Request):
-        try:
-            body = await request.json()
-        except Exception:
-            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-        try:
-            decision = decide_route(
-                body,
-                config=app.state.config,
-            )
-        except NoRouteMatched as e:
-            return JSONResponse(
-                {"error": "no route matched", "source_model": e.source_model},
-                status_code=400,
-            )
-        return await forward_request(
-            request, body, decision, app.state.config,
-            app.state.usage_logger, app.state.http_client,
-        )
+    async def _parse_and_route(request: Request):
+        """两端点共用的前奏：body 解析 + 路由决策。
 
-    @app.post("/v1/messages/count_tokens")
-    async def count_tokens(request: Request):
+        返回 (body, decision) 或错误 JSONResponse——调用方经 isinstance
+        分流（提取前两处理器逐行重复的同一前奏）。
+        """
         try:
             body = await request.json()
         except Exception:
@@ -125,6 +108,25 @@ def create_app(config: AppConfig, config_path: str = "./suanpan.yaml") -> FastAP
                 {"error": "no route matched", "source_model": e.source_model},
                 status_code=400,
             )
+        return body, decision
+
+    @app.post("/v1/messages")
+    async def messages(request: Request):
+        routed = await _parse_and_route(request)
+        if isinstance(routed, JSONResponse):
+            return routed
+        body, decision = routed
+        return await forward_request(
+            request, body, decision, app.state.config,
+            app.state.usage_logger, app.state.http_client,
+        )
+
+    @app.post("/v1/messages/count_tokens")
+    async def count_tokens(request: Request):
+        routed = await _parse_and_route(request)
+        if isinstance(routed, JSONResponse):
+            return routed
+        body, decision = routed
         return await forward_count_tokens(
             request, body, decision, app.state.config,
             app.state.http_client,

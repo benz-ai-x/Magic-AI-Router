@@ -970,12 +970,12 @@ class TestConfigServerParameterization(unittest.TestCase):
 class TestMultiActiveDecorations(unittest.TestCase):
     """多活（v0.9）：/api/state 的 is_proxy / forward_running 装饰注入。"""
 
-    def _state(self, tunnel_states_fn):
+    def _state(self, runtime_state_fn):
         import threading
-        s = config_server.ConfigServer(tunnel_states_fn=tunnel_states_fn)
+        s = config_server.ConfigServer(runtime_state_fn=runtime_state_fn)
         s._server = config_server._ThreadingHTTPServer(
             ("127.0.0.1", 0), config_server._Handler,
-            expected_token=s._token, tunnel_states_fn=tunnel_states_fn)
+            expected_token=s._token, runtime_state_fn=runtime_state_fn)
         port = s._server.server_address[1]
         threading.Thread(target=s._server.serve_forever, daemon=True).start()
         self.addCleanup(s.stop)
@@ -989,8 +989,10 @@ class TestMultiActiveDecorations(unittest.TestCase):
             "current_tunnel": 0}
         with patch.object(config_server, "_read_mp", return_value=cfg):
             from tunnel.connection_coordinator import ForwardState
+            from shared.runtime_state import RuntimeProjection
             mp = self._state(
-                lambda: [ForwardState("t-2", "b", "connected")])
+                lambda: RuntimeProjection(
+                    forwards=(ForwardState("t-2", "b", "connected"),)))
         self.assertTrue(mp["tunnels"][0]["is_proxy"])
         self.assertFalse(mp["tunnels"][0]["forward_running"])
         self.assertFalse(mp["tunnels"][1]["is_proxy"])

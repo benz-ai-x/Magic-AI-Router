@@ -26,6 +26,7 @@ from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
     DEFAULT_CONFIG, load_config, merge_config, resolve_mount_dir)
 from mount.coordinator import MountCoordinator
+from shared.runtime_state import RuntimeProjection
 from shellui.log_window import LogBuffer, show_log_window
 from shellui.webview_window import show_config_window
 from shellui.menu_builder import MenuBuilder, MenuState, _status_color_for_connection
@@ -138,14 +139,19 @@ class MagicProxyApp(rumps.App):
         # server): LifecycleRuntime 持有全部构造/启动/退出顺序（架构候选
         # 2+3）——app 只经合法属性面取子模块引用，不再两阶段构造、不再
         # 私有属性掏取，「抓包正在运行」在 lifecycle 内单一投影。
+        # 运行态投影（架构评审 R3）：app 一处组装，capture/forwards/mounts
+        # 三参穿层塌缩为一个 RuntimeProjection seam（懒求值——构造期
+        # _capture_ctrl 尚未由 lifecycle 创建，请求时才调用）
         self._lifecycle = LifecycleRuntime(
             config_fn=lambda: self._config,
             ssh_monitor=self._conn.ssh,
             paused_fn=lambda: self._conn.paused,
             on_menu_dirty=lambda: setattr(self._menu_builder, "last_struct_key", None),
             initial_sys_proxy_on=self._config.get("system_proxy_default", False),
-            tunnel_states_fn=lambda: self._conn.forward_sessions(),
-            mount_states_fn=lambda: self._mounts.mount_states(),
+            runtime_state_fn=lambda: RuntimeProjection(
+                capture_active=self._capture_ctrl.actively_running,
+                forwards=tuple(self._conn.forward_sessions()),
+                mounts=tuple(self._mounts.mount_states())),
             on_mp_saved=self._on_mp_saved,
         )
         self._suanpan = self._lifecycle.suanpan
@@ -396,25 +402,29 @@ class MagicProxyApp(rumps.App):
     def cancel_connection(self, _):
         self._conn.cancel()
 
+    def _reload_config_or_alert(self):
+        """重读磁盘配置刷新内存副本（重连 / 单会话重建共用）。
+
+        迁移可行动错误（重复 id）不得在回调里裸抛——保持现有连接并给
+        出指引；调用方可能在 daemon 线程（#68），NSAlert 经
+        AppHelper.callAfter 回主线程（host_key_flow 同款）。曾有两份
+        reload_cfg 闭包一处弹窗一处静默的分叉，处置统一到本方法。
+        """
+        try:
+            cfg = load_config()
+        except IdentityMigrationError as exc:
+            from PyObjCTools import AppHelper
+            AppHelper.callAfter(
+                rumps.alert,
+                "Magic AI Router",
+                f"配置包含重复的隧道 id，已保持现有连接。\n\n{exc}\n\n"
+                "请打开配置文件修正重复 id 后重试。")
+            return
+        if cfg:
+            self._config = merge_config(cfg)
+
     def reconnect(self, _):
-        def reload_cfg():
-            try:
-                cfg = load_config()
-            except IdentityMigrationError as exc:
-                # 与 __init__ 的处置一致：迁移可行动错误不得在菜单回调里
-                # 裸抛——保持现有连接并给出指引。桥接重连在 daemon 线程
-                # （#68）：NSAlert 必须回主线程（host_key_flow 同款
-                # AppHelper.callAfter 正解）。
-                from PyObjCTools import AppHelper
-                AppHelper.callAfter(
-                    rumps.alert,
-                    "Magic AI Router",
-                    f"配置包含重复的隧道 id，已保持现有连接。\n\n{exc}\n\n"
-                    "请打开配置文件修正重复 id 后重试。")
-                return
-            if cfg:
-                self._config = merge_config(cfg)
-        self._conn.restart(reload_cfg)
+        self._conn.restart(self._reload_config_or_alert)
         self._dirty()
 
     def toggle_pause(self, _):
@@ -465,22 +475,14 @@ class MagicProxyApp(rumps.App):
 
     def make_reconnect_tunnel(self, tunnel_id):
         """重连指定隧道：代理隧道走整体 restart（含降级逻辑），转发会话
-        单会话重建（重读磁盘配置）。"""
-        def reload_cfg():
-            try:
-                cfg = load_config()
-            except IdentityMigrationError:
-                return  # restart/restart_forward 对空重载安全（旧配置继续）
-            if cfg:
-                self._config = merge_config(cfg)
-
+        单会话重建（重读磁盘配置——统一经 _reload_config_or_alert）。"""
         def act(_):
             if tunnel_id == self._conn.proxy_tunnel_id:
                 self.reconnect(None)
                 return
             threading.Thread(
                 target=self._conn.restart_forward,
-                args=(tunnel_id, reload_cfg),
+                args=(tunnel_id, self._reload_config_or_alert),
                 name="BridgeReconnectForward", daemon=True).start()
             self._dirty()
         return act

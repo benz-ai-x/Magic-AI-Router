@@ -7,11 +7,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import vm from "node:vm";
+import { scriptSource } from "./extract.mjs";
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const HTML = readFileSync(path.join(ROOT, "shellui", "config_ui.html"), "utf8");
-const SCRIPT = HTML.match(/<script data-layer="model">([\s\S]*?)<\/script>/)[1]
-  .replace(/\nload\(\);\s*$/, "\n");
+// 脚本提取走 extract.mjs 单一归宿（HTML 仍本地读取——CSS 断言用）
+const SCRIPT = scriptSource().replace(/\nload\(\);\s*$/, "\n");
 
 test("workbench regions stay pinned when the pending bar is hidden", () => {
   assert.match(

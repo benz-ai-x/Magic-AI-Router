@@ -68,6 +68,9 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
   identity.py ── 稳定 id 跨域契约：IdentityMigrationError（迁移可行动
     错误）+ stable_id 派生（mpconf 隧道 t- 与 suanpan provider p- 共用
     同一 sha1 截断——已落盘 id 的兼容契约）
+  runtime_state.py ── RuntimeProjection：跨域运行态快照的叶子层容器
+    （capture_active/forwards/mounts；app 一处组装，lifecycle→config
+    _server 单 seam 透传——三参穿三层塌缩为一）
 
 mpconf/ ── 配置栈
   config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串；

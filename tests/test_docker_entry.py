@@ -524,6 +524,11 @@ class TestRunServeIntegration:
                 self.reload_called += 1
                 return True
 
+            def reload_or_start(self):
+                # 与 SuanpanRuntime.reload_or_start 同一语义（单一归宿的
+                # 桩镜像）
+                self.reload() if self.running else self.start()
+
             def stop(self):
                 pass
 
@@ -574,6 +579,9 @@ class TestRunServeIntegration:
             def reload(self):
                 return True
 
+            def reload_or_start(self):
+                pass  # 真语义见 SuanpanRuntime.reload_or_start
+
             def stop(self):
                 pass
 
@@ -622,6 +630,8 @@ class TestServeStartupRecover:
                 return True
             def reload(self):
                 return True
+            def reload_or_start(self):
+                pass  # 真语义见 SuanpanRuntime.reload_or_start
             def stop(self):
                 pass
 
@@ -689,6 +699,9 @@ class TestServeGatewayStartFailure:
                 return self.running
             def reload(self):
                 return True  # reload 对已停网关是 no-op（真实现语义）
+            def reload_or_start(self):
+                # 与 SuanpanRuntime.reload_or_start 同语义——保存后能拉起
+                self.reload() if self.running else self.start()
             def stop(self):
                 pass
 

@@ -74,6 +74,20 @@ READONLY_DECORATED_FIELDS = frozenset(
      "nfs_states"})
 
 
+def recover_pending_txn() -> bool:
+    """启动即重放残留 journal（#48 T6a）——跨文件崩溃后幂等补齐；残留
+    journal 只会永久阻塞后续提交。macOS（LifecycleRuntime.start_all）
+    与 Docker（entry 的 serve/config-ui 两模式）共用的单一归宿。
+
+    无 handlers 时 logging 的 lastResort 兜底会把 WARNING 落 stderr
+    （容器形态可见），两种形态同一呈现。
+    """
+    if not ConfigStateStore().recover():
+        logger.warning("配置事务 journal 恢复失败——保留现场待人工检查")
+        return False
+    return True
+
+
 class ConfigStateStore:
     def __init__(self, mp_path=None, sp_path=None, keychain=None):
         from shared import config_store as _cs

@@ -126,13 +126,18 @@ class TestCaptureStateSingleProjection(unittest.TestCase):
             self.assertEqual(svc._capture_state_tuple(), (True, "running"))
 
     def test_bool_projection_for_config_server(self):
+        """capture_active 的 bool 投影语义随 R3 RuntimeProjection 收敛——
+        由 app 侧投影组装持有（capture_ctrl.enabled），本测试钉
+        SystemProxyController 仍消费 tuple 投影。"""
         svc = _make_coordinator()
         with patch.object(type(svc._capture_ctrl), "enabled", True), \
              patch.object(type(svc._capture_ctrl), "status", "starting"):
-            self.assertIs(svc._capture_state_bool(), False)
+            self.assertEqual(svc._capture_state_tuple(),
+                             (True, "starting"))
         with patch.object(type(svc._capture_ctrl), "enabled", True), \
              patch.object(type(svc._capture_ctrl), "status", "running"):
-            self.assertIs(svc._capture_state_bool(), True)
+            # 「实际在跑」的 bool 语义单一归宿在抓包域属性
+            self.assertIs(svc._capture_ctrl.actively_running, True)
 
 
 class TestQuitOrder(unittest.TestCase):

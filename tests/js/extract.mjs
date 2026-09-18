@@ -8,11 +8,17 @@ import path from "node:path";
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
-export function extractLayer(n) {
+// 提取契约的单一归宿：runtime.test.mjs 也从这里取整段脚本——
+// 双份正则曾是 drift 温床（一处改 data-layer 属性另一处静默失配）。
+export function scriptSource() {
   const html = readFileSync(path.join(ROOT, "shellui", "config_ui.html"), "utf8");
   const m = html.match(/<script data-layer="model">([\s\S]*?)<\/script>/);
   if (!m) throw new Error("script block not found");
-  const body = m[1];
+  return m[1];
+}
+
+export function extractLayer(n) {
+  const body = scriptSource();
   const start = body.indexOf(`// LAYER ${n} `);
   if (start < 0) throw new Error(`LAYER ${n} marker not found`);
   const next = body.indexOf(`// LAYER ${n + 1} `, start);

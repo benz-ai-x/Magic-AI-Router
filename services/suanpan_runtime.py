@@ -150,6 +150,12 @@ class SuanpanRuntime:
     def stop(self, timeout=3):
         return self._rt.stop(timeout)
 
+    def reload_or_start(self):
+        """保存后的收敛动作（#71 W9，macOS LifecycleRuntime 与 Docker
+        entry 同一策略）：运行中 reload、已停 start——网页改对配置保存
+        必须能拉起死网关（此前只 reload 对 stopped 空转）。"""
+        self.reload() if self.running else self.start()
+
     def reload(self):
         """Hot-reload config: stop and restart if running; no-op if stopped."""
         if self._rt.running:
