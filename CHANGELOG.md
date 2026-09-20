@@ -3,7 +3,15 @@
 All notable changes to Magic-AI-Router are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
-## [Unreleased] — 保存流可靠性三连修（代理角色显式化 + 保存后内存收敛 + 角色稳定 id）
+## [v0.10.1] — 2026-09-20 — 挂载失败可见性链路 + 浏览器设置页复制指令修复
+
+### Added
+- **挂载失败「没反应」可见性链路 + 一键修复导出（真机案例驱动）**：加挂载项未先「一键安装」→ 远端无导出 → `mount_nfs` ENOENT 裸透如天书，且设置窗是不刷新的快照——错误永远不出现。四级修复：失败分类给中文指引与 `fixable` 标记（MountState 第 6 字段）→ `/api/state` 的 `nfs_states` 装饰升级 `{status,error,fixable}`（error 不再丢弃）→ 设置窗状态徽标 + 错误行内红字 + `fixable=exports` 时「修复导出并重挂」按钮（一键安装 → 自动重挂）→ NFS 视图 5s 定向轮询（mergeRuntimeDecorations 纯函数只合并装饰、绝不碰表单，node 测试钉死不变量）
+
+### Fixed
+- **浏览器直开设置页时「复制 AI 助手指令」按钮无反应**：#70 S13 把文案拼装移到原生侧后，浏览器场景的 `nativeSend` 静默短路，按钮成了哑巴（其余 bridge 操作均有降级 toast，独此一处缺席）。新增认证 `GET /api/agent-instructions`（文本经 `instructions_fn` 取自 `agent_instructions()` 单一归宿，与原生路径逐字节一致）；JS 双通道——WKWebView 走 bridge 不变，浏览器 fetch 后 Clipboard API 写剪贴板（Safari 手势不跨 await 时退 execCommand 兜底）+ toast 反馈
+
+## [v0.10.0] — 2026-09-18 — 保存流可靠性三连修（随 NFSv4 版本发布）
 
 ### Fixed
 - **保存后 SSH 隧道变成另一条连接串（实测）**：设置窗隧道页 collect 曾把「正在查看/编辑的隧道」（activeTunnel，纯 UI 状态）隐式写进代理角色并随保存落盘——变更潜伏到下一次重连才显形，用户视角即隧道随机切换。collect 自此只读表单；角色在设置窗的唯一写径是新增的显式**「设为代理隧道」**按钮（dirty 跟踪、可放弃；当前代理渲染徽标），保存后经「重新连接」应用（切换会断现有会话，绝不随保存自动断）
