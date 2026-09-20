@@ -2240,9 +2240,44 @@ function ccRenderDefault(){
 // ── AI agent helper ───────────────────────────────────
 function copyAgentInstructions(){
   // #70 S13：token 拼装移原生侧（#10 后 URL 永不带凭证，此处曾恒空
-  // 导致复制的 curl 401）——发 bridge 消息，由 app 持 expected_token
-  // 直接把完整文本上剪贴板；toast 由原生通知承担。
-  nativeSend('copyAgentInstructions');
+  // 导致复制的 curl 401）。WKWebView 走 bridge：app 持 expected_token
+  // 把完整文本上剪贴板，toast 由原生通知承担。浏览器直开设置页无桥接，
+  // 曾是静默空操作（对齐 reconnectProxy 的降级约定）——回退经认证
+  // /api/agent-instructions 取同一文案自行写剪贴板。
+  if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
+    nativeSend('copyAgentInstructions');
+    return;
+  }
+  copyAgentInstructionsViaApi();
+}
+async function copyAgentInstructionsViaApi(){
+  try{
+    const r=await fetch('/api/agent-instructions');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const d=await r.json();
+    if(!d.text)throw new Error('响应缺少文本');
+    if(!(await _writeClipboard(d.text)))throw new Error('浏览器拒绝写剪贴板');
+    toast('已复制 AI 助手指令');
+  }catch(e){
+    toast('复制失败：'+(e&&e.message||e),true);
+  }
+}
+async function _writeClipboard(text){
+  // 127.0.0.1 属安全上下文，优先异步 Clipboard API；Safari 等场景下
+  // 用户手势可能不跨 await 存活，退 execCommand 同步复制兜底。
+  try{
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  }catch(e){}
+  const ta=document.createElement('textarea');
+  ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();
+  let ok=false;
+  try{ok=document.execCommand('copy');}catch(e){}
+  ta.remove();
+  return ok;
 }
 
 // ── keyboard + dirty listener ─────────────────────────

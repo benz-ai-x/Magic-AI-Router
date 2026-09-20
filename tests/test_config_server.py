@@ -14,7 +14,8 @@ def _start_server(on_sp_saved=None, on_mp_saved=None):
                                    on_mp_saved=on_mp_saved)
     s._server = config_server._ThreadingHTTPServer(
         ("127.0.0.1", 0), config_server._Handler, expected_token=s._token,
-        on_sp_saved=on_sp_saved, on_mp_saved=on_mp_saved)
+        on_sp_saved=on_sp_saved, on_mp_saved=on_mp_saved,
+        instructions_fn=s.agent_instructions)
     port = s._server.server_address[1]
     s._thread = threading.Thread(target=s._server.serve_forever, daemon=True)
     s._thread.start()
@@ -1130,3 +1131,39 @@ class TestNfsDecorationShape(unittest.TestCase):
         self.assertEqual(tunnels[0]["nfs_states"]["data"], {
             "status": "error", "error": "远程路径不存在或未导出",
             "fixable": "exports"})
+
+
+class TestAgentInstructionsApi(unittest.TestCase):
+    """GET /api/agent-instructions——浏览器直开设置页的「复制 AI 助手指令」
+    回退通道。文案含 Bearer token，必须过认证；文本取自
+    agent_instructions() 单一归宿（与原生 bridge 路径逐字节一致）。"""
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_requires_token(self):
+        status, body = _request(self.port, "GET", "/api/agent-instructions")
+        self.assertEqual(status, 401)
+        self.assertIn("error", json.loads(body))
+
+    def test_text_matches_single_source(self):
+        status, body = _request(self.port, "GET", "/api/agent-instructions",
+                                token=self.token)
+        self.assertEqual(status, 200)
+        text = json.loads(body)["text"]
+        self.assertEqual(text, self.server.agent_instructions())
+        self.assertIn(f"Bearer {self.token}", text)
+        self.assertIn("agent.md", text)
+
+    def test_missing_fn_degrades_to_explicit_error(self):
+        # 直接构造 server 漏传 instructions_fn：明确 500 JSON，
+        # 不在 handler 线程裸抛
+        self.server._server.instructions_fn = None
+        status, body = _request(self.port, "GET", "/api/agent-instructions",
+                                token=self.token)
+        self.assertEqual(status, 500)
+        self.assertIn("error", json.loads(body))

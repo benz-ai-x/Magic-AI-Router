@@ -93,11 +93,12 @@ rules:
 - **AI agent / curl**：从 `Authorization: Bearer TOKEN` header 传入。token 获取：macOS 菜单栏「复制 AI 助手指令」；Docker 无菜单——`bash docker/suanpan.sh config-ui` 打印。
 - **设置窗（WKWebView）**：首次打开经桥接带 Authorization 头导航，响应种下 `cfgsess` HttpOnly SameSite=Strict 会话 cookie——后续请求由 cookie 承载，JS 从不接触 token。
 
-query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `/` 返回登录页（浏览器输入 token 即可进入管理面板）。
+query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `/` 返回登录页（浏览器输入 token 即可进入管理面板——面板内「复制 AI 助手指令」按钮在浏览器场景经 `/api/agent-instructions` 回退取同一文案写剪贴板）。
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/state` | 读取全部配置（mp + sp），密码/密钥已掩码 |
+| GET | `/api/agent-instructions` | 取「AI 助手指令」文案（返回 `{"text": ...}`）——与菜单栏「复制 AI 助手指令」同一文本单一归宿；浏览器面板侧栏按钮的复制回退即此端点 |
 | PUT | `/api/state` | 保存全部配置（body: `{"mp": {...}, "sp": {...}}`） |
 | GET | `/api/balance` | 查询各供应商余额/配额；套餐类含 5小时/每周配额窗口；每月行：GLM 经 model-usage 本月窗口官方统计，Kimi 仅 totalQuota 非空（高阶套餐）时显示——API 无月度维度则不显示 |
 | GET | `/api/usage?range=today\|7d\|month\|all` | 聚合本地用量日志；缺省 `all`，`month` = CST 自然月；返回总览、供应商、CST 每日与路由来源统计 |

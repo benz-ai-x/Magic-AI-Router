@@ -209,12 +209,15 @@ class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
     def __init__(self, address, handler, *, expected_token=None,
-                 on_sp_saved=None, on_mp_saved=None, runtime_state_fn=None):
+                 on_sp_saved=None, on_mp_saved=None, runtime_state_fn=None,
+                 instructions_fn=None):
         self.expected_token = expected_token
         self.on_sp_saved = on_sp_saved
         self.on_mp_saved = on_mp_saved
         # RuntimeProjection 单一 seam（架构评审 R3）：三回调穿参塌缩为一
         self.runtime_state_fn = runtime_state_fn
+        # agent_instructions() 单一归宿的取用口（浏览器回退路由用）
+        self.instructions_fn = instructions_fn
         super().__init__(address, handler)
 
 
@@ -397,6 +400,16 @@ class _Handler(BaseHTTPRequestHandler):
                 for name, entry in PROVIDER_REGISTRY.items()]
             templates.append({"id": "custom", "label": "自定义"})
             self._json(200, templates)
+        elif path == "/api/agent-instructions":
+            # 浏览器直开设置页的「复制 AI 助手指令」回退通道——WKWebView
+            # 走 bridge 由 app 拼装上剪贴板，不经此路由。文案含 Bearer
+            # token，必须过认证；文本经 instructions_fn 取自
+            # agent_instructions() 单一归宿，永不另抄一份。
+            fn = self.server.instructions_fn
+            if fn is None:
+                self._json(500, {"error": "instructions unavailable"})
+                return
+            self._json(200, {"text": fn()})
         else:
             self._json(404, {"error": "not found"})
 
@@ -639,7 +652,9 @@ class ConfigServer:
         """AI 助手指令文本（#70 S13）——文档知识与 API 面在此同一归宿。
 
         agent.md 由本服务供出，指令里的 curl 形状即本服务的 API 契约——
-        文案随 API 演进只改一处。原生侧（app.py）只做剪贴板与通知。
+        文案随 API 演进只改一处。原生侧（app.py）只做剪贴板与通知；
+        浏览器直开设置页无桥接，经认证 GET /api/agent-instructions 取
+        同一份文本自行写剪贴板。
         """
         return (
             "我在用 Magic AI Router（macOS 菜单栏应用）。\n"
@@ -658,7 +673,8 @@ class ConfigServer:
                 expected_token=self._token,
                 on_sp_saved=self._on_sp_saved,
                 on_mp_saved=self._on_mp_saved,
-                runtime_state_fn=self._runtime_state_fn)
+                runtime_state_fn=self._runtime_state_fn,
+                instructions_fn=self.agent_instructions)
         except OSError:
             logger.warning("Config server: port %d unavailable", self._port)
             return False

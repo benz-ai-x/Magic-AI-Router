@@ -124,7 +124,7 @@ Security-sensitive tooling earns trust in the open:
 
 ## 🤖 Agent-operable
 
-Open Preferences → **“Copy AI assistant instructions”** and paste into Claude Code: the agent reads `http://127.0.0.1:9528/agent.md` (no token), then configures the app for you through a token-guarded local API. **The AI network tool your AI can run.**
+Open Preferences → **“Copy AI assistant instructions”** and paste into Claude Code: the agent reads `http://127.0.0.1:9528/agent.md` (no token), then configures the app for you through a token-guarded local API. **The AI network tool your AI can run.** (The same copy action is available on the settings sidebar — including the browser panel, where it falls back to the token-guarded `/api/agent-instructions` endpoint.)
 
 ## FAQ
 

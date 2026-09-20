@@ -124,7 +124,7 @@ macOS 首次运行：偏好设置 → **代理 → 隧道** 填 SSH 信息 → �
 
 ## 🤖 Agent 可自主操作
 
-偏好设置 → **「复制 AI 助手指令」**，粘给 Claude Code：代理读 `http://127.0.0.1:9528/agent.md`（免 token），再经 token 守卫的本地 API 帮你配置好一切。**能被 AI 自己操作的 AI 网络工具。**
+偏好设置 → **「复制 AI 助手指令」**，粘给 Claude Code：代理读 `http://127.0.0.1:9528/agent.md`（免 token），再经 token 守卫的本地 API 帮你配置好一切。**能被 AI 自己操作的 AI 网络工具。**（同一复制动作也在设置窗侧栏——浏览器直开面板同样可用，经 token 守卫的 `/api/agent-instructions` 端点回退。）
 
 ## 常见问题
 
