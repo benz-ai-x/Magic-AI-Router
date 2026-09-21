@@ -73,6 +73,7 @@ _ICON = {
     "folder": "folder", "jsonl": "doc.text",
     # 系统区 / 页脚 / 状态区
     "sleep": "moon.zzz", "login": "arrow.up.circle",
+    "network": "network",   # 配置 API 服务开关（ADR-009）
     "prefs": "slider.horizontal.3", "search": "doc.text.magnifyingglass",
     "about": "info.circle", "quit": "power",
     "updown": "arrow.up.arrow.down", "circle": "circle.fill",
@@ -186,6 +187,8 @@ class MenuState:
     # NFS 挂载快照 [(tunnel_id, tunnel_name, mount_name, status, error)]
     # （ADR-007）——挂载子菜单与状态行挂载计数消费；默认 () 同上
     mount_states: tuple = ()
+    # ADR-009：配置 API 常驻开关标题（系 统 组）——默认关保持旧构造兼容
+    config_api_title: str = "配置 API 服务：关"
 
 
 # ── builder ──────────────────────────────────────────────────────
@@ -522,7 +525,7 @@ class MenuBuilder:
         return parent
 
     def _build_system_submenu(self):
-        """系 统 ▸ —— 防睡眠 / 登录启动从页脚收进来（v0.9.1 重组）。"""
+        """系 统 ▸ —— 防睡眠 / 登录启动 / 配置 API（v0.9.1 重组 + ADR-009）。"""
         a = self._app
         st = self._get_state()
         parent = rumps.MenuItem("系 统", callback=None)
@@ -536,6 +539,11 @@ class MenuBuilder:
             st.launch_login_title, callback=a.toggle_launch_at_login, key="k")
         _apply_icon(item, "login")
         self.refs["launch_login"] = item
+        parent.add(item)
+        item = rumps.MenuItem(
+            st.config_api_title, callback=a.toggle_config_api)
+        _apply_icon(item, "network")
+        self.refs["config_api"] = item
         parent.add(item)
         return parent
 
@@ -616,6 +624,7 @@ class MenuBuilder:
         # 系统区开关文案（refs 化，不依赖整菜单重建）
         self._set_title("prevent_sleep", st.prevent_sleep_title)
         self._set_title("launch_login", st.launch_login_title)
+        self._set_title("config_api", st.config_api_title)
 
     def _set_title(self, key, text):
         item = self.refs.get(key)

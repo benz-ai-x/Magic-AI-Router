@@ -62,11 +62,26 @@ class _ConfigWindowDelegate(NSObject):
             return None
         self._core = BridgeCore()
         self._on_action = None
+        self._on_close = None
         return self
 
     def setActionHandler_(self, handler):
         """App-level action sink (reconnectProxy / openPath); may be None."""
         self._on_action = handler
+
+    def setCloseHandler_(self, handler):
+        """App-level close hook（ADR-009）：窗口真正关闭（非 shouldClose
+        否决）后回调一次——app 侧重算配置服务持有者。may be None."""
+        self._on_close = handler
+
+    def windowWillClose_(self, _notification):
+        # dirty 守卫在 windowShouldClose_ 已处理；走到这里必然是真关闭
+        handler = self._on_close
+        if handler is not None:
+            try:
+                handler()
+            except Exception:
+                logger.exception("config window close handler failed")
 
     def windowShouldClose_(self, _notification):
         """Synchronous close-guard over the mirrored dirty state."""
@@ -119,7 +134,7 @@ class _ConfigWindowDelegate(NSObject):
 
 
 def show_config_window(url, title="Magic AI Router 设置", on_action=None,
-                       auth_headers=None):
+                       auth_headers=None, on_close=None):
     """Open (or focus) the config webview window.
 
     auth_headers（issue #10）：首个导航请求携带的请求头（如 Authorization
@@ -129,6 +144,10 @@ def show_config_window(url, title="Magic AI Router 设置", on_action=None,
     on_action: optional callable receiving app-level bridge actions
     ({type: "reconnectProxy"} / {type: "openPath", kind: ...}) — the adapter
     keeps handling UI-local actions (open panel) itself.
+
+    on_close: optional zero-arg callable fired on actual window close
+    （ADR-009——app 侧据此释放配置服务持有者）。既有窗口可见时本函数
+    早退聚焦，不重复挂回调。
     """
     global _config_window, _webview, _window_delegate
 
@@ -168,6 +187,7 @@ def show_config_window(url, title="Magic AI Router 设置", on_action=None,
 
     _window_delegate = _ConfigWindowDelegate.alloc().init()
     _window_delegate.setActionHandler_(on_action)
+    _window_delegate.setCloseHandler_(on_close)
     win.setDelegate_(_window_delegate)
 
     config = WKWebViewConfiguration.alloc().init()

@@ -90,8 +90,9 @@ rules:
 ## REST API（:9528，需 token）
 
 所有端点需要 bearer token（issue #10 后 URL 永不带凭证）：
-- **AI agent / curl**：从 `Authorization: Bearer TOKEN` header 传入。token 获取：macOS 菜单栏「复制 AI 助手指令」；Docker 无菜单——`bash docker/suanpan.sh config-ui` 打印。
+- **AI agent / curl**：从 `Authorization: Bearer TOKEN` header 传入。token 获取：macOS 菜单栏「复制 AI 助手指令」（复制时配置 API 自动开启，本次会话保持监听）；Docker 无菜单——`bash docker/suanpan.sh config-ui` 打印（Docker 形态恒常驻）。
 - **设置窗（WKWebView）**：首次打开经桥接带 Authorization 头导航，响应种下 `cfgsess` HttpOnly SameSite=Strict 会话 cookie——后续请求由 cookie 承载，JS 从不接触 token。
+- **端口生命周期（ADR-009）**：macOS 形态默认**不监听** :9528——打开设置窗期间、「复制 AI 助手指令」后（会话内）、或菜单 系 统 ▸「配置 API 服务」开启时才监听。连接被拒先让用户开服务。
 
 query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `/` 返回登录页（浏览器输入 token 即可进入管理面板——面板内「复制 AI 助手指令」按钮在浏览器场景经 `/api/agent-instructions` 回退取同一文案写剪贴板）。
 

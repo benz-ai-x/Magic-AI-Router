@@ -656,12 +656,19 @@ class ConfigServer:
         浏览器直开设置页无桥接，经认证 GET /api/agent-instructions 取
         同一份文本自行写剪贴板。
         """
+        # ADR-009：macOS 形态配置 API 默认不常驻（复制手势自动开启）；
+        # Docker 形态恒常驻，无需该提示
+        hint = (
+            "\n（复制本指令时配置 API 已自动开启；若稍后连接失败，请让用户"
+            "在菜单 系 统 ▸ 打开「配置 API 服务」）"
+            if self._bind_host == "127.0.0.1" else "")
         return (
             "我在用 Magic AI Router（macOS 菜单栏应用）。\n"
             f"请先读 {self.url}agent.md 了解产品功能和配置方法。\n"
             "当前配置 API（需要 token）：\n"
             f'  curl -H "Authorization: Bearer {self.token}" {self.url}api/state\n'
-            "你可以通过这个 API 读取和修改我的配置，帮我完成设置。")
+            "你可以通过这个 API 读取和修改我的配置，帮我完成设置。"
+            + hint)
 
     def start(self):
         """Start the server. Returns True on success, False if port unavailable."""

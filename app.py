@@ -34,12 +34,12 @@ from mpconf.config_state import ConfigStateStore
 from shared.stats import Stats
 from tunnel.connection_coordinator import ConnectionCoordinator
 from tunnel.reconnect_trigger import ReconnectTrigger, WakeEventSource
-from services.lifecycle_runtime import LifecycleRuntime
+from services.lifecycle_runtime import LifecycleRuntime, config_server_wanted
 from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")
 LOG_PATH = os.path.join(LOG_DIR, "MagicProxy.log")
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 VERSION_DISPLAY = version_display(VERSION, build_stamp())
 
 log_buffer = LogBuffer()
@@ -159,6 +159,10 @@ class MagicProxyApp(rumps.App):
         self._sys_proxy = self._lifecycle.sys_proxy
         self._capture = self._lifecycle.capture
         self._config_server = self._lifecycle.config_server
+        # ADR-009 配置服务持有者：设置窗开着 / 复制指令会话闩锁。
+        # config_api_enabled 是第三持有者（磁盘真相，经 self._config 读）。
+        self._config_window_open = False
+        self._copy_api_latch = False
         if not self._lifecycle.start_all():
             # 单实例守卫失败（issue #3）：用户可见的清晰错误，绝不以
             # 僵尸实例形态继续起菜单。
@@ -257,6 +261,7 @@ class MagicProxyApp(rumps.App):
             current_tunnel=self._conn.current_tunnel,
             prevent_sleep_title="防睡眠：开" if self._config.get("prevent_sleep") else "防睡眠：关",
             launch_login_title="登录启动：开" if self._config.get("launch_at_login") else "登录启动：关",
+            config_api_title="配置 API 服务：开" if self._config.get("config_api_enabled") else "配置 API 服务：关",
             forward_states=tuple(self._conn.forward_sessions()),
             mount_states=tuple(self._mounts.mount_states()),
         )
@@ -396,6 +401,9 @@ class MagicProxyApp(rumps.App):
                 logger.warning("UI 保存后同步登录启动失败：%s", err)
         # NFS：新配置的 auto_mount 挂载项收敛补挂（tick 负责补会话）
         self._mounts.apply_autostarts()
+        # ADR-009：UI 系统页保存可能翻转 config_api_enabled——按新
+        # 持有态收敛 :9528（设置窗此刻开着，服务不会被误停）
+        self._sync_config_server()
 
     # ── connection ───────────────────────────────────────
 
@@ -795,16 +803,49 @@ class MagicProxyApp(rumps.App):
     def show_preferences(self, _):
         """Open the web-based config panel in a webview window."""
         try:
+            # ADR-009：设置窗本身是配置服务持有者——先置位再开窗
+            # （show_config_window 关旧窗的回调在调用内触发，晚置位会让
+            # 旧窗关闭误判"无持有者"而停掉刚要用的服务）。
+            self._config_window_open = True
             if not self._config_server.start():
+                self._config_window_open = False
                 rumps.alert(title="Magic AI Router", message="配置服务端口被占用，无法打开设置。")
                 return
             show_config_window(
                 self._config_server.url, on_action=self._bridge_action,
                 auth_headers={"Authorization":
-                              f"Bearer {self._config_server.token}"})
+                              f"Bearer {self._config_server.token}"},
+                on_close=self._on_config_window_closed)
         except Exception as e:
             logger.exception("show_preferences failed")
+            self._config_window_open = False
             rumps.alert(title="Magic AI Router", message=f"打开设置失败:\n\n{e!r}")
+
+    def _on_config_window_closed(self):
+        """设置窗真关闭（webview_window windowWillClose）→ 释放持有者。"""
+        self._config_window_open = False
+        self._sync_config_server()
+
+    def _sync_config_server(self):
+        """ADR-009 持有状态机收敛：三持有者任一在场即监听 :9528，否则释放。"""
+        self._lifecycle.sync_config_server(config_server_wanted(
+            self._config_window_open,
+            bool(self._config.get("config_api_enabled")),
+            self._copy_api_latch))
+
+    def toggle_config_api(self, _):
+        """系 统 ▸「配置 API 服务」开关（ADR-009）：目标态从磁盘真相推导
+        （#46 口径，与 prevent_sleep/launch_at_login 同款）。"""
+        cfg = load_config()
+        enabled = not (cfg or {}).get("config_api_enabled", False)
+        if not self._update_mp_config(
+                lambda c: {**c, "config_api_enabled": enabled}):
+            return
+        self._sync_config_server()
+        self._notify(
+            "配置 API 服务：开" if enabled else "配置 API 服务：关",
+            "浏览器与 AI 助手可经 :9528 访问。" if enabled
+            else "端口已释放；打开设置窗或复制指令时会按需开启。")
 
     def copy_agent_instructions(self, _):
         """菜单栏页脚「复制 AI 助手指令」（v0.9.1）——免开设置窗直通。"""
@@ -812,11 +853,15 @@ class MagicProxyApp(rumps.App):
 
     def _copy_agent_instructions(self):
         """复制 AI 助手指令上剪贴板——文案归 config_server.agent_instructions
-        （#70 S13：token 不出原生进程，持 expected_token 直接拼装）。"""
+        （#70 S13：token 不出原生进程，持 expected_token 直接拼装）。
+        ADR-009：指令里的 curl 要能被 agent 立即使用——复制即闩锁持有
+        配置服务（本次会话保持监听），通知里说明。"""
+        self._copy_api_latch = True
+        self._sync_config_server()
         text = self._config_server.agent_instructions()
         proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
         proc.communicate(text.encode())
-        self._notify("已复制 AI 助手指令", "含 token 的 curl 已就绪")
+        self._notify("已复制 AI 助手指令", "含 token 的 curl 已就绪；配置 API 已开启供助手访问")
 
     def _bridge_action(self, action):
         """App-level bridge actions from the settings window.

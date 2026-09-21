@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 from services.lifecycle_runtime import LifecycleRuntime, _should_prevent_sleep
 
 
-def _make_coordinator(on_mp_saved=None):
+def _make_coordinator(on_mp_saved=None, config=None):
     from sysctl.instance_owner import InstanceOwner
     import tempfile
     import os
@@ -28,8 +28,10 @@ def _make_coordinator(on_mp_saved=None):
     lock = os.path.join(tempfile.mkdtemp(), "owner.lock")
     owner = InstanceOwner(lock_path=lock,
                           pid_info=lambda p: ("START", "/exe"), pid=1)
+    if config is None:
+        config = {"prevent_sleep": False}
     return LifecycleRuntime(
-        config_fn=lambda: {"prevent_sleep": False},
+        config_fn=lambda: config,
         ssh_monitor=MagicMock(),
         paused_fn=lambda: False,
         on_menu_dirty=lambda: None,
@@ -160,8 +162,26 @@ class TestQuitOrder(unittest.TestCase):
         self.assertEqual(order, ["sys_proxy", "ssh", "caffeinate", "capture",
                                  "config_server"])
 
-    def test_start_all_clears_ports_then_starts_services(self):
+    def test_start_all_default_off_skips_config_server(self):
+        """ADR-009：config_api_enabled 缺省（False）——启动不起配置服务，
+        顺序只剩清端口报告 + 网关。"""
         svc = _make_coordinator()
+        order = []
+        with patch("services.lifecycle_runtime.report_port_occupancy",
+                   side_effect=lambda *a: order.append("clear_ports")), \
+             patch("services.lifecycle_runtime._read_suanpan_port",
+                   return_value=9527), \
+             patch.object(svc._config_server, "start",
+                          side_effect=lambda: order.append("config_server") or True), \
+             patch.object(svc._suanpan, "start",
+                          side_effect=lambda: order.append("suanpan") or True):
+            svc.start_all()
+        self.assertEqual(order, ["clear_ports", "suanpan"])
+
+    def test_start_all_api_enabled_starts_config_server(self):
+        """ADR-009：常驻开关开——配置服务回到启动序（清端口报告与网关之间）。"""
+        svc = _make_coordinator(config={"prevent_sleep": False,
+                                        "config_api_enabled": True})
         order = []
         with patch("services.lifecycle_runtime.report_port_occupancy",
                    side_effect=lambda *a: order.append("clear_ports")), \
@@ -212,7 +232,8 @@ class TestInternalizedReload(unittest.TestCase):
 
 class TestStartAllFailureBranches(unittest.TestCase):
     def test_config_server_start_failure_warns_but_gateway_still_starts(self):
-        svc = _make_coordinator()
+        svc = _make_coordinator(config={"prevent_sleep": False,
+                                        "config_api_enabled": True})
         with patch.object(svc._config_server, "start", return_value=False), \
              patch.object(svc._suanpan, "start", return_value=True) as sp_start, \
              patch("services.lifecycle_runtime.report_port_occupancy"), \
@@ -331,3 +352,59 @@ class TestOnMpSavedWiring(unittest.TestCase):
     def test_default_is_none(self):
         svc = _make_coordinator()
         self.assertIsNone(svc._config_server._on_mp_saved)
+
+
+class TestConfigServerWanted(unittest.TestCase):
+    """ADR-009 持有状态机纯函数：任一持有者在场即监听。"""
+
+    def test_no_holders_off(self):
+        from services.lifecycle_runtime import config_server_wanted
+        self.assertFalse(config_server_wanted(False, False, False))
+
+    def test_any_single_holder_on(self):
+        from services.lifecycle_runtime import config_server_wanted
+        self.assertTrue(config_server_wanted(True, False, False))
+        self.assertTrue(config_server_wanted(False, True, False))
+        self.assertTrue(config_server_wanted(False, False, True))
+
+    def test_truthy_coercion(self):
+        from services.lifecycle_runtime import config_server_wanted
+        # UI 层可能传非严格 bool（如配置里的真值）——宽进严出
+        self.assertTrue(config_server_wanted(None, "yes", 0))
+        self.assertFalse(config_server_wanted(None, "", 0))
+
+
+class TestSyncConfigServer(unittest.TestCase):
+    """持有态收敛入口：wanted 起（幂等）/ False 停。"""
+
+    def test_wanted_true_starts(self):
+        svc = _make_coordinator()
+        with patch.object(svc._config_server, "start",
+                          return_value=True) as start:
+            self.assertTrue(svc.sync_config_server(True))
+        start.assert_called_once_with()
+
+    def test_wanted_true_start_failure_returns_false(self):
+        svc = _make_coordinator()
+        with patch.object(svc._config_server, "start",
+                          return_value=False), \
+             self.assertLogs("magic-proxy.lifecycle", level="WARNING"):
+            self.assertFalse(svc.sync_config_server(True))
+
+    def test_wanted_false_stops(self):
+        svc = _make_coordinator()
+        with patch.object(svc._config_server, "stop") as stop:
+            self.assertTrue(svc.sync_config_server(False))
+        stop.assert_called_once_with()
+
+
+class TestPortReportSkipsUnbound(unittest.TestCase):
+    """ADR-009：None 端口（本次不绑定）不参与占用报告。"""
+
+    def test_none_config_port_not_reported(self):
+        from services import lifecycle_runtime as lr
+        calls = []
+        with patch.object(lr.port_check, "who_owns",
+                          side_effect=lambda p: calls.append(p) or None):
+            lr.report_port_occupancy(None, 9527)
+        self.assertEqual(calls, [9527])

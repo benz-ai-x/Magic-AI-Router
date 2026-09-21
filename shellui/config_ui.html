@@ -457,6 +457,7 @@ function viewSnapshot(view,state,roles){
     system_proxy_default:mp.system_proxy_default===true,
     prevent_sleep:mp.prevent_sleep===true,
     launch_at_login:mp.launch_at_login===true,
+    config_api_enabled:mp.config_api_enabled===true,
   };
   if(view==='providers'){
     const providers={};
@@ -1712,6 +1713,7 @@ function systemHTML(){
       ${toggleRowHTML('cfg-sysproxy','连接后自动设为系统代理',S.mp.system_proxy_default,'连接成功后，把 macOS 系统代理指向本机 HTTP 监听端口')}
       ${toggleRowHTML('cfg-sleep','连接时防止系统睡眠',S.mp.prevent_sleep,'隧道连接期间阻止 Mac 自动睡眠')}
       ${toggleRowHTML('cfg-login','登录时自动启动',S.mp.launch_at_login,'开机登录后自动出现在菜单栏')}
+      ${toggleRowHTML('cfg-api','配置 API 服务（浏览器 / AI 助手）',S.mp.config_api_enabled===true,'常驻监听配置端口供浏览器直开与 AI 助手 curl；关闭时仅打开设置窗期间监听')}
     </div>
   </section>`;
 }
@@ -1720,6 +1722,7 @@ function collectSystem(){
   S.mp.system_proxy_default=v('cfg-sysproxy');
   S.mp.prevent_sleep=v('cfg-sleep');
   S.mp.launch_at_login=v('cfg-login');
+  S.mp.config_api_enabled=v('cfg-api');
 }
 
 // ── provider view ─────────────────────────────────────

@@ -1167,3 +1167,16 @@ class TestAgentInstructionsApi(unittest.TestCase):
                                 token=self.token)
         self.assertEqual(status, 500)
         self.assertIn("error", json.loads(body))
+
+
+class TestAgentInstructionsPortLifecycleHint(unittest.TestCase):
+    """ADR-009：agent_instructions 尾注按形态区分——macOS 提示按需开启，
+    Docker（bind_host 非 loopback）不带菜单提示。"""
+
+    def test_macos_form_carries_hint(self):
+        s = config_server.ConfigServer()
+        self.assertIn("配置 API 服务", s.agent_instructions())
+
+    def test_docker_form_has_no_menu_hint(self):
+        s = config_server.ConfigServer(bind_host="0.0.0.0", token="t")
+        self.assertNotIn("配置 API 服务", s.agent_instructions())

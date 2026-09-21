@@ -3,6 +3,11 @@
 All notable changes to Magic-AI-Router are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [Unreleased] — 配置面端口生命周期收敛（ADR-009）
+
+### Changed
+- **配置 API 默认不再常驻监听 :9528**：设置窗对配置 UI 而言是"用完即走"的，此前却随应用启动常驻占端口 + 维持一整面 token/host 守卫。改为三持有者状态机（`config_server_wanted` 纯函数）：设置窗开着 / 「复制 AI 助手指令」会话闩锁（复制即自动开启供 agent curl，本次会话保持）/ 新增 `config_api_enabled` 常驻开关（系 统 ▸ 菜单 checkbox + 设置窗系统页开关行，`prevent_sleep` 同款双入口）——任一在场才监听，全离场即释放端口。Docker 形态不受影响（恒常驻）；`agent_instructions()` 文案与 agent.md 补服务开启提示；启动期端口占用报告对未绑定端口不再告警
+
 ## [v0.10.1] — 2026-09-20 — 挂载失败可见性链路 + 浏览器设置页复制指令修复
 
 ### Added

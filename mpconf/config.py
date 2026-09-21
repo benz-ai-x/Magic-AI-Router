@@ -61,6 +61,10 @@ DEFAULT_CONFIG = {
     "prevent_sleep": False,
     "launch_at_login": False,
     "config_port": 9528,
+    # 配置 API 常驻开关（ADR-009）：False=默认不监听 :9528——设置窗
+    # 打开期间/复制 AI 助手指令手势按需起停；True=随应用常驻（浏览器
+    # 直开与 AI agent 随时可连）。Docker 形态不走此键（恒常驻）。
+    "config_api_enabled": False,
 }
 
 

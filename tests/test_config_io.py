@@ -189,3 +189,15 @@ class TestSaveConfigWriteError(unittest.TestCase):
              patch("os.unlink") as unlink:
             self.assertFalse(config.save_config({}))
         unlink.assert_called_once_with("/tmp/x.tmp")
+
+
+class TestConfigApiEnabledKey(unittest.TestCase):
+    """ADR-009：config_api_enabled 默认关 + 真值保留。"""
+
+    def test_default_off_when_absent(self):
+        self.assertIs(config.merge_config({})["config_api_enabled"], False)
+
+    def test_explicit_true_preserved(self):
+        self.assertIs(
+            config.merge_config({"config_api_enabled": True})["config_api_enabled"],
+            True)

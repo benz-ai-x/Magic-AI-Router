@@ -137,6 +137,8 @@ class TestMultiActiveTunnels(unittest.TestCase):
         titles = self._titles
         self.assertIn("阻止睡眠", titles)   # fixture 文案（=防睡眠开关）
         self.assertIn("开机启动", titles)   # fixture 文案（=登录启动开关）
+        # ADR-009：配置 API 服务开关（MenuState 字段缺省 = 关）
+        self.assertIn("配置 API 服务：关", titles)
 
     def test_status_line_appends_forward_count(self):
         mb = MenuBuilder(MagicMock(), lambda: _state(

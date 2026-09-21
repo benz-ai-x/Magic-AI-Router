@@ -43,6 +43,16 @@ def _should_prevent_sleep(status, paused, flag):
     return bool(flag and status == "connected" and not paused)
 
 
+def config_server_wanted(window_open, api_enabled, copy_latch):
+    """配置服务持有状态机（ADR-009）——纯函数，菜单/关窗/手势三入口共用。
+
+    任一持有者在场即需要监听 :9528：设置窗开着 / config_api_enabled
+    常驻开关 / 「复制 AI 助手指令」会话闩锁（agent 后续 curl 依赖）。
+    全部离场即释放端口——默认态零配置面监听。
+    """
+    return bool(window_open or api_enabled or copy_latch)
+
+
 
 
 def report_port_occupancy(config_port=9528,
@@ -57,6 +67,8 @@ def report_port_occupancy(config_port=9528,
     """
     self_pid = os.getpid()
     for port in (config_port, suanpan_port):
+        if port is None:
+            continue  # None = 本次不绑定该端口（ADR-009 配置 API 默认关）
         po = port_check.who_owns(port)
         if not po or po.pid == self_pid:
             continue
@@ -157,8 +169,12 @@ class LifecycleRuntime:
         from mpconf.config_state import recover_pending_txn
         recover_pending_txn()
         config_port = (self._config_fn() or {}).get("config_port", 9528)
-        report_port_occupancy(config_port, _read_suanpan_port())
-        if not self._config_server.start():
+        # ADR-009：配置 API 默认不常驻——仅显式开关打开时随应用启动
+        # 监听；默认态零配置面端口（设置窗/复制指令手势按需起停）。
+        api_enabled = bool((self._config_fn() or {}).get("config_api_enabled"))
+        report_port_occupancy(
+            config_port if api_enabled else None, _read_suanpan_port())
+        if api_enabled and not self._config_server.start():
             logger.warning("Config server failed to start on :%d", config_port)
         # AI router gateway auto-starts with the app (loopback-only);
         # users can still stop it from the AI 路由 menu.
@@ -174,6 +190,18 @@ class LifecycleRuntime:
         self.stop_all()
         self._config_server.stop()
         self._owner.release()
+
+    def sync_config_server(self, wanted):
+        """按持有状态收敛 :9528（ADR-009）：wanted=True 起服务（幂等），
+        False 即释放端口。调用方 app.py 经 config_server_wanted 重算。"""
+        if wanted:
+            if not self._config_server.start():
+                logger.warning("Config server failed to start on :%d",
+                               self._config_server.port)
+                return False
+            return True
+        self._config_server.stop()
+        return True
 
     def tick(self, capture_port):
         """Per-second: capture check + system proxy sync."""

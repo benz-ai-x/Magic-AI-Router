@@ -41,6 +41,10 @@ def _make_app(config=None):
     # 不会触碰真实配置文件）
     from mpconf.config_state import ConfigStateStore
     a._config_store = ConfigStateStore(keychain=None)
+    # ADR-009：配置服务持有者（_sync_config_server 读；_lifecycle 已是
+    # MagicMock，收敛调用被吸收）
+    a._config_window_open = False
+    a._copy_api_latch = False
     return a
 
 
