@@ -669,8 +669,59 @@ class MagicProxyApp(rumps.App):
             actions_log.exception("show_log_window failed")
 
     def about(self, _):
-        rumps.alert(title="Magic AI Router",
-                    message=f"版本 v{self.VERSION_DISPLAY}\nSSH 隧道 HTTP→SOCKS5 代理菜单栏应用")
+        rumps.alert(
+            title="Magic AI Router",
+            message=(
+                f"版本 v{self.VERSION_DISPLAY}\n"
+                "住进菜单栏的本地 AI 网络栈——路由它，隧道它，看见它。\n"
+                "\n"
+                "【代 理｜SSH 隧道】\n"
+                "· HTTP→SOCKS5 代理（:8888），经你自己的服务器转发\n"
+                "· 多隧道并行：一条代理隧道 + 任意多条 ssh -L 端口转发\n"
+                "  （远程端口映射到本机 127.0.0.1，随应用启动自动恢复）\n"
+                "· 密钥/密码认证（密码只存 macOS 钥匙串）\n"
+                "· 主机密钥 TOFU 信任、断线无限退避重连、唤醒即重连\n"
+                "· 事务式系统代理管理、单个 Chromium 应用经代理启动\n"
+                "\n"
+                "【端口映射｜多活转发】\n"
+                "· 菜单栏逐隧道启停端口转发，互不影响\n"
+                "· 每条规则一键 SSH 可达性测试（保存前后均可）\n"
+                "· 切换代理隧道时旧隧道降级续跑为纯转发会话\n"
+                "\n"
+                "【远程挂载｜NFS over SSH】\n"
+                "· NFSv4 经 SSH 隧道挂载远程目录到本机（ADR-007）\n"
+                "· 断线自动强制卸载、恢复后自动重挂（tick 对账）\n"
+                "· 远程环境一键安装（发行版探测 + 幂等配置 + 验证）\n"
+                "· sudo 密码独立存钥匙串；挂载失败原因可见、\n"
+                "  支持一键导出修复指引（v0.10.1）\n"
+                "\n"
+                "【AI 路由｜算盘网关】（:9527）\n"
+                "· Anthropic Messages API 兼容：Claude Code 指过来即用\n"
+                "· 路由到 GLM / DeepSeek / Kimi / Qwen / Anthropic 等\n"
+                "· 前缀规则 + 默认路由 + 供应商/模型 内联覆盖 +\n"
+                "  <SUBAGENT-MODEL> 子代理路由（误投大声回落，绝不静默）\n"
+                "· 感知提示词缓存（anthropic_native 保留 cache_control）\n"
+                "· SSE 流式全透传、安全重试（非幂等绝不重放）\n"
+                "· 用量统计（今日/7天/月度，缓存命中率）+ 供应商余额\n"
+                "· Claude Code 一键同步角色→模型映射；支持 Docker 部署\n"
+                "\n"
+                "【抓 包｜TLS 观测】（:8080）\n"
+                "· mitmproxy 解密 HTTPS，只记录 AI API 明文到 JSONL\n"
+                "· 开箱识别 OpenAI / Anthropic / DeepSeek / 豆包 /\n"
+                "  Qwen / MiniMax，其余流量原样放行\n"
+                "· 首次使用根 CA 信任引导，保留天数可配\n"
+                "\n"
+                "【信任与工程】\n"
+                "· 零遥测，服务只绑回环（代理 :8888 / 网关 :9527 /\n"
+                "  抓包 :8080；配置 :9528 按需监听）\n"
+                "· 配置原子写入 + 崩溃恢复日志，密钥全程掩码\n"
+                "· 1700+ 测试、架构决策记录（ADR）钉住行为契约\n"
+                "\n"
+                "设置窗（⌘,）可视化配置一切（隧道 / 端口转发 / 远程挂载 /\n"
+                "网络 / 供应商 / Claude Code 同步 / 统计 / 余额 / 系统）；\n"
+                "「复制 AI 助手指令」可让 AI 代理经本地 API 自主完成配置。\n"
+                "\n"
+                "开源（MIT）：github.com/benz-ai-x/Magic-AI-Router"))
 
     # ── proxied app launch ───────────────────────────────
 
