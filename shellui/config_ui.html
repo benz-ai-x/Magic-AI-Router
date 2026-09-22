@@ -770,7 +770,7 @@ function ccDriftInfo(meta,opts){
   const o=opts||{};
   if(!(meta&&meta.synced&&meta.drift))return{show:false,text:'',reset:false};
   if(o.acked)return{show:true,text:'已按路由规则重置；「保存并同步」后写入 Claude Code',reset:false};
-  return{show:true,text:'路由规则推导值与 Claude Code 当前生效配置不一致：表格已按当前生效配置回显，也可按路由规则重置',reset:true};
+  return{show:true,text:'路由规则与 Claude Code 当前生效配置不一致（外部手改 yaml 或历史遗留）：表格已按当前生效配置回显；「保存并同步」会把表格值回写为路由规则，或按路由规则重置表格向规则对齐',reset:true};
 }
 
 // #44: single sentinel builder for the role state — the three handlers
@@ -791,6 +791,25 @@ function ccPreviewRows(pv){
     old:c.old==null?'—':String(c.old),
     new:c.new==null?'—':String(c.new),
   }));
+}
+// 规则=持久真相方案：保存会 upsert 网关 tier 路由规则（~/.suanpan.yaml）
+// ——规则 diff 与 env diff 同弹窗确认。纯函数，node 测试钉住。
+function ccRuleRows(pv){
+  if(!pv||!pv.ok)return [];
+  return (pv.rule_changes||[]).map(c=>({
+    prefix:String(c.match_prefix||''),badge:ccChangeBadge(c.action),
+    old:c.old==null?'—':String(c.old),
+    new:c.new==null?'—':String(c.new),
+  }));
+}
+// 未在清单软警告（glm-5.2 真机案例：上游可能仍服务未列模型——警示
+// 不拦截）。空载荷/无警告返回 ''。
+function ccUnlistedNote(pv){
+  if(!pv||!pv.ok)return '';
+  const u=pv.unlisted||[];
+  if(!u.length)return '';
+  return '⚠ ' + u.map(x=>`${x.role}→${x.target}`).join('、') +
+    ' 不在对应供应商的模型清单——请确认上游仍提供该模型';
 }
 function ccBackupNote(pv){
   if(!pv||!pv.ok||!pv.backup)return '';
@@ -1145,6 +1164,13 @@ function ccConfirmSync(pv){
   return new Promise(resolve=>{
     const prev=document.activeElement;
     const rows=ccPreviewRows(pv);
+    const ruleRows=ccRuleRows(pv);
+    const unlisted=ccUnlistedNote(pv);
+    const ruleSec=ruleRows.length?`
+      <div class="cc-modal-sec">同步网关 tier 路由规则 <code class="mono">~/.suanpan.yaml</code>（${ruleRows.length} 条）</div>
+      <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>规则前缀</th><th>操作</th><th>原目标</th><th>新目标</th></tr></thead>
+        <tbody>${ruleRows.map(r=>`<tr><td class="mono">${esc(r.prefix)}</td><td><span class="cc-badge cc-badge-${esc(r.badge)}">${esc(r.badge)}</span></td><td class="mono">${esc(r.old)}</td><td class="mono">${esc(r.new)}</td></tr>`).join('')}</tbody></table></div>`:'';
+    const warnSec=unlisted?`<p class="cc-modal-backup" style="color:var(--warn)">${esc(unlisted)}</p>`:'';
     const ov=document.createElement('div');
     ov.className='cc-modal-overlay';
     ov.innerHTML=`<div class="cc-modal" role="dialog" aria-modal="true" aria-labelledby="cc-modal-title" aria-describedby="cc-modal-target">
@@ -1153,6 +1179,7 @@ function ccConfirmSync(pv){
       <div class="cc-modal-sec">将写入 ${rows.length} 项变更</div>
       <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>环境变量</th><th>操作</th><th>原值</th><th>新值</th></tr></thead>
         <tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.key)}</td><td><span class="cc-badge cc-badge-${esc(r.badge)}">${esc(r.badge)}</span></td><td class="mono">${esc(r.old)}</td><td class="mono">${esc(r.new)}</td></tr>`).join('')}</tbody></table></div>
+      ${ruleSec}${warnSec}
       <p class="cc-modal-backup">${esc(ccBackupNote(pv))}</p>
       <p class="cc-modal-hint">写入经原子替换（0600），重启 Claude Code 后生效</p>
       <div class="cc-modal-actions">
@@ -1931,7 +1958,7 @@ function rulesHTML(){
     <div class="panel">
       <div class="section-bar"><h2 class="section-title">同步到 Claude Code</h2></div>
       <div class="route-slot" style="padding:0">
-        <p class="module-intro" style="margin:0;padding:12px 20px 8px">显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。右上角「保存并同步」会同时保存网关配置并写入 Claude Code</p>
+        <p class="module-intro" style="margin:0;padding:12px 20px 8px">显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。右上角「保存并同步」会把角色映射同时写入网关 tier 路由规则（~/.suanpan.yaml）和 Claude Code（~/.claude/settings.json）——别名请求与直连流量永远同路</p>
         <div id="cc-drift-banner" hidden style="display:flex;align-items:center;gap:12px;margin:0 20px 8px;padding:8px 12px;border:1px solid color-mix(in oklch,var(--warn),transparent 70%);border-radius:8px;background:color-mix(in oklch,var(--warn),transparent 92%)">
           <span id="cc-drift-text" style="flex:1;font-size:13px;color:var(--warn)"></span>
         </div>

@@ -3,9 +3,13 @@
 All notable changes to Magic-AI-Router are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
-## [Unreleased] — 配置面端口生命周期收敛（ADR-009）
+## [Unreleased] — CC 同步规则面联动：规则=持久真相（+ 配置面端口生命周期收敛，ADR-009）
 
 ### Changed
+- **「保存并同步」同时写入网关 tier 路由规则与 Claude Code env（规则=持久真相）**：同一用户意图（"opus 档用哪个模型"）此前存在两份持久真相——网关 `sp.rules`（别名流量路由）与 settings.json env（Claude Code 发什么模型名），且后者有编辑器、前者无任何 UI 入口——env 已升 glm-5.3 而规则停留在 glm-5.2 的"幽灵规则"持续吃别名流量（真机案例：2966 次请求路由到已裁剪模型，Claude Code 同步页三行「未在清单」）。修复：`setup()` 把角色表 upsert 成 tier 规则（`_plan_rule_changes` 纯函数：只改精确前缀匹配的既有规则或追加，不重排、不删更细前缀的自定义规则；推导路径 roles=None 只对齐不新增），经 ConfigStateStore 事务写 `~/.suanpan.yaml`（与 UI 保存同一校验，规则先行失败则 settings.json 不动）；`already` 两面都一致才成立；规则写成功即触发网关热重载。确认弹窗新增规则 diff 表 + 「未在清单」软警告（上游可能仍服务未列模型——警示不拦截）；drift 横幅文案讲清两面结构与两条对齐路径
+
+### Fixed（ADR-009，随 d0b8e47）
+- **保存触发网关热重载可致其永久下线（真机案例）**：uvicorn 优雅停机默认**无限等待**在连连接关闭——reload 时 Claude Code 的 keep-alive/重试连接挂着不放 → `join(3s)` 超时 → 僵尸线程使 `running` 恒 True → 后续 `start()` 被拒，:9527 再也不监听（用户视角：Claude Code Connection refused 重试 10 次）。修复：`uvicorn.Config(timeout_graceful_shutdown=2)`——2s 宽限后强断残余连接，停机有界（< join 3s），reload 自愈
 - **配置 API 默认不再常驻监听 :9528**：设置窗对配置 UI 而言是"用完即走"的，此前却随应用启动常驻占端口 + 维持一整面 token/host 守卫。改为三持有者状态机（`config_server_wanted` 纯函数）：设置窗开着 / 「复制 AI 助手指令」会话闩锁（复制即自动开启供 agent curl，本次会话保持）/ 新增 `config_api_enabled` 常驻开关（系 统 ▸ 菜单 checkbox + 设置窗系统页开关行，`prevent_sleep` 同款双入口）——任一在场才监听，全离场即释放端口。Docker 形态不受影响（恒常驻）；`agent_instructions()` 文案与 agent.md 补服务开启提示；启动期端口占用报告对未绑定端口不再告警
 
 ## [v0.10.1] — 2026-09-20 — 挂载失败可见性链路 + 浏览器设置页复制指令修复

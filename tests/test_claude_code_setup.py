@@ -12,6 +12,35 @@ from unittest.mock import patch
 
 from services import claude_code_setup
 from shared import config_store
+
+
+def _sp_with_providers(sp, roles):
+    """夹具整备：providers 覆盖 roles/规则/default 引用的全部供应商。
+
+    setup 现会把角色 upsert 成网关 tier 路由规则，经 ConfigStateStore
+    写入时 prepare 校验「route_to 引用不存在的供应商」——夹具按引用
+    目标自动补最小 providers，保持用例聚焦角色/规则语义本身。
+    """
+    sp = dict(sp) if sp is not None else {"listen": "127.0.0.1:9527"}
+    providers = {k: dict(v) for k, v in (sp.get("providers") or {}).items()}
+    targets = [r.get("route_to") for r in (sp.get("rules") or [])
+               if isinstance(r, dict)]
+    targets.append((sp.get("router") or {}).get("default"))
+    for role in (roles or {}).values():
+        if isinstance(role, dict):
+            targets.append(role.get("model"))
+    for t in targets:
+        if not t:
+            continue
+        prov, _, model = str(t).partition("/")
+        if not prov or not model:
+            continue
+        p = providers.setdefault(prov, {"base_url": f"https://{prov}.example",
+                                        "api_key": "k", "models": []})
+        if model not in (p.get("models") or []):
+            p["models"] = [*(p.get("models") or []), model]
+    sp["providers"] = providers
+    return sp
 class TestSetupClaudeCode(unittest.TestCase):
     """setup() writes ~/.claude/settings.json env block via atomic_write."""
 
@@ -29,7 +58,7 @@ class TestSetupClaudeCode(unittest.TestCase):
             with patch("services.claude_code_setup.sp_config.suanpan_listen",
                        return_value="127.0.0.1:9527"), \
                  patch("services.claude_code_setup.sp_config.sp_load_raw",
-                       return_value=sp if sp is not None else {}), \
+                       return_value=_sp_with_providers(sp, roles)), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 result = claude_code_setup.setup(roles=roles)
             with open(settings_path) as f:
@@ -611,14 +640,16 @@ class TestRolesToEnv(unittest.TestCase):
 class TestSetupClaudeCodeWithRoles(unittest.TestCase):
     """setup() with explicit roles parameter."""
 
-    def _run_with_roles(self, roles, existing_settings=None):
+    def _run_with_roles(self, roles, existing_settings=None, sp=None):
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
             if existing_settings is not None:
                 with open(settings_path, "w") as f:
                     json.dump(existing_settings, f)
             with patch("services.claude_code_setup.sp_config.sp_load_raw",
-                       return_value={"listen": "127.0.0.1:9527"}), \
+                       return_value=_sp_with_providers(
+                           sp if sp is not None else
+                           {"listen": "127.0.0.1:9527"}, roles)), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 result = claude_code_setup.setup(roles=roles)
             with open(settings_path) as f:
@@ -649,7 +680,7 @@ class TestSetupClaudeCodeWithRoles(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             settings_path = os.path.join(d, "settings.json")
             with patch("services.claude_code_setup.sp_config.sp_load_raw",
-                       return_value=sp), \
+                       return_value=_sp_with_providers(sp, roles)), \
                  patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
                 claude_code_setup.setup(roles=roles)
             with open(settings_path) as f:
@@ -833,7 +864,7 @@ class TestPreview(unittest.TestCase):
         with patch("services.claude_code_setup.sp_config.suanpan_listen",
                    return_value="127.0.0.1:9527"), \
              patch("services.claude_code_setup.sp_config.sp_load_raw",
-                   return_value={}), \
+                   return_value=_sp_with_providers({}, roles)), \
              patch.dict(config_store.PATHS, {"claude_settings": settings_path}):
             setup_result = claude_code_setup.setup(roles=roles)
         self.assertEqual(setup_result["action"], "added")
@@ -881,3 +912,406 @@ class TestSettingsShapeGuard(unittest.TestCase):
                 result = claude_code_setup.preview()
             self.assertIn("ok", result)  # 错误塑形返回，不裸抛
 
+
+
+# ══ ADR-010 M4：多 Agent 配置注册表引擎 ═════════════════════════════
+
+def _agent_env(path_key, file_name, patches_extra=()):
+    """临时目录 + PATHS 重定向上下文管理器原料（与 CC 测试同模式）。"""
+    d = tempfile.mkdtemp()
+    return os.path.join(d, file_name)
+
+
+class TestCodexSetup(unittest.TestCase):
+
+    def _ctx(self, tmpdir):
+        return patch.dict(config_store.PATHS, {
+            "codex_config": os.path.join(tmpdir, "config.toml"),
+            "mp": os.path.join(tmpdir, "magic-proxy.json"),
+            "sp": os.path.join(tmpdir, "suanpan.yaml"),
+        })
+
+    def test_setup_writes_provider_table_and_top_level(self):
+        import tomlkit
+        with tempfile.TemporaryDirectory() as d:
+            with self._ctx(d), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"):
+                result = claude_code_setup.agent_setup(
+                    "codex", {"model": "gpt-5.2"})
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["action"], "added")
+            with open(os.path.join(d, "config.toml")) as f:
+                doc = tomlkit.parse(f.read())
+            tbl = doc["model_providers"]["magic-router"]
+            self.assertEqual(tbl["base_url"], "http://127.0.0.1:9527/v1")
+            self.assertEqual(tbl["wire_api"], "responses")
+            self.assertTrue(tbl["experimental_bearer_token"])
+            self.assertEqual(doc["model"], "gpt-5.2")
+            self.assertEqual(doc["model_provider"], "magic-router")
+
+    def test_idempotent_already(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self._ctx(d), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"):
+                claude_code_setup.agent_setup("codex", {"model": "gpt-5.2"})
+                result = claude_code_setup.agent_setup(
+                    "codex", {"model": "gpt-5.2"})
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["action"], "already")
+
+    def test_merge_not_overwrite_preserves_user_content(self):
+        """Codex /model 会写回 config.toml——我们只替换自己的表，用户的
+        其它 provider 与注释必须原样保留（ADR-010 契约）。"""
+        import tomlkit
+        user_toml = (
+            "# my codex config\n"
+            "model = \"o3\"\n"
+            "\n"
+            "[model_providers.my-own]\n"
+            "name = \"Own\"\n"
+            "base_url = \"https://my.example.com/v1\"\n"
+            "wire_api = \"responses\"\n"
+            "env_key = \"MY_KEY\"\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "config.toml")
+            with open(path, "w") as f:
+                f.write(user_toml)
+            with self._ctx(d), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"):
+                result = claude_code_setup.agent_setup(
+                    "codex", {"model": "gpt-5.2"})
+            self.assertTrue(result["ok"])
+            text = open(path).read()
+            self.assertIn("# my codex config", text)  # 注释保留
+            doc = tomlkit.parse(text)
+            self.assertEqual(doc["model_providers"]["my-own"]["base_url"],
+                             "https://my.example.com/v1")  # 用户 provider 保留
+            self.assertIn("magic-router", doc["model_providers"])
+
+    def test_missing_model_is_actionable_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self._ctx(d), \
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
+                       return_value={}):
+                result = claude_code_setup.agent_setup("codex", None)
+            self.assertFalse(result["ok"])
+            self.assertIn("模型", result["msg"])
+
+
+class TestOpenCodeSetup(unittest.TestCase):
+
+    def _ctx(self, tmpdir):
+        return patch.dict(config_store.PATHS, {
+            "opencode_config": os.path.join(tmpdir, "opencode.json"),
+            "mp": os.path.join(tmpdir, "magic-proxy.json"),
+        })
+
+    def _sp(self):
+        return {"router": {"default": "oai/gpt-4o-mini"},
+                "providers": {"oai": {"models": ["gpt-4o-mini", "gpt-4o"]}}}
+
+    def test_setup_writes_provider_and_models_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self._ctx(d), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
+                       return_value=self._sp()):
+                result = claude_code_setup.agent_setup("opencode", None)
+            self.assertTrue(result["ok"])
+            with open(os.path.join(d, "opencode.json")) as f:
+                cfg = json.load(f)
+            tbl = cfg["provider"]["magic-router"]
+            self.assertEqual(tbl["npm"], "@ai-sdk/anthropic")
+            self.assertEqual(tbl["options"]["baseURL"],
+                             "http://127.0.0.1:9527")
+            self.assertIn("gpt-4o-mini", tbl["models"])  # models 块必写
+            self.assertTrue(tbl["options"]["apiKey"])
+
+    def test_openai_protocol_variant(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self._ctx(d), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
+                       return_value=self._sp()):
+                claude_code_setup.agent_setup(
+                    "opencode", {"protocol": "openai"})
+            with open(os.path.join(d, "opencode.json")) as f:
+                cfg = json.load(f)
+            tbl = cfg["provider"]["magic-router"]
+            self.assertEqual(tbl["npm"], "@ai-sdk/openai-compatible")
+            self.assertEqual(tbl["options"]["baseURL"],
+                             "http://127.0.0.1:9527/v1")
+
+    def test_jsonc_degrades_safely(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "opencode.json")
+            with open(path, "w") as f:
+                f.write('{\n  // 我的注释\n  "theme": "dark"\n}\n')
+            with self._ctx(d), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
+                       return_value=self._sp()):
+                result = claude_code_setup.agent_preview("opencode", None)
+            self.assertFalse(result["ok"])
+            self.assertIn("注释", result["msg"])  # 安全降级 + 可行动提示
+
+    def test_preserves_user_config_keys(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "opencode.json")
+            with open(path, "w") as f:
+                json.dump({"theme": "dark",
+                           "provider": {"openai": {"npm": "@ai-sdk/openai"}}},
+                          f)
+            with self._ctx(d), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
+                       return_value=self._sp()):
+                claude_code_setup.agent_setup("opencode", None)
+            with open(path) as f:
+                cfg = json.load(f)
+            self.assertEqual(cfg["theme"], "dark")
+            self.assertIn("openai", cfg["provider"])  # 用户 provider 保留
+            self.assertIn("magic-router", cfg["provider"])
+
+
+class TestZCodeSetup(unittest.TestCase):
+
+    def test_setup_writes_kind_anthropic(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.dict(config_store.PATHS, {
+                "zcode_config": os.path.join(d, "config.json"),
+                "mp": os.path.join(d, "magic-proxy.json"),
+            }), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
+                       return_value={"router": {"default": "glm/glm-5.3"},
+                                     "providers": {"glm":
+                                                   {"models": ["glm-5.3"]}}}):
+                result = claude_code_setup.agent_setup("zcode", None)
+            self.assertTrue(result["ok"])
+            with open(os.path.join(d, "config.json")) as f:
+                cfg = json.load(f)
+            tbl = cfg["provider"]["magic-router"]
+            self.assertEqual(tbl["kind"], "anthropic")
+            self.assertEqual(tbl["options"]["baseURL"],
+                             "http://127.0.0.1:9527")
+            self.assertIn("glm-5.3", tbl["models"])
+
+
+class TestAgentsRegistry(unittest.TestCase):
+
+    def test_status_shape(self):
+        with patch("services.claude_code_setup.sp_config.suanpan_listen",
+                   return_value="127.0.0.1:9527"):
+            status = claude_code_setup.agents_status()
+        ids = [a["id"] for a in status]
+        self.assertEqual(ids, ["claude-code", "codex", "opencode", "zcode"])
+        for a in status:
+            self.assertIn("label", a)
+            self.assertIsInstance(a["installed"], bool)
+            self.assertIsInstance(a["synced"], bool)
+
+    def test_unknown_agent_rejected(self):
+        self.assertFalse(claude_code_setup.agent_preview("nope")["ok"])
+        result = claude_code_setup.agent_setup("nope")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["action"], "failed")
+
+    def test_preview_masks_token(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.dict(config_store.PATHS, {
+                "zcode_config": os.path.join(d, "config.json"),
+                "mp": os.path.join(d, "magic-proxy.json"),
+            }), \
+                 patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
+                       return_value={"router": {"default": "glm/glm-5.3"},
+                                     "providers": {"glm":
+                                                   {"models": ["glm-5.3"]}}}):
+                pv = claude_code_setup.agent_preview("zcode", None)
+        self.assertTrue(pv["ok"])
+        self.assertFalse(pv["already"])
+        self.assertIn("backup", pv)
+        joined = json.dumps(pv["changes"], ensure_ascii=False)
+        self.assertNotIn("apiKey\": \"", joined.replace("apiKey=", ""))
+        # token 在 change 摘要里只出现掩码形态
+        for c in pv["changes"]:
+            self.assertNotRegex(str(c.get("new", "")), r"[0-9a-f]{16,}")
+
+
+class TestPlanRuleChanges(unittest.TestCase):
+    """角色表 → tier 规则 upsert 语义（纯函数）。"""
+
+    def test_noop_when_targets_match(self):
+        sp = {"rules": [{"match_prefix": "claude-opus",
+                         "route_to": "GLM_MAX/glm-5.2"}]}
+        roles = {"opus": {"model": "GLM_MAX/glm-5.2"}}
+        changes, rules = claude_code_setup._plan_rule_changes(roles, sp)
+        self.assertEqual(changes, [])
+        self.assertEqual(rules, sp["rules"])
+
+    def test_replace_existing_tier_rule(self):
+        sp = {"rules": [{"match_prefix": "claude-opus",
+                         "route_to": "GLM_MAX/glm-5.2"}]}
+        roles = {"opus": {"model": "GLM_MAX/glm-5.3"}}
+        changes, rules = claude_code_setup._plan_rule_changes(roles, sp)
+        self.assertEqual(changes, [{"match_prefix": "claude-opus",
+                                    "action": "replace",
+                                    "old": "GLM_MAX/glm-5.2",
+                                    "new": "GLM_MAX/glm-5.3"}])
+        self.assertEqual(rules[0]["route_to"], "GLM_MAX/glm-5.3")
+
+    def test_add_missing_tier_rule(self):
+        roles = {"sonnet": {"model": "KIMI/k3"}}
+        changes, rules = claude_code_setup._plan_rule_changes(roles, {"rules": []})
+        self.assertEqual(changes, [{"match_prefix": "claude-sonnet",
+                                    "action": "add", "old": None,
+                                    "new": "KIMI/k3"}])
+        self.assertEqual(rules, [{"match_prefix": "claude-sonnet",
+                                  "route_to": "KIMI/k3"}])
+
+    def test_finer_prefix_rules_untouched_and_order_preserved(self):
+        """更细前缀的自定义规则不被改写、不被重排（首序命中语义）。"""
+        sp = {"rules": [
+            {"match_prefix": "claude-opus-4-7", "route_to": "KIMI/k3"},
+            {"match_prefix": "custom-prefix", "route_to": "QWEN/qwen3.8-max"},
+            {"match_prefix": "claude-opus", "route_to": "GLM_MAX/glm-5.2"},
+        ]}
+        roles = {"opus": {"model": "GLM_MAX/glm-5.3"}}
+        changes, rules = claude_code_setup._plan_rule_changes(roles, sp)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual([r["match_prefix"] for r in rules],
+                         ["claude-opus-4-7", "custom-prefix", "claude-opus"])
+        self.assertEqual(rules[0]["route_to"], "KIMI/k3")  # 更细前缀原样
+        self.assertEqual(rules[2]["route_to"], "GLM_MAX/glm-5.3")
+
+    def test_allow_add_false_skips_new_rules(self):
+        """推导路径（roles=None 的向导）：只对齐既有规则，不物化新规则。"""
+        sp = {"rules": [{"match_prefix": "claude-opus",
+                         "route_to": "GLM_MAX/glm-5.2"}]}
+        roles = {"opus": {"model": "GLM_MAX/glm-5.2"},
+                 "sonnet": {"model": "GLM_MAX/glm-5.3"}}  # sonnet 无既有规则
+        changes, rules = claude_code_setup._plan_rule_changes(
+            roles, sp, allow_add=False)
+        self.assertEqual(changes, [])  # opus 已一致；sonnet 不新增
+        self.assertEqual(len(rules), 1)
+
+    def test_empty_role_model_skipped(self):
+        roles = {"opus": {"model": ""}}
+        changes, rules = claude_code_setup._plan_rule_changes(roles, {"rules": []})
+        self.assertEqual((changes, rules), ([], []))
+
+
+class TestUnlistedTargets(unittest.TestCase):
+    def test_unlisted_flagged(self):
+        sp = {"providers": {"GLM_MAX": {"models": ["glm-5.3"]}}}
+        roles = {"opus": {"model": "GLM_MAX/glm-5.2"}}
+        self.assertEqual(claude_code_setup._unlisted_targets(roles, sp),
+                         [{"role": "opus", "target": "GLM_MAX/glm-5.2"}])
+
+    def test_listed_passes(self):
+        sp = {"providers": {"GLM_MAX": {"models": ["glm-5.2"]}}}
+        roles = {"opus": {"model": "GLM_MAX/glm-5.2"}}
+        self.assertEqual(claude_code_setup._unlisted_targets(roles, sp), [])
+
+    def test_provider_without_models_list_passes(self):
+        """无 models 清单的供应商无从判定——不警示（软警告语义）。"""
+        sp = {"providers": {"GLM_MAX": {}}}
+        roles = {"opus": {"model": "GLM_MAX/anything"}}
+        self.assertEqual(claude_code_setup._unlisted_targets(roles, sp), [])
+
+
+class TestRulesPlaneSync(unittest.TestCase):
+    """「规则=持久真相」：保存同时落规则面 + env 面。"""
+
+    def _run(self, roles, sp, existing_settings):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = os.path.join(d, "settings.json")
+            sp_path = os.path.join(d, "suanpan.yaml")
+            with open(settings_path, "w") as f:
+                json.dump(existing_settings, f)
+            with open(sp_path, "w") as f:
+                import yaml
+                yaml.safe_dump(sp, f)
+            with patch("services.claude_code_setup.sp_config.suanpan_listen",
+                       return_value="127.0.0.1:9527"), \
+                 patch("services.claude_code_setup.sp_config.sp_load_raw",
+                       return_value=sp), \
+                 patch.dict(config_store.PATHS,
+                            {"claude_settings": settings_path, "sp": sp_path}):
+                result = claude_code_setup.setup(roles=roles)
+                import yaml as _yaml
+                with open(sp_path) as f:
+                    written_sp = _yaml.safe_load(f)
+            return result, written_sp
+
+    def test_env_aligned_but_rules_drift_still_converges(self):
+        """glm-5.2 真机案例复现：env 已是 5.3、规则还是 5.2——不算 already，
+        保存把规则对齐到角色表。"""
+        sp = _sp_with_providers({
+            "listen": "127.0.0.1:9527",
+            "rules": [{"match_prefix": "claude-opus",
+                       "route_to": "GLM_MAX/glm-5.2"}],
+            "router": {"default": "GLM_MAX/glm-5.3"},
+        }, None)
+        roles = {"opus": {"model": "GLM_MAX/glm-5.3", "ctx_1m": True}}
+        existing = {"env": {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:9527",
+            "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM_MAX/glm-5.3[1M]",
+        }}
+        result, written_sp = self._run(roles, sp, existing)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "added")
+        self.assertTrue(result["rules_written"])
+        self.assertEqual(written_sp["rules"][0]["route_to"],
+                         "GLM_MAX/glm-5.3")
+
+    def test_rules_validation_failure_keeps_settings_untouched(self):
+        """规则写被拒（引用不存在供应商）→ 整体 failed，settings.json 不动。"""
+        sp = {"listen": "127.0.0.1:9527", "rules": [],
+              "providers": {"GLM_MAX": {"models": ["glm-5.3"]}}}
+        roles = {"opus": {"model": "NOPE/glm-x"}}  # 供应商不存在
+        existing = {"env": {"ANTHROPIC_BASE_URL": "https://api.anthropic.com"}}
+        result, written_sp = self._run(roles, sp, existing)
+        self.assertFalse(result["ok"])
+        self.assertIn("路由规则写入被拒", result["msg"])
+        self.assertFalse(result.get("rules_written"))
+        # 规则先行失败：sp 原样（无 NOPE 引用），settings.json 不被触碰
+        self.assertEqual(written_sp.get("rules"), [])
+        self.assertEqual(existing["env"]["ANTHROPIC_BASE_URL"],
+                         "https://api.anthropic.com")
+
+    def test_preview_carries_rule_changes_and_unlisted(self):
+        sp = _sp_with_providers({
+            "listen": "127.0.0.1:9527",
+            "rules": [{"match_prefix": "claude-opus",
+                       "route_to": "GLM_MAX/glm-5.2"}],
+        }, {"opus": {"model": "GLM_MAX/glm-5.3"}})
+        # glm-5.3 已由 _sp_with_providers 补入清单——手工造未在清单场景
+        sp["providers"]["GLM_MAX"]["models"] = ["glm-5.2"]
+        roles = {"opus": {"model": "GLM_MAX/glm-5.3", "ctx_1m": True}}
+        with patch("services.claude_code_setup.sp_config.suanpan_listen",
+                   return_value="127.0.0.1:9527"), \
+             patch("services.claude_code_setup.sp_config.sp_load_raw",
+                   return_value=sp), \
+             patch.dict(config_store.PATHS,
+                        {"claude_settings": "/nonexistent/settings.json"}):
+            pv = claude_code_setup.preview(roles=roles)
+        self.assertTrue(pv["ok"])
+        self.assertEqual(pv["rule_changes"],
+                         [{"match_prefix": "claude-opus", "action": "replace",
+                           "old": "GLM_MAX/glm-5.2", "new": "GLM_MAX/glm-5.3"}])
+        self.assertEqual(pv["unlisted"],
+                         [{"role": "opus", "target": "GLM_MAX/glm-5.3"}])

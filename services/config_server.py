@@ -463,7 +463,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, claude_code_setup.preview(roles=roles))
         elif path == "/api/setup-claude-code":
             roles = data.get("roles")  # {key: {model, ctx_1m}} or None
-            self._json(200, claude_code_setup.setup(roles=roles))
+            result = claude_code_setup.setup(roles=roles)
+            # 角色表会 upsert 网关 tier 路由规则（规则=持久真相方案）——
+            # 写过规则即触发 SP 段回调（网关热重载），与 PUT /api/state
+            # 同一收敛口径
+            if result.get("rules_written") and \
+                    getattr(self.server, "on_sp_saved", None):
+                try:
+                    self.server.on_sp_saved()
+                except Exception:
+                    logger.exception("on_sp_saved after cc setup failed")
+            self._json(200, result)
         elif path == "/api/test-tunnel":
             code, payload = self._test_tunnel(data)
             self._json(code, payload)

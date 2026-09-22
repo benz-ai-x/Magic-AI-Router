@@ -718,6 +718,35 @@ test("ccPreviewRows degrades safely on bad payloads", () => {
   assert.deepEqual(L.ccPreviewRows({ ok: true, changes: null }), []);
 });
 
+// ── ccRuleRows / ccUnlistedNote（规则=持久真相：规则 diff 与软警告）──
+test("ccRuleRows turns rule_changes into dialog rows", () => {
+  const pv = { ok: true, rule_changes: [
+    { match_prefix: "claude-opus", action: "replace", old: "GLM_MAX/glm-5.2", new: "GLM_MAX/glm-5.3" },
+    { match_prefix: "claude-sonnet", action: "add", old: null, new: "KIMI/k3" },
+  ] };
+  assert.deepEqual(L.ccRuleRows(pv), [
+    { prefix: "claude-opus", badge: "修改", old: "GLM_MAX/glm-5.2", new: "GLM_MAX/glm-5.3" },
+    { prefix: "claude-sonnet", badge: "新增", old: "—", new: "KIMI/k3" },
+  ]);
+});
+
+test("ccRuleRows degrades safely and empty means no rule section", () => {
+  assert.deepEqual(L.ccRuleRows(null), []);
+  assert.deepEqual(L.ccRuleRows({}), []);
+  assert.deepEqual(L.ccRuleRows({ ok: true, rule_changes: [] }), []);
+});
+
+test("ccUnlistedNote formats warnings and stays empty otherwise", () => {
+  const pv = { ok: true, unlisted: [
+    { role: "opus", target: "GLM_MAX/glm-5.2" },
+    { role: "haiku", target: "GLM_MAX/glm-5.2" },
+  ] };
+  assert.equal(L.ccUnlistedNote(pv),
+    "⚠ opus→GLM_MAX/glm-5.2、haiku→GLM_MAX/glm-5.2 不在对应供应商的模型清单——请确认上游仍提供该模型");
+  assert.equal(L.ccUnlistedNote({ ok: true, unlisted: [] }), "");
+  assert.equal(L.ccUnlistedNote(null), "");
+});
+
 test("ccBackupNote renders both backup branches", () => {
   const will = { ok: true, backup: { will: true, path: "/x/settings.json.bak", note: "首次接入网关：写入前当前文件先备份为 .bak（之后的重复同步不再覆盖该备份）" } };
   assert.equal(

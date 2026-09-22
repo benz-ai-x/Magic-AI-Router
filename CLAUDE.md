@@ -142,9 +142,12 @@ services/ ── 服务
   suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
   sp_config.py ── suanpan 配置读取桥（sp_load*/suanpan_listen，lazy import）
   claude_code_setup.py ── Agent 自动配置唯一归宿（ADR-010 M4）：
-    Claude Code 角色映射（写 ~/.claude/settings.json，ADR-003 不变）+
-    多 Agent 注册表引擎（codex tomlkit 增量编辑 config.toml / opencode
-    opencode.json models 块必写 / zcode kind=anthropic）
+    Claude Code 角色映射（写 ~/.claude/settings.json，ADR-003 不变；「保存
+    并同步」同时把角色表 upsert 成网关 tier 路由规则——规则=持久真相、
+    env 是 CC 投影，两面同源于一次保存，drift 结构上消失；推导路径
+    roles=None 只对齐不新增）+ 多 Agent 注册表引擎（codex tomlkit
+    增量编辑 config.toml / opencode opencode.json models 块必写 /
+    zcode kind=anthropic）
   lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约 +
     capture_state 单投影 + _on_sp_saved 双形态
   authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限

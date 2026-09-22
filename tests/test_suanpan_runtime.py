@@ -325,3 +325,16 @@ class TestFactoryConfigErrorShaping(unittest.TestCase):
             self.assertIn("rules", msg, msg)
             self.assertIn("配置", msg, msg)
 
+
+
+class TestGracefulShutdownBound(unittest.TestCase):
+    """2026-09-22 真机案例：reload 时客户端 keep-alive 连接挂住优雅停机
+    → join(3s) 超时 → 僵尸线程卡死 running → 网关永久下线。停机必须有界
+    （宽限 2s < join 3s），钉住防止回归。"""
+
+    def test_uvicorn_config_has_bounded_graceful_shutdown(self):
+        rt = SuanpanRuntime()
+        _result, mock_config_cls, _srv = _capture_factory(
+            rt, "127.0.0.1:9527", invoke=True)
+        kwargs = mock_config_cls.call_args[1]
+        self.assertEqual(kwargs.get("timeout_graceful_shutdown"), 2)

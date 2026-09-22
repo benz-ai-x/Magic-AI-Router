@@ -147,6 +147,12 @@ class SuanpanRuntime:
                 port=port,
                 log_level="warning",
                 loop="asyncio",
+                # 有界停机（2026-09-22 真机案例：保存触发 reload 时，
+                # Claude Code 的 keep-alive/重试连接挂着不放，uvicorn
+                # 无限等待优雅关闭 → join(3s) 超时 → 僵尸线程让 running
+                # 恒 True，后续 start() 被拒，网关永久下线）。2s 宽限后
+                # 强断残余连接，停机 ≤2s < join 3s。
+                timeout_graceful_shutdown=2,
             )
             server = uvicorn.Server(server_config)
 
