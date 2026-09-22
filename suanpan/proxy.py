@@ -14,11 +14,19 @@ import logging
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from suanpan.compat import normalize_body
+from suanpan.compat import (
+    OpenAIChatToAnthropicSSE,
+    anthropic_to_openai_request,
+    normalize_body,
+    openai_chat_response_to_anthropic,
+    openai_error_to_anthropic,
+    openai_strip_subagent_marker,
+)
 from suanpan.config import AppConfig
 from suanpan.router import RouteDecision, strip_marker
 from suanpan.usage_extractor import UsageExtractor
 from suanpan.usage_log import UsageEntry, UsageLogger
+from shared.provider_auth import build_outbound_headers as _build_headers_openai
 
 _log = logging.getLogger("magic-proxy.suanpan.proxy")
 
@@ -88,6 +96,8 @@ async def drain_and_log(
     target_model: str,
     scenario: str,
     started: float,
+    translator: OpenAIChatToAnthropicSSE | None = None,
+    agent: str = "",
 ):
     """Stream response bytes to the caller while extracting usage.
 
@@ -95,14 +105,29 @@ async def drain_and_log(
     unchanged for the StreamingResponse, then logs a UsageEntry in the
     finally block — even if the consumer disconnects mid-stream.
 
+    *translator*（ADR-010 转换 A）：openai 出站车道先把上游分块译成
+    Anthropic SSE 再下发——extractor 与客户端看到的都是翻译后字节，
+    直通车道（None）维持字节原样。
+
     Extracted from a closure so the SSE→extractor→usage chain is testable
     with real byte arrays (e.g. GLM ``data:`` vs KIMI ``data:`` prefix).
     """
     stream_error = None
     try:
-        async for chunk in response.aiter_raw():
-            extractor.feed(chunk)
-            yield chunk
+        if translator is None:
+            async for chunk in response.aiter_raw():
+                extractor.feed(chunk)
+                yield chunk
+        else:
+            async for chunk in response.aiter_raw():
+                out = translator.feed(chunk)
+                if out:
+                    extractor.feed(out)
+                    yield out
+            tail = translator.finish()
+            if tail:
+                extractor.feed(tail)
+                yield tail
     except Exception as e:  # noqa: BLE001 — recorded, then re-raised to caller
         stream_error = f"{type(e).__name__}: {e}"
         raise
@@ -118,6 +143,7 @@ async def drain_and_log(
                     source_model=source_model,
                     target_model=target_model,
                     scenario=scenario,
+                    agent=agent,
                     input_tokens=extractor.input_tokens,
                     output_tokens=extractor.output_tokens,
                     cache_read_tokens=extractor.cache_read_tokens,
@@ -137,9 +163,28 @@ def filter_response_headers(headers: httpx.Headers) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in drop}
 
 
+# ── 来源 Agent 判别（ADR-010 M5：统计的 agent 维度）─────────────────
+# User-Agent 子串 → Agent id；序敏感（codex 先于其它）。未识别 = ""。
+_UA_AGENTS = (
+    ("codex", "codex"),
+    ("claude-cli", "claude-code"),
+    ("claude", "claude-code"),
+    ("opencode", "opencode"),
+    ("zcode", "zcode"),
+)
+
+
+def agent_from_user_agent(user_agent: str | None) -> str:
+    ua = (user_agent or "").lower()
+    for needle, agent in _UA_AGENTS:
+        if needle in ua:
+            return agent
+    return ""
+
+
 def make_502(
     provider: str, source_model: str, target_model: str, scenario: str,
-    error: str, started: float, logger: "UsageLogger",
+    error: str, started: float, logger: "UsageLogger", *, agent: str = "",
 ) -> JSONResponse:
     """Build a standard 502 failure response + log entry."""
     logger.write(
@@ -148,6 +193,7 @@ def make_502(
             source_model=source_model,
             target_model=target_model,
             scenario=scenario,
+            agent=agent,
             input_tokens=0,
             output_tokens=0,
             cache_read_tokens=0,
@@ -186,6 +232,7 @@ async def forward_request(
 
     source_model = body.get("model", "")
     started = time.monotonic()
+    agent = agent_from_user_agent(request.headers.get("user-agent"))
 
     # Convert headers once
     incoming_headers = dict(request.headers)
@@ -196,6 +243,13 @@ async def forward_request(
     api_key = provider_cfg.resolve_api_key()
 
     body["model"] = target_model
+    if provider_cfg.protocol == "openai":
+        # ADR-010 转换 A：Anthropic 入站 × openai 端点（Claude Code 用
+        # OpenAI/OpenRouter/通义/硅基流动等）。anthropic 主路径零改动。
+        return await _forward_request_openai(
+            request, body, decision, provider_cfg, api_key, logger,
+            http_client, source_model=source_model, started=started,
+            agent=agent)
     normalize_body(body, provider_name,
                    anthropic_native=provider_cfg.anthropic_native)
     headers = provider_cfg.build_outbound_headers(
@@ -213,7 +267,7 @@ async def forward_request(
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
         _log.error("upstream_error provider=%s error=%s", provider_name, error)
-        return make_502(provider_name, source_model, target_model, decision.scenario, error, started, logger)
+        return make_502(provider_name, source_model, target_model, decision.scenario, error, started, logger, agent=agent)
 
     # 5xx → 502 (no retry, no backend switch)
     if upstream_resp.status_code >= 500:
@@ -221,7 +275,7 @@ async def forward_request(
         error = f"HTTP {upstream_resp.status_code}"
         _log.error("upstream_5xx provider=%s status=%s",
                    provider_name, upstream_resp.status_code)
-        return make_502(provider_name, source_model, target_model, decision.scenario, error, started, logger)
+        return make_502(provider_name, source_model, target_model, decision.scenario, error, started, logger, agent=agent)
 
     # Success (2xx or 4xx) — stream response to client
     out_headers = filter_response_headers(upstream_resp.headers)
@@ -249,6 +303,299 @@ async def forward_request(
     )
 
 
+async def _forward_request_openai(
+    request: Request,
+    body: dict,
+    decision: RouteDecision,
+    provider_cfg,
+    api_key: str | None,
+    logger: UsageLogger,
+    http_client: httpx.AsyncClient,
+    *,
+    source_model: str,
+    started: float,
+    agent: str = "",
+) -> StreamingResponse | JSONResponse:
+    """转换 A 的 openai 出站半边（ADR-010）：请求向转换 → {base}/chat/
+    completions → 响应向转换（非流式 JSON / 流式 SSE 翻译）。
+
+    翻译后的字节流即合法 Anthropic 响应——客户端 SDK 与 UsageExtractor
+    都无需感知 openai 线格式。
+    """
+    provider_name = decision.provider
+    target_model = decision.target_model
+    out_body = anthropic_to_openai_request(body)
+    # openai 车道认证恒 Bearer（ADR-010）：auth_header 仅对 anthropic
+    # 车道有意义，绕开 Provider 方法直用共享实现的默认 Bearer 形态。
+    headers = _build_headers_openai(dict(request.headers), api_key)
+    url = f"{provider_cfg.base_url.rstrip('/')}/chat/completions"
+
+    try:
+        upstream_req = http_client.build_request(
+            "POST", url, json=out_body, headers=headers)
+        upstream_resp = await _send_with_retry(
+            http_client, upstream_req,
+            idempotent=any(h in request.headers
+                           for h in ("idempotency-key", "x-idempotency-key")))
+    except httpx.HTTPError as e:
+        error = f"{type(e).__name__}: {e}"
+        _log.error("upstream_error provider=%s error=%s", provider_name, error)
+        return make_502(provider_name, source_model, target_model,
+                        decision.scenario, error, started, logger, agent=agent)
+
+    # 5xx → 502 (no retry, no backend switch)——与 anthropic 车道同纪律
+    if upstream_resp.status_code >= 500:
+        await upstream_resp.aclose()
+        error = f"HTTP {upstream_resp.status_code}"
+        _log.error("upstream_5xx provider=%s status=%s",
+                   provider_name, upstream_resp.status_code)
+        return make_502(provider_name, source_model, target_model,
+                        decision.scenario, error, started, logger, agent=agent)
+
+    content_type = upstream_resp.headers.get("content-type", "")
+    streaming = ("event-stream" in content_type.lower()
+                 and bool(out_body.get("stream")))
+    if not streaming:
+        # 非流式（或流式请求被上游以 JSON 错误回绝）：读全响应体后转换
+        try:
+            await upstream_resp.aread()
+        except httpx.HTTPError as e:
+            try:
+                await upstream_resp.aclose()
+            except Exception:  # noqa: BLE001 — 关闭失败不得掩过原始流错误
+                pass
+            error = f"{type(e).__name__}: {e}"
+            _log.error("upstream_error provider=%s error=%s",
+                       provider_name, error)
+            return make_502(provider_name, source_model, target_model,
+                            decision.scenario, error, started, logger)
+        try:
+            payload = upstream_resp.json()
+        except ValueError:
+            payload = None
+        status = upstream_resp.status_code
+        out_headers = filter_response_headers(upstream_resp.headers)
+        out_headers["x-suanpan-provider"] = provider_name
+        _annotate_fallback(out_headers, decision, provider_name)
+        if status >= 400:
+            converted = openai_error_to_anthropic(payload, status)
+            usage = {"input_tokens": 0, "output_tokens": 0}
+        else:
+            converted = openai_chat_response_to_anthropic(
+                payload, model=target_model)
+            usage = converted.get("usage") or {}
+        logger.write(UsageEntry(
+            provider=provider_name, source_model=source_model,
+            target_model=target_model, scenario=decision.scenario,
+            agent=agent,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+            cache_creation_tokens=0,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            status=status, error=None))
+        return JSONResponse(converted, status_code=status, headers=out_headers)
+
+    # 流式：SSE 翻译生成器（输出即 Anthropic 事件流，extractor 无感）
+    out_headers = filter_response_headers(upstream_resp.headers)
+    out_headers["x-suanpan-provider"] = provider_name
+    _annotate_fallback(out_headers, decision, provider_name)
+    translator = OpenAIChatToAnthropicSSE(model=target_model)
+    extractor = UsageExtractor()
+    return StreamingResponse(
+        drain_and_log(
+            upstream_resp, extractor, logger,
+            provider=provider_name, source_model=source_model,
+            target_model=target_model, scenario=decision.scenario,
+            started=started, translator=translator, agent=agent,
+        ),
+        status_code=upstream_resp.status_code,
+        headers=out_headers,
+        media_type="text/event-stream",
+    )
+
+
+def make_502_openai(
+    provider: str, error: str, started: float, logger: "UsageLogger",
+    *, source_model: str = "", target_model: str = "", scenario: str = "",
+    agent: str = "",
+) -> JSONResponse:
+    """openai 入站车道的 502 塑形（错误体用 OpenAI 客户端认得的形状）。"""
+    logger.write(
+        UsageEntry(
+            provider=provider, source_model=source_model,
+            target_model=target_model, scenario=scenario, agent=agent,
+            input_tokens=0, output_tokens=0, cache_read_tokens=0,
+            cache_creation_tokens=0,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            status=502, error=error,
+        )
+    )
+    return JSONResponse(
+        {"error": {"message": "backend request failed", "type": "api_error",
+                   "provider": provider, "last_error": error}},
+        status_code=502,
+        headers={"x-suanpan-provider": provider},
+    )
+
+
+async def forward_chat_passthrough(
+    request: Request,
+    body: dict,
+    decision: RouteDecision,
+    config: AppConfig,
+    logger: UsageLogger,
+    http_client: httpx.AsyncClient,
+) -> StreamingResponse | JSONResponse:
+    """ADR-010 直通车道：openai 入站（/v1/chat/completions）× openai 端点。
+
+    请求仅改 ``model`` + 注入 ``stream_options.include_usage``（拿末块
+    用量）；响应流**字节直通**（openai 客户端拿到原生 openai 响应），
+    用量经 wire=openai_chat 的 UsageExtractor tee 提取。
+    """
+    provider_name = decision.provider
+    provider_cfg = config.providers[provider_name]
+    target_model = decision.target_model
+    source_model = body.get("model", "")
+    started = time.monotonic()
+    agent = agent_from_user_agent(request.headers.get("user-agent"))
+
+    if decision.strip_marker:
+        openai_strip_subagent_marker(body)
+    body["model"] = target_model
+    if body.get("stream"):
+        opts = body.get("stream_options")
+        if isinstance(opts, dict):
+            opts.setdefault("include_usage", True)
+        else:
+            body["stream_options"] = {"include_usage": True}
+
+    api_key = provider_cfg.resolve_api_key()
+    headers = _build_headers_openai(dict(request.headers), api_key)
+    url = f"{provider_cfg.base_url.rstrip('/')}/chat/completions"
+
+    try:
+        upstream_req = http_client.build_request(
+            "POST", url, json=body, headers=headers)
+        upstream_resp = await _send_with_retry(
+            http_client, upstream_req,
+            idempotent=any(h in request.headers
+                           for h in ("idempotency-key", "x-idempotency-key")))
+    except httpx.HTTPError as e:
+        error = f"{type(e).__name__}: {e}"
+        _log.error("upstream_error provider=%s error=%s", provider_name, error)
+        return make_502_openai(provider_name, error, started, logger,
+                               source_model=source_model,
+                               target_model=target_model,
+                               scenario=decision.scenario, agent=agent)
+
+    if upstream_resp.status_code >= 500:
+        await upstream_resp.aclose()
+        error = f"HTTP {upstream_resp.status_code}"
+        _log.error("upstream_5xx provider=%s status=%s",
+                   provider_name, upstream_resp.status_code)
+        return make_502_openai(provider_name, error, started, logger,
+                               source_model=source_model,
+                               target_model=target_model,
+                               scenario=decision.scenario, agent=agent)
+
+    out_headers = filter_response_headers(upstream_resp.headers)
+    out_headers["x-suanpan-provider"] = provider_name
+    _annotate_fallback(out_headers, decision, provider_name)
+
+    content_type = upstream_resp.headers.get("content-type", "")
+    extractor = UsageExtractor(json_mode="json" in content_type.lower(),
+                               wire="openai_chat")
+    return StreamingResponse(
+        drain_and_log(
+            upstream_resp, extractor, logger,
+            provider=provider_name, source_model=source_model,
+            target_model=target_model, scenario=decision.scenario,
+            started=started, agent=agent,
+        ),
+        status_code=upstream_resp.status_code,
+        headers=out_headers,
+        media_type=content_type or None,
+    )
+
+
+async def forward_responses_passthrough(
+    request: Request,
+    body: dict,
+    decision: RouteDecision,
+    config: AppConfig,
+    logger: UsageLogger,
+    http_client: httpx.AsyncClient,
+) -> StreamingResponse | JSONResponse:
+    """ADR-010 M3a 直通车道：Responses 入站（/v1/responses，Codex）×
+    厂商原生 Responses 端点（provider.responses_base_url）。
+
+    请求仅改 ``model``（Responses 无 stream_options——用量固定出现在
+    response.completed 事件）；响应流字节直通，用量经 wire=responses
+    的 UsageExtractor tee 提取。认证恒 Bearer（ADR-010 端点卡契约）。
+    """
+    from suanpan.compat import responses_strip_subagent_marker
+
+    provider_name = decision.provider
+    provider_cfg = config.providers[provider_name]
+    target_model = decision.target_model
+    source_model = body.get("model", "")
+    started = time.monotonic()
+    agent = agent_from_user_agent(request.headers.get("user-agent"))
+
+    if decision.strip_marker:
+        responses_strip_subagent_marker(body)
+    body["model"] = target_model
+
+    api_key = provider_cfg.resolve_api_key()
+    headers = _build_headers_openai(dict(request.headers), api_key)
+    url = f"{provider_cfg.responses_base_url.rstrip('/')}/responses"
+
+    try:
+        upstream_req = http_client.build_request(
+            "POST", url, json=body, headers=headers)
+        upstream_resp = await _send_with_retry(
+            http_client, upstream_req,
+            idempotent=any(h in request.headers
+                           for h in ("idempotency-key", "x-idempotency-key")))
+    except httpx.HTTPError as e:
+        error = f"{type(e).__name__}: {e}"
+        _log.error("upstream_error provider=%s error=%s", provider_name, error)
+        return make_502_openai(provider_name, error, started, logger,
+                               source_model=source_model,
+                               target_model=target_model,
+                               scenario=decision.scenario, agent=agent)
+
+    if upstream_resp.status_code >= 500:
+        await upstream_resp.aclose()
+        error = f"HTTP {upstream_resp.status_code}"
+        _log.error("upstream_5xx provider=%s status=%s",
+                   provider_name, upstream_resp.status_code)
+        return make_502_openai(provider_name, error, started, logger,
+                               source_model=source_model,
+                               target_model=target_model,
+                               scenario=decision.scenario, agent=agent)
+
+    out_headers = filter_response_headers(upstream_resp.headers)
+    out_headers["x-suanpan-provider"] = provider_name
+    _annotate_fallback(out_headers, decision, provider_name)
+
+    content_type = upstream_resp.headers.get("content-type", "")
+    extractor = UsageExtractor(json_mode="json" in content_type.lower(),
+                               wire="responses")
+    return StreamingResponse(
+        drain_and_log(
+            upstream_resp, extractor, logger,
+            provider=provider_name, source_model=source_model,
+            target_model=target_model, scenario=decision.scenario,
+            started=started, agent=agent,
+        ),
+        status_code=upstream_resp.status_code,
+        headers=out_headers,
+        media_type=content_type or None,
+    )
+
+
 async def forward_count_tokens(
     request: Request,
     body: dict,
@@ -260,6 +607,17 @@ async def forward_count_tokens(
     provider_name = decision.provider
     target_model = decision.target_model
     provider_cfg = config.providers[provider_name]
+    if provider_cfg.protocol == "openai":
+        # ADR-010：count_tokens 仅服务 Anthropic 端点——OpenAI 协议无等价
+        # 端点，不做 token 估算（错误可定位，静默估假数更糟）
+        return JSONResponse(
+            {"type": "error",
+             "error": {"type": "invalid_request_error",
+                       "message": "count_tokens 不适用于 openai 协议供应商"
+                                  "（OpenAI 协议无该端点）"}},
+            status_code=400,
+            headers={"x-suanpan-provider": provider_name},
+        )
     api_key = provider_cfg.resolve_api_key()
     if decision.strip_marker:
         strip_marker(body)

@@ -30,6 +30,15 @@ class ProviderConfig(BaseModel):
     auth_header: Literal["x-api-key", "Authorization"] | None = None
     enabled: Annotated[bool, Field(strict=True)] = True
     anthropic_native: Annotated[bool, Field(strict=True)] = False
+    # ADR-010：主端点协议（单主端点模型——一个 provider 一个 base_url）。
+    # anthropic（默认，现状）→ 出站 base_url + /v1/messages，auth_header 沿用；
+    # openai → 出站 base_url + /chat/completions（OpenAI SDK 惯例：base 含
+    # 版本段），认证恒 Bearer。入站协议与主端点失配时由 compat 转换层桥接。
+    protocol: Literal["anthropic", "openai"] = "anthropic"
+    # ADR-010 M3a：厂商原生 Responses 端点 base（出站 base + /responses，
+    # 恒 Bearer）——/v1/responses 入站（Codex）的直通车道。None = 该厂商
+    # 暂不支持 Codex（转换 C 未实施前，端点返回可行动错误）。
+    responses_base_url: str | None = None
     models: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

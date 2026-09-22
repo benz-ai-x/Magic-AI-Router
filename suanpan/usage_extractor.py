@@ -24,17 +24,24 @@ class UsageExtractor:
     events; ``json_mode`` buffers a non-streaming response body and reads
     the top-level ``usage`` object once the JSON document is complete.
 
+    ``wire``（ADR-010）：入站/出站线格式——"anthropic"（默认，现有事件
+    文法）、"openai_chat"（末块 ``usage`` / 非流式 ``prompt_tokens`` 族）
+    或 "responses"（``response.completed`` 事件的 ``response.usage`` /
+    非流式顶层 anthropic 同族字段）。openai 两族直通车道用它，不经转换层。
+
     ``truncated``：进入 terminal 态（超限），后续输入被丢弃——统计标记
     为「usage unavailable」。
     """
 
-    def __init__(self, *, json_mode: bool = False) -> None:
+    def __init__(self, *, json_mode: bool = False,
+                 wire: str = "anthropic") -> None:
         self.input_tokens = 0
         self.output_tokens = 0
         self.cache_read_tokens = 0
         self.cache_creation_tokens = 0
         self.truncated = False
         self._json_mode = json_mode
+        self._wire = wire
         self._buffer = bytearray()
 
     def _buf_bytes(self) -> int:
@@ -90,7 +97,7 @@ class UsageExtractor:
         except ValueError:
             return
         if isinstance(data, dict):
-            self._merge(data.get("usage") or {})
+            self._merge_wire(data.get("usage") or {})
         self._buffer.clear()
 
     def _consume(self, event: bytes) -> None:
@@ -109,6 +116,26 @@ class UsageExtractor:
                 continue
             if not isinstance(data, dict):
                 continue  # `null` / `true` / `[]` payloads carry no usage
+            if self._wire == "openai_chat":
+                # OpenAI chat chunk：include_usage 时末块（choices 空）带
+                # usage 对象——非末块的 usage 为 None 已被上面过滤
+                usage = data.get("usage")
+                if isinstance(usage, dict):
+                    self._merge_openai(usage)
+                continue
+            if self._wire == "responses":
+                # OpenAI Responses 事件流：response.completed（或
+                # incomplete）的 response.usage 携带最终用量（字段名与
+                # Anthropic 同族：input_tokens/output_tokens + 
+                # input_tokens_details.cached_tokens）
+                if data.get("type") in ("response.completed",
+                                        "response.incomplete"):
+                    resp = data.get("response")
+                    if isinstance(resp, dict):
+                        usage = resp.get("usage")
+                        if isinstance(usage, dict):
+                            self._merge_responses(usage)
+                continue
             t = data.get("type")
             if t == "message_start":
                 usage = (data.get("message") or {}).get("usage") or {}
@@ -120,6 +147,36 @@ class UsageExtractor:
                 # zeroes input_tokens). Max-merge satisfies all four — counts
                 # are monotonic within a stream and placeholders are smallest.
                 self._merge(data.get("usage") or {})
+
+    def _merge_wire(self, usage: dict) -> None:
+        if self._wire == "openai_chat":
+            self._merge_openai(usage)
+        elif self._wire == "responses":
+            self._merge_responses(usage)
+        else:
+            self._merge(usage)
+
+    def _merge_responses(self, usage: dict) -> None:
+        """Responses usage：字段与 Anthropic 同族 + cached 在 details 里。"""
+        self._merge(usage)
+        details = usage.get("input_tokens_details")
+        if isinstance(details, dict):
+            cached = details.get("cached_tokens")
+            if isinstance(cached, int):
+                self.cache_read_tokens = max(self.cache_read_tokens, cached)
+
+    def _merge_openai(self, usage: dict) -> None:
+        """OpenAI usage 字段族 → 内部计数（max 语义同 _merge）。"""
+        for field, attr in (("prompt_tokens", "input_tokens"),
+                            ("completion_tokens", "output_tokens")):
+            value = usage.get(field)
+            if isinstance(value, int):
+                setattr(self, attr, max(getattr(self, attr), value))
+        details = usage.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            cached = details.get("cached_tokens")
+            if isinstance(cached, int):
+                self.cache_read_tokens = max(self.cache_read_tokens, cached)
 
     def _merge(self, usage: dict) -> None:
         for field, attr in (

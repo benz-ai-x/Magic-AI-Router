@@ -18,5 +18,9 @@ def _sandbox_real_config_paths(tmp_path_factory):
         "mp": str(sandbox / "magic-proxy.json"),
         "sp": str(sandbox / "suanpan.yaml"),
         "claude_settings": str(sandbox / "claude-settings.json"),
+        # ADR-010 M4：Agent 配置目标文件同样永不落真实用户文件
+        "codex_config": str(sandbox / "codex-config.toml"),
+        "opencode_config": str(sandbox / "opencode.json"),
+        "zcode_config": str(sandbox / "zcode-config.json"),
     }):
         yield

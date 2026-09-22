@@ -3,7 +3,7 @@
 set -e
 
 # Version. Bump this when cutting a new release; also tag git with v$VERSION.
-VERSION="0.10.1"
+VERSION="0.11.0"
 MAIN_PYTHON_BIN="${MAIN_PYTHON_BIN:-python3.12}"
 
 if ! command -v "$MAIN_PYTHON_BIN" >/dev/null 2>&1; then
@@ -113,6 +113,8 @@ fi
 # a stale stamp never shadows the dev-mode mtime fallback.
 date +%m%d%H%M > build_time.txt
 
+# tomlkit 仅被散装 services/claude_code_setup.py（--add-data，不经静态
+# 分析）import——必须显式收集，否则包内 Codex 配置缺依赖（ADR-010）
 python -m PyInstaller \
     --windowed \
     --name "Magic AI Router" \
@@ -169,6 +171,7 @@ python -m PyInstaller \
     --add-data "services/authenticated_http.py:." \
     --add-data "dist-mitmdump/mitmdump:mitmdump" \
     --collect-all suanpan \
+    --collect-all tomlkit \
     --collect-submodules uvicorn \
     --icon "$APP_ICON" \
     --osx-bundle-identifier com.benzai.magic-ai-router \

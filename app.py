@@ -39,7 +39,7 @@ from util import build_stamp, version_display, resource_path
 
 LOG_DIR = os.path.expanduser("~/Library/Logs")
 LOG_PATH = os.path.join(LOG_DIR, "MagicProxy.log")
-VERSION = "0.10.1"
+VERSION = "0.11.0"
 VERSION_DISPLAY = version_display(VERSION, build_stamp())
 
 log_buffer = LogBuffer()
@@ -690,10 +690,11 @@ class MagicProxyApp(rumps.App):
                 "【远程挂载】NFS over SSH：断线自动卸载/恢复重挂，\n"
                 "　　　　　 远程一键安装，挂载失败可见可修\n"
                 "\n"
-                "【AI 路由】Anthropic 兼容网关（:9527）：Claude Code 直连，\n"
-                "　　　　 路由到 GLM/DeepSeek/Kimi/Qwen 等；前缀规则 +\n"
-                "　　　　 内联覆盖；缓存感知；用量与余额统计；一键同步\n"
-                "　　　　 Claude Code；支持 Docker 部署\n"
+                "【AI 路由】三协议网关（:9527）：Anthropic / OpenAI Chat /\n"
+                "　　　　 Responses（Codex）入站，路由到 GLM/DeepSeek/Kimi/\n"
+                "　　　　 Qwen/OpenAI 等（失配自动转换）；一个 Key 配好\n"
+                "　　　　 全部 Agent（Claude Code/Codex/OpenCode/ZCode）；\n"
+                "　　　　 缓存感知；用量与余额统计；支持 Docker 部署\n"
                 "\n"
                 "【抓 包】TLS 解密 AI API（6 家）落 JSONL，其余放行（:8080）\n"
                 "\n"
@@ -774,6 +775,13 @@ class MagicProxyApp(rumps.App):
 
     def show_preferences(self, _):
         """Open the web-based config panel in a webview window."""
+        self._open_config_window("")
+
+    def show_agent_setup(self, _):
+        """ADR-010 M5：菜单「配置 Agent…」深链——设置窗直达快速接入向导。"""
+        self._open_config_window("#quickstart")
+
+    def _open_config_window(self, fragment):
         try:
             # ADR-009：设置窗本身是配置服务持有者——先置位再开窗
             # （show_config_window 关旧窗的回调在调用内触发，晚置位会让
@@ -784,7 +792,7 @@ class MagicProxyApp(rumps.App):
                 rumps.alert(title="Magic AI Router", message="配置服务端口被占用，无法打开设置。")
                 return
             show_config_window(
-                self._config_server.url, on_action=self._bridge_action,
+                self._config_server.url + fragment, on_action=self._bridge_action,
                 auth_headers={"Authorization":
                               f"Bearer {self._config_server.token}"},
                 on_close=self._on_config_window_closed)

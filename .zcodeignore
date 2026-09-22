@@ -1,0 +1,73 @@
+.superpowers/
+__pycache__/
+*.pyc
+config.json
+build/
+dist/
+build-mitmdump/
+dist-mitmdump/
+*.spec
+*.iconset/
+.build-venv-mitmdump/
+.build-venv-main/
+build_time.txt
+
+# AppGenesisForge 运行态产物（可重建，不入库）
+**/.agf/*
+!**/.agf/config.json
+progress/board.html*
+.claude/metrics/
+
+# AGF worktree 运行时检出（每个是一份完整仓库拷贝，数百 MB，可重建）
+.claude/worktrees/
+# macOS Finder 产物
+.DS_Store
+**/.DS_Store
+# scan-secrets 扫描器的自测夹具：内含"故意的假密钥"（AWS 文档示例 key、明显伪造的
+# ghp_aaaa… 等）用来验证扫描器命中。scan-commit 硬门会拦其新增，且按安全规范
+# 「No Equivalent Bypass」不得用 --no-verify 绕过，故不入库（需追踪须 maintainer
+# 显式豁免手动提交）。
+.claude/hooks/tests/test-scan-secrets.sh
+.claude/hooks/tests/test-secret-pattern-parity.sh
+logs/
+# Docker 卷实时数据（suanpan.yaml 可能含 API key、magic-proxy.json 含本地
+# token）——本机调试产物，泄密风险，永不入库
+docker/data/
+.coverage
+.playwright-mcp/
+.pytest_cache/
+.ruff_cache/
+.chrome-mcp/
+.claude/settings.local.json
+.zcode/
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+node_modules/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

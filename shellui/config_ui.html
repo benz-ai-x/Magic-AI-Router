@@ -230,6 +230,27 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .cc-badge-新增{background:color-mix(in oklch,var(--ok),transparent 82%);color:var(--ok)}
 .cc-badge-修改{background:color-mix(in oklch,var(--accent),transparent 82%);color:var(--accent)}
 .cc-badge-移除{background:color-mix(in oklch,var(--danger),transparent 82%);color:var(--danger)}
+/* ── 快速接入向导（ADR-010 M5）── */
+.qs-vendors{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.qs-vendor{min-height:32px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--fg);cursor:pointer;font-size:13px;font-weight:550}
+.qs-vendor:hover{border-color:color-mix(in oklch,var(--fg),var(--border) 60%)}
+.qs-vendor.is-active{border-color:var(--accent);color:var(--accent);background:color-mix(in oklch,var(--accent),transparent 86%)}
+.qs-actions{display:flex;gap:8px;align-items:center;margin-top:14px}
+.qs-agents td{vertical-align:middle}
+.qs-agent-main{font-weight:550;font-size:14px}
+.qs-agent-sub{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.qs-state-ok{color:var(--ok);font-size:13px}
+.qs-state-muted{color:var(--muted);font-size:13px}
+.qs-state-default{font-size:13px}
+.qs-state-err{color:var(--danger);font-size:13px}
+.qs-agents tr.qs-disabled td{opacity:.55}
+.qs-agents tbody tr:not(.qs-disabled){cursor:pointer}
+.qs-agents tbody tr:not(.qs-disabled):hover td{background:var(--surface)}
+/* 宽窗口防护：快速接入是表单页，不加宽度上限时 field-grid 两列会被
+   拉到 700px+（2000px 窗口实测），比例失衡——面板限宽居中，导语
+   与面板同宽对齐（而非全站 760px） */
+.qs-narrow .panel.panel{max-width:960px;margin-left:auto;margin-right:auto}
+.qs-narrow>.module-intro{max-width:960px}
 .cc-modal-backup{font-size:12px;margin:10px 0 0;color:var(--muted)}
 .cc-modal-hint{font-size:12px;margin:4px 0 0;color:var(--muted)}
 .cc-modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
@@ -925,6 +946,7 @@ const VIEWS={
   nfs:{group:'代理',title:'远程挂载',sub:'NFS over SSH 隧道',icon:'<rect x="4" y="4" width="16" height="6" rx="1.5"/><path d="M4 15h16v5H4z"/><path d="M7 17.5h.01M17 17.5h1.5"/>'},
   proxy:{group:'代理',title:'网络设置',sub:'端口与抓包',icon:'<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a6 6 0 0 1 6 6h-2a4 4 0 0 0-4-4z"/>'},
   system:{group:'系统',title:'系统选项',sub:'防睡眠与登录启动',icon:'<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a4 4 0 0 0-4 4h2a2 2 0 0 1 4 0h2a4 4 0 0 0-4-4zm0 10a4 4 0 0 0 4-4H8a4 4 0 0 0 4 4z"/>'},
+  quickstart:{group:'AI 路由',title:'快速接入',sub:'厂商 Key → 多 Agent 自动配置',readOnly:true,icon:'<path d="M13 2 3 14h7l-1 8 12-14h-7z"/>'},
   providers:{group:'AI 路由',title:'供应商',sub:'后端接入与凭证',icon:'<circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 6h8M6 8v5a5 5 0 0 0 5 5h5"/>'},
   rules:{group:'AI 路由',title:'Claude Code 同步',sub:'角色模型映射与同步',icon:'<path d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 15h6v4h-6z"/>'},
   usage:{group:'AI 路由',title:'运行统计',sub:'缓存命中与用量分析',readOnly:true,icon:'<path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/>'},
@@ -978,6 +1000,13 @@ function refreshSaveBtn(){
   if(saving){btn.disabled=true;return;}
   const view=VIEWS[activeView]||VIEWS.tunnel;
   btn.classList.toggle('dirty',dirty&&!view.readOnly);
+  // 快速接入：readOnly 但有专属主操作——头部按钮即全站「保存」位（CC 页先例）
+  if(activeView==='quickstart'){
+    btn.textContent=qs.busy?'配置中…':'保存供应商并配置 Agent';
+    btn.disabled=!!qs.busy;
+    btn.title='';
+    return;
+  }
   if(view.readOnly){btn.textContent='刷新';btn.disabled=false;btn.title=`刷新${view.title}`;return;}
   const count=totalDirtyCount(),crossPage=dirtyViews.size>1||(dirty&&!dirtyViews.has(activeView));
   if(activeView==='rules'){
@@ -995,7 +1024,7 @@ function updateStatus(){
   else if(lastSavedAt){el.textContent='已保存 · '+lastSavedAt;el.classList.remove('dirty');}
   else{el.textContent='就绪';el.classList.remove('dirty');}
   const hint=document.getElementById('shortcut-hint');
-  hint.textContent=dirty?'⌘S 保存全部':(VIEWS[activeView]&&VIEWS[activeView].readOnly?'⌘R 刷新':'⌘S 保存');
+  hint.textContent=dirty?'⌘S 保存全部':(activeView==='quickstart'?'⌘S 应用 · ⌘R 刷新':(VIEWS[activeView]&&VIEWS[activeView].readOnly?'⌘R 刷新':'⌘S 保存'));
   refreshPendingBar();refreshSaveBtn();
 }
 
@@ -1088,12 +1117,15 @@ async function load(){
     })
     .catch(()=>{});
   try{const lv=localStorage.getItem('mar.lastView');if(lv&&VIEWS[lv])activeView=lv;}catch(e){}
+  // 菜单「配置 Agent…」深链：#quickstart 直达快速接入向导（优先于 lastView）
+  if(location.hash==='#quickstart'&&VIEWS.quickstart)activeView='quickstart';
   activeTunnel=proxyIndexOf(S);
   activeProvider=Object.keys(S.sp.providers)[0]||'';credModeOverride='';
   lastSavedAt='';captureBaseline(false);renderNav();renderView();
 }
 function primaryAction(){
   const view=VIEWS[activeView]||VIEWS.tunnel;
+  if(activeView==='quickstart'){qsApply();return;}
   if(view.readOnly){if(view.refresh)view.refresh();return;}
   saveAll(activeView==='rules');
 }
@@ -2030,6 +2062,11 @@ function usageHTML(){
         <div class="section-bar"><h2 class="section-title">路由来源</h2></div>
         <div id="usage-scenarios" class="table-scroll"></div>
       </div>
+      <div class="panel">
+        <div class="section-bar"><h2 class="section-title">来源 Agent</h2>
+          <div class="section-actions"><span class="count">ADR-010：User-Agent 判别</span></div></div>
+        <div id="usage-agents" class="table-scroll"></div>
+      </div>
     </div>
   </section>`;
 }
@@ -2098,6 +2135,13 @@ function renderUsage(usage){
   document.getElementById('usage-scenarios').innerHTML=routeSources.length?`
     <table class="rules-table"><thead><tr><th>路由来源</th><th style="text-align:right">调用</th><th style="text-align:right">命中率</th></tr></thead>
     <tbody>${routeSources.map(([source,metrics])=>`<tr><td><span style="font-weight:550;font-size:14px">${esc(routeSourceLabel(source))}</span><span class="rule-num" style="margin-left:8px">${esc(source)}</span></td><td class="mono" style="text-align:right">${fmtNum(metrics.calls||0)}</td><td class="mono" style="text-align:right">${fmtRate(metrics.cache_hit_rate)}</td></tr>`).join('')}</tbody></table>`:'<p class="loading-text">没有路由来源记录</p>';
+
+  // ADR-010 M5：来源 Agent 分桶（空串桶 = 未识别 UA / 旧日志行）
+  const agents=Object.entries(usage.agents||{}).sort(([a],[b])=>(a==='')-(b==='')||String(a).localeCompare(String(b)));
+  const agentEl=document.getElementById('usage-agents');
+  if(agentEl)agentEl.innerHTML=agents.length?`
+    <table class="rules-table"><thead><tr><th>Agent</th><th style="text-align:right">调用</th><th style="text-align:right">输入</th><th style="text-align:right">输出</th><th style="text-align:right">缓存读</th><th style="text-align:right">命中率</th></tr></thead>
+    <tbody>${agents.map(([agent,metrics])=>`<tr><td><span class="rule-num">${esc(agent||'未识别')}</span></td><td class="mono" style="text-align:right">${fmtNum(metrics.calls||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.input_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.output_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.cache_read_tokens||0)}</td><td class="mono" style="text-align:right">${fmtRate(metrics.cache_hit_rate)}</td></tr>`).join('')}</tbody></table>`:'<p class="loading-text">没有来源 Agent 记录</p>';
 }
 
 // ── collect dispatch: one registry lookup, no switch ──
@@ -2283,10 +2327,323 @@ async function _writeClipboard(text){
   return ok;
 }
 
+// ══ 快速接入向导（ADR-010 M5）═════════════════════════════════════
+// 「一个 Key 进，所有 Agent 通」：厂商模板 + Key → 三级端点探测 →
+// Agent 矩阵（推荐协议）→ 确认 diff → 写入。供应商创建走与设置页同一条
+// PUT /api/state 管线（复用 validateConfig 首层校验）；Agent 写入走
+// agent-setup-preview / setup-agent（Claude Code 复用既有 cc 端点）。
+// 视图 readOnly（不进 EDITABLE_VIEWS），所有动作显式即时生效；
+// 样式全部走 .qs-* 组件类与页面既有控件形态（rules-table/field/btn），
+// 表格内不内嵌表单控件——行高一致由「协议列纯文字 + 选项区在③」保证。
+let qs={templateId:'',name:'',key:'',probe:null,agents:null,sel:{},results:[],busy:false};
+function qsTemplate(){return PROVIDER_TEMPLATES.find(t=>t.id===qs.templateId)||null;}
+// 模板 → 主端点选择：优先 anthropic 卡（保 cache_control），无则 openai 卡
+function qsPickEndpoint(t){
+  const ep=(t&&t.endpoints)||{};
+  if(ep.anthropic&&ep.anthropic.base_url)return{protocol:'anthropic',base_url:ep.anthropic.base_url,
+    anthropic_native:ep.anthropic.anthropic_native===true,auth_header:ep.anthropic.auth_header||null};
+  if(ep.openai&&ep.openai.base_url)return{protocol:'openai',base_url:ep.openai.base_url,
+    anthropic_native:false,auth_header:null};
+  return null;
+}
+function qsTemplates(){
+  return PROVIDER_TEMPLATES.filter(t=>t.endpoints&&Object.keys(t.endpoints).length);
+}
+function qsPick(id){
+  qs.templateId=id;qs.name=id;qs.probe=null;qs.results=[];
+  if(activeView==='quickstart')renderView();
+}
+// 所选厂商的模型清单（P0 修复：不再回退到默认路由供应商——那会把别家
+// 厂商的模型灌进 Codex 下拉）。探测结果 > 同名已保存供应商 > 空。
+function qsVendorModels(){
+  if(qs.probe){
+    const p=qs.probe;
+    const list=(p.anthropic&&p.anthropic.models)||(p.openai&&p.openai.models)||[];
+    if(list.length)return list;
+  }
+  const existing=(((S.sp||{}).providers)||{})[qs.name];
+  return(existing&&existing.models)||[];
+}
+// 所选厂商是否可服务 Codex：模板有 responses 端点卡，或同名已保存供应
+// 商已配 responses_base_url（P0 修复：失败前置到矩阵行，而非应用时才报）
+function qsVendorHasResponses(){
+  const t=qsTemplate();
+  const viaTpl=!!(t&&t.endpoints&&t.endpoints.responses&&t.endpoints.responses.base_url);
+  const existing=(((S.sp||{}).providers)||{})[qs.name];
+  return viaTpl||!!(existing&&existing.responses_base_url);
+}
+function qsSet(field,v){qs[field]=v;}
+function qsToggle(id,on){qs.sel[id]=on;if(activeView==='quickstart')renderView();}
+
+function qsAgentRow(a){
+  const checked=qs.sel[a.id]!==undefined?qs.sel[a.id]:(a.installed&&!a.synced);
+  let sub='',proto='',dis=false;
+  if(a.id==='codex'){
+    proto='Responses';
+    if(!qsVendorHasResponses()){
+      dis=true;sub='该厂商无 Responses 端点，暂不支持 Codex';
+      proto='<span class="qs-state-muted">Responses（不可用）</span>';
+    }
+  }else if(a.id==='opencode')proto='Anthropic / OpenAI（在③选择）';
+  else if(a.id==='claude-code')proto='Anthropic · 角色映射';
+  else proto='Anthropic';
+  if(!a.installed&&!sub)sub='未安装——安装后再来配置';
+  if(a.id==='claude-code'&&a.synced&&!sub)sub='已同步过，重复配置无副作用';
+  const state=a.synced
+    ?'<span class="qs-state-ok">✓ 已同步</span>'
+    :(a.installed?'<span class="qs-state-default">已安装</span>':'<span class="qs-state-muted">未安装</span>');
+  const box=a.installed&&!dis
+    ?`<input type="checkbox" ${checked?'checked':''} onchange="qsToggle('${esc(a.id)}',this.checked)" style="width:16px;height:16px;accent-color:var(--accent)" aria-label="配置 ${esc(a.label)}">`
+    :`<input type="checkbox" disabled style="width:16px;height:16px;accent-color:var(--accent)" aria-label="${esc(a.label)}（不可用）">`;
+  return `<tr${dis?' class="qs-disabled"':''}${a.installed&&!dis?` onclick="qsRowClick(event,'${esc(a.id)}',${!checked})"`:''}>
+    <td style="text-align:center;width:40px">${box}</td>
+    <td><span class="qs-agent-main">${esc(a.label)}</span>${sub?`<span class="qs-agent-sub">${esc(sub)}</span>`:''}</td>
+    <td>${state}</td>
+    <td><span class="qs-state-default">${proto}</span></td></tr>`;
+}
+
+function qsRowClick(ev,id,on){if(ev.target.closest('input'))return;qsToggle(id,on);}
+
+// ③ 选项区：仅显示与已勾选 Agent 相关的选项（表格里不内嵌控件）
+function qsOptionsHTML(){
+  const sel=(qs.agents||[]);
+  const models=qsVendorModels();
+  const parts=[];
+  if(sel.some(a=>a.id==='codex'&&qs.sel[a.id])){
+    const opts=models.length
+      ?models.map(m=>`<option value="${esc(m)}">${esc(m)}${ctxSuffix(m)}</option>`).join('')
+      :'';
+    parts.push(`<div class="field"><label>Codex 默认模型</label>
+      <select class="select-control mono" id="qs-codex-model" ${opts?'':'disabled'}>${opts||'<option value="">（先在①探测端点拉取该厂商的模型）</option>'}</select>
+      ${models.length?'':'<p class="field-hint">探测成功后自动填充；也可在供应商页先配置模型清单</p>'}</div>`);
+  }
+  if(sel.some(a=>a.id==='opencode'&&qs.sel[a.id])){
+    parts.push(`<div class="field"><label>OpenCode 协议</label>
+      <select class="select-control" id="qs-opencode-proto">
+        <option value="anthropic">Anthropic（推荐——保留缓存语义）</option>
+        <option value="openai">OpenAI 兼容</option>
+      </select></div>`);
+  }
+  if(!parts.length)return'';
+  return `<div class="field-grid">${parts.join('')}</div>`;
+}
+
+function quickstartHTML(){
+  const chips=qsTemplates().map(t=>
+    `<button type="button" class="qs-vendor ${t.id===qs.templateId?'is-active':''}" aria-pressed="${t.id===qs.templateId}" onclick="qsPick('${esc(t.id)}')">${esc(t.label)}</button>`).join('');
+  const pick=qsPickEndpoint(qsTemplate());
+  const existing=(((S.sp||{}).providers)||{})[qs.name];
+  const probeRows=qs.probe?Object.entries(qs.probe).filter(([,v])=>v&&typeof v==='object').map(([proto,r])=>{
+    const state=r.reachable?(r.auth_ok===false?'<span class="qs-state-err">✗ Key 无效</span>':(r.auth_ok?'<span class="qs-state-ok">✓ 可用</span>':'<span class="qs-state-default">✓ 端点在</span>'))
+      :`<span class="qs-state-muted">✗ ${esc(r.error||'不可达')}</span>`;
+    const modelsText=(r.models&&r.models.length)
+      ?esc(r.models.slice(0,4).join('、'))+(r.models.length>4?`…（共 ${r.models.length} 个）`:'')
+      :'—';
+    return`<tr><td class="mono">${esc(proto)}</td><td>${state}</td><td class="mono" style="text-align:right">${r.latency_ms!=null?r.latency_ms+' ms':'—'}</td><td>${modelsText}</td></tr>`;
+  }).join(''):'';
+  const agentRows=(qs.agents||[]).map(qsAgentRow).join('');
+  const resultRows=qs.results.map(r=>`<tr><td><span class="qs-agent-main">${esc(r.agent)}</span></td><td>${r.ok?'<span class="qs-state-ok">✓</span>':'<span class="qs-state-err">✗</span>'}</td><td class="qs-state-muted">${esc(r.msg||'')}</td></tr>`).join('');
+  return `<section class="view qs-narrow">
+    <p class="module-intro">选厂商填 Key → 自动探测端点 → 勾选 Agent 一键配置；Agent 里写入的是本地网关凭证，厂商 Key 永不落 Agent 配置。</p>
+    <div class="panel">
+      <div class="section-bar"><h2 class="section-title">① 厂商与 Key</h2></div>
+      <div class="detail-body">
+        <div class="qs-vendors">${chips||'<p class="loading-text">模板加载中…</p>'}</div>
+        <div class="field-grid">
+          <div class="field"><label>供应商名</label>
+            <input class="control mono" id="qs-name" value="${esc(qs.name)}" oninput="qsSet('name',this.value)" placeholder="如 glm">
+            ${existing?'<p class="field-hint">与已有供应商同名——复用配置，不覆盖已存 Key</p>':''}</div>
+          <div class="field"><label>API Key</label>
+            <div class="key-field"><input class="control mono" id="qs-key" type="password" value="${esc(qs.key)}" oninput="qsSet('key',this.value)" placeholder="${existing?'留空 = 复用已保存的 Key':'粘贴厂商 API Key'}"></div>
+            <p class="field-hint">可留空——仅探测端点存在性</p></div>
+        </div>
+        ${pick?`<p class="panel-hint">将使用 ${esc(pick.protocol==='anthropic'?'Anthropic':'OpenAI')} 端点 <code class="mono">${esc(pick.base_url)}</code></p>`:'<p class="panel-hint">先选择厂商模板——自定义端点请到「供应商」页配置</p>'}
+        <div class="qs-actions"><button class="btn btn-sm" onclick="qsProbe()" ${qs.busy?'disabled':''}>${qs.busy?'探测中…':'探测端点'}</button></div>
+      </div>
+      ${qs.probe?`<div class="table-scroll"><table class="rules-table"><thead><tr><th>协议</th><th>状态</th><th style="text-align:right">延迟</th><th>模型</th></tr></thead><tbody>${probeRows}</tbody></table></div>`:''}
+    </div>
+    <div class="panel">
+      <div class="section-bar"><h2 class="section-title">② Agent 矩阵</h2>
+        <div class="section-actions"><button class="btn btn-sm" onclick="qsLoadAgents()">重新检测</button></div></div>
+      ${qs.agents===null?'<p class="loading-text">检测中…</p>':qs.agents.length?`<div class="table-scroll"><table class="rules-table qs-agents"><thead><tr><th style="width:40px"></th><th>Agent</th><th>状态</th><th>协议</th></tr></thead><tbody>${agentRows}</tbody></table></div>`:'<p class="loading-text">加载失败，点「重新检测」</p>'}
+    </div>
+    <div class="panel">
+      <div class="section-bar"><h2 class="section-title">③ 应用</h2></div>
+      <div class="detail-body">
+        ${qsOptionsHTML()}
+        <p class="panel-hint">右上角按钮会保存供应商并写入所选 Agent 配置；每个写入前弹出 diff 确认</p>
+      </div>
+      ${resultRows?`<div class="table-scroll"><table class="rules-table"><thead><tr><th>Agent</th><th style="width:30px"></th><th>结果</th></tr></thead><tbody>${resultRows}</tbody></table></div>`:''}
+    </div>
+  </section>`;
+}
+
+async function qsLoadAgents(){
+  try{
+    const r=await fetch('/api/agents',{headers:apiHeaders(null)});
+    if(!r.ok)throw new Error(`HTTP ${r.status}`);
+    qs.agents=await r.json();
+  }catch(e){qs.agents=[];}
+  if(activeView==='quickstart')renderView();
+}
+
+async function qsProbe(){
+  const pick=qsPickEndpoint(qsTemplate());
+  if(!pick){toast('请先选择厂商模板',true);return;}
+  qs.busy=true;qs.probe=null;renderView();
+  try{
+    const body={base_url:pick.base_url};
+    if(qs.key)body.api_key=qs.key;
+    if(pick.auth_header)body.auth_header=pick.auth_header;
+    const r=await fetch('/api/probe-provider',{method:'POST',
+      headers:apiHeaders(null,{'Content-Type':'application/json'}),
+      body:JSON.stringify(body)});
+    const d=await r.json();
+    qs.probe=d.error?{error:d.error}:d;
+    if(d.error)toast('探测失败：'+d.error,true);
+  }catch(e){toast('探测失败：'+e.message,true);}
+  qs.busy=false;
+  if(activeView==='quickstart')renderView();
+}
+
+function qsOptionsFor(id){
+  const models=qsVendorModels();
+  if(id==='codex'){
+    const sel=document.getElementById('qs-codex-model');
+    return{model:(sel&&sel.value)||models[0]||''};
+  }
+  if(id==='opencode'){
+    const sel=document.getElementById('qs-opencode-proto');
+    return{protocol:(sel&&sel.value)||'anthropic',models};
+  }
+  return{models};
+}
+
+// 通用 Agent 写入确认弹窗（ccConfirmSync 的骨架复用：同样的
+// target/changes/backup 载荷形状，Escape/遮罩=取消，焦点还原）
+function qsConfirm(pv,label){
+  return new Promise(resolve=>{
+    const prev=document.activeElement;
+    const rows=(pv.changes||[]).map(c=>({key:c.key,badge:ccChangeBadge(c.action),
+      old:c.old==null?'—':String(c.old),new:c.new==null?'—':String(c.new)}));
+    const ov=document.createElement('div');
+    ov.className='cc-modal-overlay';
+    ov.innerHTML=`<div class="cc-modal" role="dialog" aria-modal="true">
+      <h3>写入 ${esc(label)} 配置</h3>
+      <p class="cc-modal-target">目标文件 <code class="mono">${esc(pv.target)}</code>${pv.exists?'':'（不存在，将新建）'}</p>
+      <div class="cc-modal-sec">将写入 ${rows.length} 项变更</div>
+      <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>配置项</th><th>操作</th><th>原值</th><th>新值</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.key)}</td><td><span class="cc-badge cc-badge-${esc(r.badge)}">${esc(r.badge)}</span></td><td class="mono">${esc(r.old)}</td><td class="mono">${esc(r.new)}</td></tr>`).join('')}</tbody></table></div>
+      <p class="cc-modal-backup">${esc((pv.backup&&pv.backup.note)||'')}</p>
+      <p class="cc-modal-hint">写入经原子替换（0600），重启该 Agent 后生效</p>
+      <div class="cc-modal-actions">
+        <button type="button" class="btn" id="qs-modal-cancel">取消</button>
+        <button type="button" class="btn btn-primary" id="qs-modal-ok">确认写入</button>
+      </div></div>`;
+    const done=ok=>{document.removeEventListener('keydown',onKey,true);ov.remove();if(prev&&prev.focus)prev.focus();resolve(ok);};
+    const onKey=e=>{
+      if(e.key==='Escape'){e.stopPropagation();done(false);}
+      else if(e.key==='Tab'){e.preventDefault();const f=[...ov.querySelectorAll('button')];const i=f.indexOf(document.activeElement);f[(i+1)%f.length].focus();}
+    };
+    document.addEventListener('keydown',onKey,true);
+    ov.addEventListener('click',e=>{if(e.target===ov)done(false);});
+    ov.querySelector('#qs-modal-cancel').addEventListener('click',()=>done(false));
+    ov.querySelector('#qs-modal-ok').addEventListener('click',()=>done(true));
+    document.body.appendChild(ov);
+    ov.querySelector('#qs-modal-cancel').focus();
+  });
+}
+
+async function qsPost(url,body){
+  const r=await fetch(url,{method:'POST',
+    headers:apiHeaders(null,{'Content-Type':'application/json'}),
+    body:JSON.stringify(body)});
+  return r.json();
+}
+
+async function qsApply(){
+  const t=qsTemplate();const pick=qsPickEndpoint(t);
+  const name=(qs.name||'').trim();
+  if(!name){toast('请填写供应商名',true);return;}
+  const exists=(((S.sp||{}).providers)||{})[name];
+  if(!exists){
+    if(!pick){toast('请先选择厂商模板（或到供应商页手动配置）',true);return;}
+    if(!qs.key){toast('新供应商需要填写 API Key',true);return;}
+  }
+  qs.busy=true;qs.results=[];
+  if(activeView==='quickstart')renderView();
+  try{
+    if(!exists){
+      const models=qsVendorModels();
+      const p={base_url:pick.base_url,api_key:qs.key,
+        anthropic_native:pick.anthropic_native,protocol:pick.protocol,
+        auth_header:pick.auth_header,enabled:true,models};
+      const resp=t&&t.endpoints&&t.endpoints.responses;
+      if(resp&&resp.base_url)p.responses_base_url=resp.base_url;
+      const next=cloneData(S);
+      next.sp.providers[name]=p;
+      if(!next.sp.router)next.sp.router={};
+      const firstModel=models[0]||'';
+      if(!next.sp.router.default&&firstModel)next.sp.router.default=name+'/'+firstModel;
+      const errors=validateConfig(next);
+      if(errors.length){toast(errors.slice(0,3).join('；'),true);return;}
+      const r=await fetch(API,{method:'PUT',
+        headers:apiHeaders(null,{'Content-Type':'application/json'}),
+        body:JSON.stringify(next)});
+      const d=await r.json();
+      if(!d.ok){toast((d.errors||['未知错误']).join('；'),true);return;}
+      S=normalizeState(next);captureBaseline(true);
+      qs.results.push({agent:'供应商 '+name,ok:true,msg:'已保存'});
+    }
+    const selected=(qs.agents||[]).filter(a=>qs.sel[a.id]&&a.installed);
+    for(const a of selected){
+      try{
+        if(a.id==='codex'&&!qsVendorHasResponses()){
+          qs.results.push({agent:a.label,ok:false,msg:'该厂商无 Responses 端点，暂不支持 Codex'});
+          continue;
+        }
+        if(a.id==='claude-code'){
+          const pv=await qsPost('/api/cc-sync-preview',{roles:null});
+          if(!pv.ok){qs.results.push({agent:a.label,ok:false,msg:pv.msg||'预览失败'});}
+          else if(!pv.already&&!(await ccConfirmSync(pv))){qs.results.push({agent:a.label,ok:false,msg:'已取消'});}
+          else{
+            const d=await qsPost('/api/setup-claude-code',{roles:null});
+            qs.results.push({agent:a.label,ok:!!d.ok,msg:d.msg||''});
+          }
+        }else{
+          const options=qsOptionsFor(a.id);
+          const pv=await qsPost('/api/agent-setup-preview',{agent:a.id,options});
+          if(!pv.ok){qs.results.push({agent:a.label,ok:false,msg:pv.msg||'预览失败'});}
+          else if(!pv.already&&!(await qsConfirm(pv,a.label))){qs.results.push({agent:a.label,ok:false,msg:'已取消'});}
+          else{
+            const d=await qsPost('/api/setup-agent',{agent:a.id,options});
+            qs.results.push({agent:a.label,ok:!!d.ok,msg:d.msg||''});
+          }
+        }
+      }catch(e){qs.results.push({agent:a.label,ok:false,msg:e.message});}
+      if(activeView==='quickstart')renderView();
+    }
+    toast(qs.results.every(r=>r.ok)?'配置完成':'部分步骤失败，见结果列表');
+    await qsLoadAgents();
+  }finally{
+    qs.busy=false;
+    if(activeView==='quickstart')renderView();
+  }
+}
+Object.assign(VIEWS.quickstart,{
+  render:quickstartHTML,refresh:qsLoadAgents,
+  enter(){
+    // 冷启动默认预选首个模板：chip 选中态 + 供应商名/端点 hint 立即有内容，
+    // 用户可改名/换厂商（qsPick 幂等重渲染；renderView 会再调 enter，靠本判据终止）
+    if(!qs.templateId&&PROVIDER_TEMPLATES.length>1)qsPick(PROVIDER_TEMPLATES[0].id);
+    if(!qs.agents)qsLoadAgents();
+  },
+});
+
 // ── keyboard + dirty listener ─────────────────────────
 document.addEventListener('keydown',e=>{
-  if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();save();}
-  if((e.metaKey||e.ctrlKey)&&e.key==='r'&&VIEWS[activeView]?.readOnly){e.preventDefault();primaryAction();}
+  if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();activeView==='quickstart'?qsApply():save();}
+  if((e.metaKey||e.ctrlKey)&&e.key==='r'&&VIEWS[activeView]?.readOnly){e.preventDefault();activeView==='quickstart'?(VIEWS.quickstart.refresh&&VIEWS.quickstart.refresh()):primaryAction();}
 });
 document.getElementById('viewport').addEventListener('input',collectAndRecompute);
 document.getElementById('viewport').addEventListener('change',collectAndRecompute);

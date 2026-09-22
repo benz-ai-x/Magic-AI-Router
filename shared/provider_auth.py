@@ -22,13 +22,24 @@ HOP_HEADERS = frozenset({
     "x-api-key",
 })
 
-# ── 供应商知识注册表（#51）───────────────────────────────────────────
-# 「新增一家供应商要改哪里」的单一答案（余额 API 与 UI 模板共消费）。
+# ── 供应商知识注册表（#51，ADR-010 协议化）─────────────────────────
+# 「新增一家供应商要改哪里」的单一答案（余额 API、UI 模板、端点探测共消费）。
+#
+# 端点矩阵（ADR-010 决策二）：每厂商 ``endpoints`` 按协议记端点卡——
+#   "anthropic"：{"base_url", "anthropic_native", "auth_header"(可选)}，
+#                出站 base + /v1/messages（Anthropic 生态惯例：base 不含 /v1）；
+#   "openai"：   {"base_url"}，出站 base + /chat/completions（OpenAI SDK
+#                惯例：base 含版本段），认证恒 Bearer；
+#   "responses": {"base_url", "unverified"(可选)}，出站 base + /responses
+#                （Codex 直通车道），恒 Bearer；仅文档快照未实证的端点标
+#                unverified，由 /api/probe-provider 运行时探测转正。
+# 顶层 base_url/anthropic_native 是 anthropic 卡的兼容投影（存量消费方
+# 零迁移）；路径不合惯例的厂商端点（MiniMax chat 的
+# /v1/text/chatcompletion_v2、火山方舟的 /api/v3/messages）不进内置卡，
+# 经自定义 provider 手配。
+#
 # balance_apis 的 auth-style："bearer" → `Authorization: Bearer <key>`；
 # "raw" → 裸 key 直接作 Authorization 值。
-# 字段：label（UI 显示名）/ hosts（base_url 子串匹配片段，余额侧用）/
-# base_url + anthropic_native（UI 模板种子，兼容 Anthropic 原生 body
-# 的后端才置 True）/ balance_apis（[(url, auth-style, label)]，无则空）。
 #
 # 刻意不在注册表的消费方：
 # - capture/ai_capture_addon.identify()——在 mitmdump 子进程内独立运行
@@ -42,6 +53,12 @@ PROVIDER_REGISTRY = {
         "hosts": ["api.deepseek.com"],
         "base_url": "https://api.deepseek.com",
         "anthropic_native": False,
+        "endpoints": {
+            "anthropic": {"base_url": "https://api.deepseek.com",
+                          "anthropic_native": False},
+            "openai": {"base_url": "https://api.deepseek.com"},
+            "responses": {"base_url": "https://api.deepseek.com"},
+        },
         "balance_apis": [
             ("https://api.deepseek.com/user/balance", "bearer", "余额"),
         ],
@@ -51,6 +68,14 @@ PROVIDER_REGISTRY = {
         "hosts": ["bigmodel.cn"],
         "base_url": "https://open.bigmodel.cn/api/anthropic",
         "anthropic_native": True,
+        "endpoints": {
+            "anthropic": {"base_url": "https://open.bigmodel.cn/api/anthropic",
+                          "anthropic_native": True},
+            "openai": {"base_url": "https://open.bigmodel.cn/api/paas/v4"},
+            # 智谱 Responses 端点仅有文档快照线索，unverified 待探测实证
+            "responses": {"base_url": "https://open.bigmodel.cn/api/v1",
+                          "unverified": True},
+        },
         # model_usage 端点：GLM 月度官方统计（本月窗口 token 用量+调用
         # 次数）——fetch_balance 组 startTime/endTime 本月范围
         "model_usage_url": ("https://open.bigmodel.cn/api/monitor/usage/"
@@ -67,9 +92,104 @@ PROVIDER_REGISTRY = {
         "hosts": ["api.kimi.com"],
         "base_url": "https://api.kimi.com/coding",
         "anthropic_native": True,
+        "endpoints": {
+            "anthropic": {"base_url": "https://api.kimi.com/coding",
+                          "anthropic_native": True},
+            # 开放平台按量（api.moonshot.cn）与 Coding Plan（api.kimi.com）
+            # 是两套入口；openai 卡给按量端点，anthropic 卡给 Coding Plan
+            "openai": {"base_url": "https://api.moonshot.cn/v1"},
+            "responses": {"base_url": "https://api.kimi.com/coding"},
+        },
         "balance_apis": [
             ("https://api.kimi.com/coding/v1/usages", "bearer", "Coding Plan"),
         ],
+    },
+    # ── ADR-010 新增：openai 协议族厂商（无余额集成的先空着）──
+    "openai": {
+        "label": "OpenAI",
+        "hosts": ["api.openai.com"],
+        "base_url": None,  # 无 Anthropic 兼容端点
+        "anthropic_native": False,
+        "endpoints": {
+            "openai": {"base_url": "https://api.openai.com/v1"},
+            "responses": {"base_url": "https://api.openai.com/v1"},
+        },
+        "balance_apis": [],
+    },
+    "anthropic": {
+        "label": "Anthropic",
+        "hosts": ["api.anthropic.com"],
+        "base_url": "https://api.anthropic.com",
+        "anthropic_native": True,
+        "endpoints": {
+            "anthropic": {"base_url": "https://api.anthropic.com",
+                          "auth_header": "x-api-key",
+                          "anthropic_native": True},
+            # 官方 OpenAI SDK 兼容层（chat）
+            "openai": {"base_url": "https://api.anthropic.com/v1"},
+        },
+        "balance_apis": [],
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "hosts": ["openrouter.ai"],
+        "base_url": "https://openrouter.ai/api",
+        "anthropic_native": False,
+        "endpoints": {
+            "anthropic": {"base_url": "https://openrouter.ai/api",
+                          "anthropic_native": False},
+            "openai": {"base_url": "https://openrouter.ai/api/v1"},
+        },
+        "balance_apis": [],
+    },
+    "qwen": {
+        "label": "通义 Qwen",
+        "hosts": ["dashscope.aliyuncs.com", "maas.aliyuncs.com"],
+        "base_url": "https://dashscope.aliyuncs.com/apps/anthropic",
+        "anthropic_native": False,
+        "endpoints": {
+            "anthropic": {"base_url":
+                          "https://dashscope.aliyuncs.com/apps/anthropic",
+                          "anthropic_native": False},
+            "openai": {"base_url":
+                       "https://dashscope.aliyuncs.com/compatible-mode/v1"},
+        },
+        "balance_apis": [],
+    },
+    "siliconflow": {
+        "label": "硅基流动",
+        "hosts": ["siliconflow.cn"],
+        "base_url": "https://api.siliconflow.cn",
+        "anthropic_native": False,
+        "endpoints": {
+            "anthropic": {"base_url": "https://api.siliconflow.cn",
+                          "anthropic_native": False},
+            "openai": {"base_url": "https://api.siliconflow.cn/v1"},
+        },
+        "balance_apis": [],
+    },
+    "minimax": {
+        "label": "MiniMax",
+        "hosts": ["minimax.io", "minimax.cn"],
+        "base_url": "https://api.minimax.io/anthropic",
+        "anthropic_native": False,
+        "endpoints": {
+            "anthropic": {"base_url": "https://api.minimax.io/anthropic",
+                          "anthropic_native": False},
+            # chat 端点路径特殊（/v1/text/chatcompletion_v2），不进内置卡
+        },
+        "balance_apis": [],
+    },
+    "volces": {
+        "label": "火山方舟",
+        "hosts": ["volces.com"],
+        "base_url": None,  # anthropic 端点路径特殊（/api/v3/messages）
+        "anthropic_native": False,
+        "endpoints": {
+            "openai": {"base_url":
+                       "https://ark.cn-beijing.volces.com/api/v3"},
+        },
+        "balance_apis": [],
     },
 }
 

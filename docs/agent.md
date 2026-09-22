@@ -5,7 +5,7 @@
 ## What it does
 
 1. **Proxy Tunnel** — SSH 隧道：通过 SSH 连接到远程服务器，在本地起 HTTP 代理（默认 :8888），将流量经 SOCKS5 转发到远端。支持多隧道、密钥/密码认证（密码走 macOS Keychain）。
-2. **AI 路由** — 算盘网关：在本地 :9527 起一个 Anthropic Messages API 兼容的网关，将请求按规则路由到多个 LLM 后端（GLM、DeepSeek、KIMI、QWEN、Anthropic 等）。支持流式 SSE、缓存 token 统计、用量日志。
+2. **AI 路由** — 算盘网关：在本地 :9527 起一个多协议网关（ADR-010 三协议入站：Anthropic Messages `/v1/messages`、OpenAI Chat `/v1/chat/completions`、OpenAI Responses `/v1/responses`——Codex 专用），将请求按规则路由到多个 LLM 后端（GLM、DeepSeek、KIMI、QWEN、OpenAI、Anthropic 等；后端可配 anthropic 或 openai 协议端点，失配时网关自动转换）。支持流式 SSE、缓存 token 统计、用量日志（含来源 Agent 维度）。还能自动配置各编程 Agent（Claude Code / Codex / OpenCode / ZCode）指向本网关。
 
 ## Config files
 
@@ -106,6 +106,10 @@ query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `
 | POST | `/api/fetch-models` | 拉取供应商模型列表（body: `{"provider": "GLM_MAX"}`） |
 | POST | `/api/test-provider` | 测试供应商连通性（body: `{"provider": "GLM_MAX", "model": "glm-5.2"}`） |
 | POST | `/api/test-forward` | 测试一条端口转发（body: `{"tunnel": {…隧道字段…}, "forward": {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000}}`；一次性 `ssh -W` 探测表单当前值——隧道与转发都无需先保存，返回 `{"ok", "latency_ms"?, "error"?}`。兼容旧载荷 `{"index": 0, "forward": …}` 按已保存隧道解析） |
+| POST | `/api/probe-provider` | **ADR-010 端点三级探测**（免费 GET 语义）：body = provider 形态 dict（`base_url` 必填 + 可选 `api_key`/`auth_header`）→ 返回 anthropic/openai/responses 三协议各自的 `{reachable, auth_ok, latency_ms, models, error}` |
+| GET | `/api/agents` | **ADR-010 Agent 检测**：已装 Agent（Claude Code/Codex/OpenCode/ZCode）+ 各自同步态 + 推荐协议 |
+| POST | `/api/agent-setup-preview` | 预览某 Agent 的配置写入 diff（body: `{"agent": "codex", "options": {"model": "gpt-5.2"}}`；opencode 可传 `protocol`/`models`） |
+| POST | `/api/setup-agent` | 写入某 Agent 配置（幂等，首写备份 .bak，写入的是本地网关凭证而非厂商真 Key） |
 
 ### 示例：读取当前配置
 
@@ -160,7 +164,7 @@ curl -H "Authorization: Bearer TOKEN" http://127.0.0.1:9528/api/state
 菜单栏（从上到下）：
 - 状态行（绿/黄/灰 + 隧道名 + 流量）
 - 代理隧道 ▸（连接/暂停/重新连接 · 系统代理 · 隧道选择 · 经代理启动 App）
-- AI 路由 ▸（启动/停止/重启 · 重新加载 · 复制地址）
+- AI 路由 ▸（启动/停止/重启 · 重新加载 · 配置 Agent… · 复制地址）
 - 抓包 ▸（TLS MITM 抓包，需信任 CA）
 - 偏好设置…（打开 Web 配置面板 :9528）
 - 查看日志 · 防睡眠 · 登录启动 · 关于 · 退出

@@ -920,3 +920,121 @@ class TestAllApiQuotaDisplay(unittest.TestCase):
         self.assertNotIn("每月", [q["period"] for q in qs])
         self.assertEqual([q["period"] for q in qs], ["5小时", "每周"])
 
+
+
+# ── ADR-010：端点三级探测 + test_provider 协议分叉 ──────────────────
+
+class TestProbeProvider(unittest.TestCase):
+    """probe_provider(provider) → 每协议
+    {reachable, auth_ok, latency_ms, models, error}。"""
+
+    def _probe(self, side_effect, provider=None):
+        provider = provider or {"base_url": "https://api.test.com",
+                                "api_key": "sk-x"}
+        with patch.object(AuthenticatedHttpClient, "open",
+                          side_effect=side_effect):
+            return balance_usage.probe_provider(provider)
+
+    def test_missing_base_url(self):
+        self.assertIn("error", balance_usage.probe_provider({}))
+
+    def test_existence_and_models_matrix(self):
+        def side_effect(url, headers=None, data=None, method=None,
+                        timeout=None):
+            if url.endswith("/v1/messages"):
+                raise _http_error(404)      # anthropic 端点不存在
+            if url.endswith("/chat/completions"):
+                raise _http_error(405)      # 路由在（Method Not Allowed）
+            if url.endswith("/responses"):
+                raise _http_error(401)      # 在但 Key 被拒
+            if url.endswith("/v1/models"):
+                return _models_payload("m1", "m2")
+            raise AssertionError(url)
+
+        out = self._probe(side_effect)
+        self.assertFalse(out["anthropic"]["reachable"])
+        self.assertTrue(out["anthropic"]["auth_ok"])  # models 认证通过
+        self.assertEqual(out["anthropic"]["models"], ["m1", "m2"])
+        self.assertTrue(out["openai"]["reachable"])
+        self.assertTrue(out["openai"]["auth_ok"])
+        self.assertTrue(out["responses"]["reachable"])
+        self.assertFalse(out["responses"]["auth_ok"])
+        self.assertIn("Key", out["responses"]["error"])
+        for proto in ("anthropic", "openai", "responses"):
+            self.assertIsInstance(out[proto]["latency_ms"], int)
+
+    def test_models_does_not_flip_reachable(self):
+        """models 接口在 ≠ POST 端点在（OpenAI 官方反例）。"""
+        def side_effect(url, headers=None, data=None, method=None,
+                        timeout=None):
+            if url.endswith(("/v1/messages", "/chat/completions",
+                             "/responses")):
+                raise _http_error(404)
+            if url.endswith("/v1/models"):
+                return _models_payload("m")
+            raise AssertionError(url)
+
+        out = self._probe(side_effect)
+        for proto in ("anthropic", "openai", "responses"):
+            self.assertFalse(out[proto]["reachable"],
+                             f"{proto} 不应因 models 在而转正")
+
+    def test_network_error_classified(self):
+        import socket
+        def side_effect(url, headers=None, data=None, method=None,
+                        timeout=None):
+            raise urllib.error.URLError(socket.gaierror())
+        out = self._probe(side_effect)
+        for proto in ("anthropic", "openai", "responses"):
+            self.assertFalse(out[proto]["reachable"])
+            self.assertIn("域名解析失败", out[proto]["error"])
+
+
+class TestTestProviderProtocolFork(unittest.TestCase):
+    """ADR-010：test_provider 按 provider.protocol 分叉端点与消息形态。"""
+
+    def test_openai_protocol_posts_chat_completions(self):
+        sp = _sp({"oai": {"base_url": "https://api.openai.com/v1",
+                          "protocol": "openai", "api_key": "sk",
+                          "models": ["gpt-4o-mini"]}})
+        resp = json.dumps({"model": "gpt-4o-mini",
+                           "choices": [{"message": {"content": "hi"}}]}
+                          ).encode()
+        with patch.object(AuthenticatedHttpClient, "open",
+                          return_value=resp) as m:
+            r = balance_usage.test_provider(sp, "oai")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["reply"], "hi")
+        self.assertEqual(m.call_args[0][0],
+                         "https://api.openai.com/v1/chat/completions")
+        body = json.loads(m.call_args[1]["data"]
+                          if "data" in m.call_args[1]
+                          else m.call_args.kwargs["data"])
+        self.assertEqual(body["model"], "gpt-4o-mini")
+        self.assertIn("max_tokens", body)
+
+    def test_openai_protocol_gpt5_family_uses_completion_tokens(self):
+        sp = _sp({"oai": {"base_url": "https://api.openai.com/v1",
+                          "protocol": "openai", "api_key": "sk",
+                          "models": ["gpt-5.2"]}})
+        resp = json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
+        with patch.object(AuthenticatedHttpClient, "open",
+                          return_value=resp) as m:
+            balance_usage.test_provider(sp, "oai")
+        data = (m.call_args[1]["data"] if "data" in m.call_args[1]
+                else m.call_args.kwargs["data"])
+        body = json.loads(data)
+        self.assertNotIn("max_tokens", body)
+        self.assertEqual(body["max_completion_tokens"], 32)
+
+    def test_anthropic_default_unchanged(self):
+        sp = _sp({"p": {"base_url": "https://api.anthropic.com",
+                        "api_key": "sk", "models": ["claude-x"]}})
+        resp = json.dumps({"content": [{"type": "text", "text": "yo"}]}).encode()
+        with patch.object(AuthenticatedHttpClient, "open",
+                          return_value=resp) as m:
+            r = balance_usage.test_provider(sp, "p")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["reply"], "yo")
+        self.assertEqual(m.call_args[0][0],
+                         "https://api.anthropic.com/v1/messages")

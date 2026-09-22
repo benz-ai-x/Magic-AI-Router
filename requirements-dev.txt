@@ -16,3 +16,4 @@ httpx[http2]>=0.27
 pyyaml>=6.0
 pydantic>=2.7
 h2>=4.0
+tomlkit==0.15.1

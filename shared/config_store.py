@@ -25,6 +25,10 @@ DEFAULT_PATHS = {
     "mp": os.path.expanduser("~/.magic-proxy.json"),
     "sp": os.path.expanduser("~/.suanpan.yaml"),
     "claude_settings": os.path.expanduser("~/.claude/settings.json"),
+    # ADR-010 M4：Agent 自动配置的目标文件（写径与沙箱与上面同一条管线）
+    "codex_config": os.path.expanduser("~/.codex/config.toml"),
+    "opencode_config": os.path.expanduser("~/.config/opencode/opencode.json"),
+    "zcode_config": os.path.expanduser("~/.zcode/v2/config.json"),
 }
 
 # Live registry — tests redirect this (patch.dict), production never does.

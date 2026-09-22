@@ -29,6 +29,7 @@ from services.balance_usage import (
     fetch_balance,
     fetch_models,
     fetch_usage,
+    probe_provider,
     test_provider,
 )
 from util import resource_path as _resource_path
@@ -390,13 +391,21 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, claude_code_setup.default_roles(
                 force_rules=seed == "rules"))
+        elif path == "/api/agents":
+            # ADR-010 M4：Agent 检测 + 同步态（向导的 Agent 矩阵数据面）
+            self._json(200, claude_code_setup.agents_status())
         elif path == "/api/provider-templates":
             # #51：UI 供应商模板单一真源 = PROVIDER_REGISTRY（Python 侧）
+            # ADR-010：载荷附端点矩阵（快速接入向导消费）；顶层
+            # base_url/anthropic_native 保持兼容投影（无 anthropic 卡的
+            # 厂商为 None/False）
             from shared.provider_auth import PROVIDER_REGISTRY
             templates = [
                 {"id": name, "label": entry["label"],
-                 "base_url": entry["base_url"],
-                 "anthropic_native": entry["anthropic_native"]}
+                 "base_url": entry.get("base_url"),
+                 "anthropic_native": entry["anthropic_native"],
+                 "endpoints": {proto: dict(card)
+                               for proto, card in entry["endpoints"].items()}}
                 for name, entry in PROVIDER_REGISTRY.items()]
             templates.append({"id": "custom", "label": "自定义"})
             self._json(200, templates)
@@ -421,7 +430,8 @@ class _Handler(BaseHTTPRequestHandler):
         if path not in ("/api/fetch-models", "/api/test-provider", "/api/setup-claude-code",
                         "/api/cc-sync-preview", "/api/test-tunnel", "/api/test-forward",
                         "/api/nfs-check-remote", "/api/nfs-setup-remote",
-                        "/api/capture-clean"):
+                        "/api/capture-clean", "/api/probe-provider",
+                        "/api/agent-setup-preview", "/api/setup-agent"):
             self._json(404, {"error": "not found"})
             return
         data = self._read_json_body()
@@ -429,6 +439,25 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/fetch-models":
             self._json(200, fetch_models(sp_config.sp_load_raw(), str(data.get("provider", ""))))
+        elif path == "/api/agent-setup-preview":
+            # ADR-010 M4：body {"agent": id, "options": {...}|null}
+            opts = data.get("options")
+            self._json(200, claude_code_setup.agent_preview(
+                str(data.get("agent", "")),
+                opts if isinstance(opts, dict) else None))
+        elif path == "/api/setup-agent":
+            opts = data.get("options")
+            self._json(200, claude_code_setup.agent_setup(
+                str(data.get("agent", "")),
+                opts if isinstance(opts, dict) else None))
+        elif path == "/api/probe-provider":
+            # ADR-010 三级端点探测（免费 GET 语义）：body = provider 形态
+            # dict（base_url 必填，凭证可选——无 Key 只探存在性）
+            base_url = data.get("base_url")
+            if not isinstance(base_url, str) or not base_url.strip():
+                self._json(400, {"error": "需要 base_url"})
+                return
+            self._json(200, probe_provider(data))
         elif path == "/api/cc-sync-preview":
             roles = data.get("roles")  # {key: {model, ctx_1m}} or None
             self._json(200, claude_code_setup.preview(roles=roles))

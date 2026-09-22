@@ -1180,3 +1180,92 @@ class TestAgentInstructionsPortLifecycleHint(unittest.TestCase):
     def test_docker_form_has_no_menu_hint(self):
         s = config_server.ConfigServer(bind_host="0.0.0.0", token="t")
         self.assertNotIn("配置 API 服务", s.agent_instructions())
+
+
+class TestProbeProviderEndpoint(unittest.TestCase):
+    """ADR-010：POST /api/probe-provider——认证门 + base_url 校验 + 委托。"""
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def _post(self, body, token=True):
+        return _request(self.port, "POST", "/api/probe-provider", body=body,
+                        token=self.token if token else None)
+
+    def test_requires_token(self):
+        status, _ = self._post('{"base_url": "https://x"}', token=False)
+        self.assertEqual(status, 401)
+
+    def test_missing_base_url_400(self):
+        status, data = self._post('{}')
+        self.assertEqual(status, 400)
+        self.assertIn("error", json.loads(data))
+
+    def test_delegates_to_probe_provider(self):
+        sentinel = {"anthropic": {"reachable": True}, "openai": {},
+                    "responses": {}}
+        with patch.object(config_server, "probe_provider",
+                          return_value=sentinel) as probe:
+            status, data = self._post(
+                '{"base_url": "https://api.test.com", "api_key": "sk"}')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), sentinel)
+        probe.assert_called_once_with({"base_url": "https://api.test.com",
+                                       "api_key": "sk"})
+
+
+class TestAgentSetupEndpoints(unittest.TestCase):
+    """ADR-010 M4：GET /api/agents + agent-setup-preview/setup-agent。"""
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def test_agents_list_shape(self):
+        status, data = _request(self.port, "GET", "/api/agents",
+                                token=self.token)
+        self.assertEqual(status, 200)
+        agents = json.loads(data)
+        ids = [a["id"] for a in agents]
+        self.assertEqual(ids, ["claude-code", "codex", "opencode", "zcode"])
+
+    def test_agents_requires_token(self):
+        status, _ = _request(self.port, "GET", "/api/agents", token=None)
+        self.assertEqual(status, 401)
+
+    def test_agent_setup_preview_and_setup(self):
+        with patch.object(config_server.claude_code_setup,
+                          "agent_preview",
+                          return_value={"ok": True, "already": False,
+                                        "changes": []}) as pv, \
+             patch.object(config_server.claude_code_setup,
+                          "agent_setup",
+                          return_value={"ok": True, "action": "added",
+                                        "msg": "done"}) as su:
+            status, data = _request(
+                self.port, "POST", "/api/agent-setup-preview",
+                body='{"agent": "codex", "options": {"model": "gpt-5.2"}}',
+                token=self.token)
+            self.assertEqual(status, 200)
+            pv.assert_called_once_with("codex", {"model": "gpt-5.2"})
+            status, data = _request(
+                self.port, "POST", "/api/setup-agent",
+                body='{"agent": "codex"}', token=self.token)
+            self.assertEqual(status, 200)
+            su.assert_called_once_with("codex", None)
+
+    def test_setup_agent_non_dict_options_coerced_to_none(self):
+        with patch.object(config_server.claude_code_setup,
+                          "agent_setup",
+                          return_value={"ok": True}) as su:
+            _request(self.port, "POST", "/api/setup-agent",
+                     body='{"agent": "zcode", "options": "junk"}',
+                     token=self.token)
+        su.assert_called_once_with("zcode", None)

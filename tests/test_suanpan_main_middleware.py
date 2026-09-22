@@ -1,6 +1,6 @@
 """Tests for suanpan/main.py — middleware + routes via TestClient."""
 import unittest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 from suanpan.config import AppConfig, ProviderConfig, RouterConfig
 from suanpan.main import create_app
@@ -227,3 +227,344 @@ class TestBodyLimitContentLength(unittest.TestCase):
         with TestClient(app) as client:
             r = client.post("/v1/messages", json={"model": "x"})
             self.assertEqual(r.status_code, 413)
+
+
+# ── ADR-010 转换 A：openai 出站车道（/v1/messages 入站 × openai 端点）──
+
+import json as _json
+
+import httpx
+
+
+def _openai_config():
+    return AppConfig(
+        providers={
+            "oai": ProviderConfig(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-openai",
+                protocol="openai",
+                enabled=True,
+                models=["gpt-4o-mini"],
+            )
+        },
+        router=RouterConfig(default="oai/gpt-4o-mini"),
+    )
+
+
+def _mock_client(response):
+    client = MagicMock()
+    client.build_request.side_effect = (
+        lambda method, url, json=None, headers=None:
+            httpx.Request(method, url, json=json, headers=headers))
+    client.send = AsyncMock(return_value=response)
+    return client
+
+
+class TestOpenAIOutboundLane(unittest.TestCase):
+
+    def test_nonstream_request_converted_and_response_translated(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+        upstream = httpx.Response(
+            200, headers={"content-type": "application/json"},
+            json={"id": "c1", "model": "gpt-4o-mini",
+                  "choices": [{"finish_reason": "stop",
+                               "message": {"content": "hello"}}],
+                  "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+        with TestClient(app) as tc:
+            app.state.http_client = _mock_client(upstream)
+            r = tc.post("/v1/messages", json={
+                "model": "claude-sonnet-4-5", "max_tokens": 64,
+                "system": "be brief",
+                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["x-suanpan-provider"], "oai")
+        body = r.json()
+        self.assertEqual(body["type"], "message")
+        self.assertEqual(body["content"][0]["text"], "hello")
+        self.assertEqual(body["usage"]["input_tokens"], 10)
+        # 出站请求：URL/协议头/转换后 body
+        sent = app.state.http_client.send.call_args.args[0]
+        self.assertEqual(str(sent.url),
+                         "https://api.openai.com/v1/chat/completions")
+        self.assertEqual(sent.headers["authorization"], "Bearer sk-openai")
+        sent_body = _json.loads(sent.content)
+        self.assertEqual(sent_body["model"], "gpt-4o-mini")
+        self.assertEqual(sent_body["messages"][0],
+                         {"role": "system", "content": "be brief"})
+        self.assertEqual(sent_body["max_tokens"], 64)
+
+    def test_stream_translated_to_anthropic_sse(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+
+        def chunk(delta=None, finish=None, usage=None):
+            obj = {"id": "c", "object": "chat.completion.chunk",
+                   "model": "gpt-4o-mini",
+                   "choices": [{"index": 0, "delta": delta or {},
+                                "finish_reason": finish}]}
+            if usage is not None:
+                obj = {"id": "c", "object": "chat.completion.chunk",
+                       "model": "gpt-4o-mini", "choices": [], "usage": usage}
+            return ("data: " + _json.dumps(obj) + "\n\n").encode()
+
+        parts = [chunk({"role": "assistant"}),
+                 chunk({"content": "Hel"}),
+                 chunk({"content": "lo"}),
+                 chunk(finish="stop"),
+                 chunk(usage={"prompt_tokens": 9, "completion_tokens": 2}),
+                 b"data: [DONE]\n\n"]
+
+        async def stream_gen():
+            for p in parts:
+                yield p
+
+        upstream = httpx.Response(
+            200, headers={"content-type": "text/event-stream"},
+            content=stream_gen())
+        with TestClient(app) as tc:
+            app.state.http_client = _mock_client(upstream)
+            r = tc.post("/v1/messages", json={
+                "model": "claude-sonnet-4-5", "max_tokens": 64,
+                "stream": True,
+                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(r.status_code, 200)
+        text = r.text
+        self.assertIn("event: message_start", text)
+        self.assertIn("event: message_stop", text)
+        deltas = [_json.loads(line[6:]) for line in text.split("\n")
+                  if line.startswith("data: ")
+                  and _json.loads(line[6:]).get("type") == "content_block_delta"]
+        joined = "".join(e["delta"].get("text", "")
+                         for e in deltas if "text" in e["delta"])
+        self.assertEqual(joined, "Hello")
+        # stream_options 已注入（末块用量依赖它）
+        sent = app.state.http_client.send.call_args.args[0]
+        sent_body = _json.loads(sent.content)
+        self.assertEqual(sent_body["stream_options"], {"include_usage": True})
+
+    def test_upstream_5xx_becomes_502(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+        upstream = httpx.Response(503, json={"error": {"message": "down"}})
+        with TestClient(app) as tc:
+            app.state.http_client = _mock_client(upstream)
+            r = tc.post("/v1/messages", json={
+                "model": "claude-sonnet-4-5", "max_tokens": 8,
+                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(r.status_code, 502)
+        self.assertEqual(r.headers["x-suanpan-provider"], "oai")
+
+    def test_upstream_4xx_translated_to_anthropic_error(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+        upstream = httpx.Response(
+            401, headers={"content-type": "application/json"},
+            json={"error": {"message": "bad key"}})
+        with TestClient(app) as tc:
+            app.state.http_client = _mock_client(upstream)
+            r = tc.post("/v1/messages", json={
+                "model": "claude-sonnet-4-5", "max_tokens": 8,
+                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.json()["type"], "error")
+        self.assertEqual(r.json()["error"]["message"], "bad key")
+
+    def test_count_tokens_rejected_for_openai_protocol(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+        with TestClient(app) as tc:
+            r = tc.post("/v1/messages/count_tokens", json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("count_tokens", r.json()["error"]["message"])
+
+
+# ── ADR-010 直通车道：/v1/chat/completions（openai 入站 × openai 端点）──
+
+class TestChatCompletionsLane(unittest.TestCase):
+
+    def test_passthrough_nonstream_bytes_identical(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+        upstream_payload = {"id": "c9", "object": "chat.completion",
+                            "choices": [{"finish_reason": "stop",
+                                         "message": {"content": "yo"}}],
+                            "usage": {"prompt_tokens": 8,
+                                      "completion_tokens": 1}}
+        raw = _json.dumps(upstream_payload).encode()
+
+        async def _gen():
+            yield raw
+
+        upstream = httpx.Response(
+            200, headers={"content-type": "application/json"},
+            content=_gen())
+        with TestClient(app) as tc:
+            app.state.http_client = _mock_client(upstream)
+            r = tc.post("/v1/chat/completions", json={
+                "model": "anything", "max_tokens": 16,
+                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["x-suanpan-provider"], "oai")
+        self.assertEqual(r.json(), upstream_payload)  # 字节直通
+        sent = app.state.http_client.send.call_args.args[0]
+        self.assertEqual(str(sent.url),
+                         "https://api.openai.com/v1/chat/completions")
+        sent_body = _json.loads(sent.content)
+        self.assertEqual(sent_body["model"], "gpt-4o-mini")  # 路由改写
+
+    def test_passthrough_stream_injects_include_usage(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+        parts = [b'data: {"choices":[{"delta":{"content":"a"}}]}\n\n',
+                 b'data: {"choices":[],"usage":{"prompt_tokens":3,'
+                 b'"completion_tokens":1}}\n\n',
+                 b'data: [DONE]\n\n']
+
+        async def stream_gen():
+            for p in parts:
+                yield p
+
+        upstream = httpx.Response(
+            200, headers={"content-type": "text/event-stream"},
+            content=stream_gen())
+        with TestClient(app) as tc:
+            app.state.http_client = _mock_client(upstream)
+            r = tc.post("/v1/chat/completions", json={
+                "model": "anything", "stream": True,
+                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, b"".join(parts))  # SSE 字节直通
+        sent_body = _json.loads(
+            app.state.http_client.send.call_args.args[0].content)
+        self.assertEqual(sent_body["stream_options"], {"include_usage": True})
+
+    def test_subagent_marker_routes_and_stripped(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+        async def _gen():
+            yield b'{"choices": [], "usage": {}}'
+
+        upstream = httpx.Response(200, headers={
+            "content-type": "application/json"}, content=_gen())
+        with TestClient(app) as tc:
+            app.state.http_client = _mock_client(upstream)
+            r = tc.post("/v1/chat/completions", json={
+                "model": "whatever",
+                "messages": [
+                    {"role": "system",
+                     "content": "x <SUBAGENT-MODEL>oai/gpt-4o-mini"
+                                "</SUBAGENT-MODEL> y"},
+                    {"role": "user", "content": "hi"},
+                ]})
+        self.assertEqual(r.status_code, 200)
+        sent_body = _json.loads(
+            app.state.http_client.send.call_args.args[0].content)
+        self.assertEqual(sent_body["messages"][0]["content"], "x  y")
+
+    def test_anthropic_protocol_provider_rejected(self):
+        from starlette.testclient import TestClient
+        app = create_app(_config())  # test 供应商 = anthropic 协议
+        with TestClient(app) as tc:
+            r = tc.post("/v1/chat/completions", json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Anthropic 端点", r.json()["error"]["message"])
+
+    def test_no_route_matched_openai_error_shape(self):
+        from starlette.testclient import TestClient
+        cfg = AppConfig(
+            providers={"oai": ProviderConfig(
+                base_url="https://api.openai.com/v1", api_key="k",
+                protocol="openai", models=["m"])},
+            router=RouterConfig(default=None))
+        app = create_app(cfg)
+        with TestClient(app) as tc:
+            r = tc.post("/v1/chat/completions", json={
+                "model": "m", "messages": [{"role": "user", "content": "x"}]})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("no route matched", r.json()["error"]["message"])
+
+    def test_invalid_json_openai_error_shape(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())
+        with TestClient(app) as tc:
+            r = tc.post("/v1/chat/completions",
+                        content=b"{not json",
+                        headers={"content-type": "application/json"})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"]["type"], "invalid_request_error")
+
+
+# ── ADR-010 M3a：/v1/responses（Codex 直通车道）────────────────────
+
+def _responses_config(**extra):
+    return AppConfig(
+        providers={
+            "oai": ProviderConfig(
+                base_url="https://api.openai.com/v1",
+                api_key="sk-openai",
+                protocol="openai",
+                responses_base_url="https://api.openai.com/v1",
+                models=["gpt-5.2"], **extra),
+        },
+        router=RouterConfig(default="oai/gpt-5.2"),
+    )
+
+
+class TestResponsesLane(unittest.TestCase):
+
+    def test_passthrough_stream_to_native_responses_endpoint(self):
+        from starlette.testclient import TestClient
+        app = create_app(_responses_config())
+        parts = [
+            b'event: response.created\ndata: {"type":"response.created"}\n\n',
+            b'event: response.completed\ndata: {"type":"response.completed",'
+            b'"response":{"usage":{"input_tokens":30,"output_tokens":4}}}\n\n',
+        ]
+
+        async def stream_gen():
+            for p in parts:
+                yield p
+
+        upstream = httpx.Response(
+            200, headers={"content-type": "text/event-stream"},
+            content=stream_gen())
+        with TestClient(app) as tc:
+            app.state.http_client = _mock_client(upstream)
+            r = tc.post("/v1/responses", json={
+                "model": "codex-any", "stream": True, "store": False,
+                "instructions": "you are codex",
+                "input": [{"role": "user",
+                           "content": "hi"}]})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, b"".join(parts))  # 字节直通
+        self.assertEqual(r.headers["x-suanpan-provider"], "oai")
+        sent = app.state.http_client.send.call_args.args[0]
+        self.assertEqual(str(sent.url),
+                         "https://api.openai.com/v1/responses")
+        self.assertEqual(sent.headers["authorization"], "Bearer sk-openai")
+        sent_body = _json.loads(sent.content)
+        self.assertEqual(sent_body["model"], "gpt-5.2")  # 路由改写
+        self.assertEqual(sent_body["store"], False)      # 其余字段原样
+
+    def test_without_responses_base_url_rejected(self):
+        from starlette.testclient import TestClient
+        app = create_app(_openai_config())  # 无 responses_base_url
+        with TestClient(app) as tc:
+            r = tc.post("/v1/responses", json={
+                "model": "x", "input": []})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("暂不支持 Responses", r.json()["error"]["message"])
+
+    def test_invalid_json(self):
+        from starlette.testclient import TestClient
+        app = create_app(_responses_config())
+        with TestClient(app) as tc:
+            r = tc.post("/v1/responses", content=b"{bad",
+                        headers={"content-type": "application/json"})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"]["type"], "invalid_request_error")

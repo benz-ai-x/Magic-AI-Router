@@ -28,7 +28,11 @@ from mpconf.config_state import recover_pending_txn
 
 
 def default_paths(env=None):
-    """三条路径的容器默认值（env 可覆盖，便于本地调试与测试）。"""
+    """三条路径的容器默认值（env 可覆盖，便于本地调试与测试）。
+
+    ADR-010 M4：Agent 配置目标文件同模式（env 可覆盖；compose 默认不
+    挂载 ~/.codex 等——需要容器内配置 Agent 的用户自行加卷）。
+    """
     env = os.environ if env is None else env
     data_dir = env.get("SUANPAN_DATA_DIR", "/data")
     return {
@@ -36,6 +40,10 @@ def default_paths(env=None):
         "mp": os.path.join(data_dir, "magic-proxy.json"),
         "claude_settings": env.get(
             "CLAUDE_SETTINGS_PATH", "/host-claude/settings.json"),
+        "codex_config": env.get("CODEX_CONFIG_PATH", "/host-codex/config.toml"),
+        "opencode_config": env.get(
+            "OPENCODE_CONFIG_PATH", "/host-opencode/opencode.json"),
+        "zcode_config": env.get("ZCODE_CONFIG_PATH", "/host-zcode/config.json"),
     }
 
 
@@ -61,14 +69,21 @@ def bootstrap_default_config(sp_path: str, data_dir: str) -> bool:
     return True
 
 
-def redirect_paths(sp_path: str, mp_path: str, claude_settings_path: str) -> None:
-    """重定向 config_store.PATHS 三键（文档化的单一运行时重定向点）。"""
+def redirect_paths(sp_path: str, mp_path: str, claude_settings_path: str,
+                   agent_paths: dict | None = None) -> None:
+    """重定向 config_store.PATHS（文档化的单一运行时重定向点）。
+
+    agent_paths（ADR-010 M4）：可选 {codex_config|opencode_config|
+    zcode_config: path}——sync-agent 子命令用。
+    """
     from shared import config_store
-    config_store.PATHS.update({
+    updates = {
         "sp": sp_path,
         "mp": mp_path,
         "claude_settings": claude_settings_path,
-    })
+    }
+    updates.update(agent_paths or {})
+    config_store.PATHS.update(updates)
 
 
 def run_sync(sp_path: str, mp_path: str, claude_settings_path: str,
@@ -84,6 +99,29 @@ def run_sync(sp_path: str, mp_path: str, claude_settings_path: str,
         result = claude_code_setup.preview()
     else:
         result = claude_code_setup.setup()
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("ok") else 1
+
+
+def run_sync_agent(agent: str, dry_run: bool = False,
+                   options_json: str | None = None) -> int:
+    """ADR-010 M4：sync-agent <name> [--dry-run] [--options JSON]——
+    与 sync-claude-code 同模式（重定向 PATHS 后复用 agent_preview/
+    agent_setup）。"""
+    paths = default_paths()
+    redirect_paths(
+        paths["sp"], paths["mp"], paths["claude_settings"],
+        agent_paths={
+            "codex_config": paths["codex_config"],
+            "opencode_config": paths["opencode_config"],
+            "zcode_config": paths["zcode_config"],
+        })
+    from services import claude_code_setup
+    options = json.loads(options_json) if options_json else None
+    if dry_run:
+        result = claude_code_setup.agent_preview(agent, options)
+    else:
+        result = claude_code_setup.agent_setup(agent, options)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("ok") else 1
 
@@ -160,6 +198,28 @@ def main(argv=None) -> int:
         paths = default_paths()
         return run_sync(paths["sp"], paths["mp"], paths["claude_settings"],
                         dry_run="--dry-run" in rest)
+    if argv[0] == "sync-agent":
+        rest = argv[1:]
+        if not rest:
+            print("用法: sync-agent <codex|opencode|zcode> "
+                  "[--dry-run] [--options JSON]", file=sys.stderr)
+            return 2
+        agent = rest[0]
+        options_json = None
+        dry_run = False
+        i = 1
+        while i < len(rest):
+            if rest[i] == "--dry-run":
+                dry_run = True
+            elif rest[i] == "--options" and i + 1 < len(rest):
+                options_json = rest[i + 1]
+                i += 1
+            else:
+                print(f"未知参数: {rest[i]}", file=sys.stderr)
+                return 2
+            i += 1
+        return run_sync_agent(agent, dry_run=dry_run,
+                              options_json=options_json)
     if argv[0] == "config-ui":
         rest = argv[1:]
         if rest:
@@ -170,7 +230,9 @@ def main(argv=None) -> int:
         paths = default_paths()
         print(config_token(paths["mp"]))
         return 0
-    print("用法: entry.py [serve | sync-claude-code [--dry-run] | config-ui | config-token]",
+    print("用法: entry.py [serve | sync-claude-code [--dry-run] | "
+          "sync-agent <name> [--dry-run] [--options JSON] | config-ui | "
+          "config-token]",
           file=sys.stderr)
     return 2
 

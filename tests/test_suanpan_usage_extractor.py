@@ -5,6 +5,7 @@ class here: providers that send placeholder zeros in message_start and the
 authoritative counts in message_delta (GLM does exactly this) must still
 yield correct input_tokens.
 """
+import json
 import unittest
 
 from suanpan.usage_extractor import UsageExtractor
@@ -255,3 +256,63 @@ class TestChunkBoundaries(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── ADR-010：openai_chat wire 模式（直通车道用量提取）───────────────
+
+class TestOpenAIWireMode(unittest.TestCase):
+    def test_sse_final_chunk_usage(self):
+        ext = UsageExtractor(wire="openai_chat")
+        ext.feed(b'data: {"choices":[{"delta":{"content":"x"}}]}\n\n')
+        self.assertEqual(ext.input_tokens, 0)
+        ext.feed(b'data: {"choices":[],"usage":{"prompt_tokens":12,'
+                 b'"completion_tokens":4,'
+                 b'"prompt_tokens_details":{"cached_tokens":3}}}\n\n')
+        ext.feed(b'data: [DONE]\n\n')
+        self.assertEqual(ext.input_tokens, 12)
+        self.assertEqual(ext.output_tokens, 4)
+        self.assertEqual(ext.cache_read_tokens, 3)
+
+    def test_json_mode_openai_fields(self):
+        ext = UsageExtractor(json_mode=True, wire="openai_chat")
+        ext.feed(json.dumps({"usage": {"prompt_tokens": 5,
+                                       "completion_tokens": 2}}).encode())
+        self.assertEqual(ext.input_tokens, 5)
+        self.assertEqual(ext.output_tokens, 2)
+
+    def test_openai_events_ignored_in_anthropic_mode(self):
+        # wire 隔离：anthropic 模式不认 openai chunk
+        ext = UsageExtractor()
+        ext.feed(b'data: {"choices":[],"usage":{"prompt_tokens":99}}\n\n')
+        self.assertEqual(ext.input_tokens, 0)
+
+    def test_anthropic_events_ignored_in_openai_mode(self):
+        ext = UsageExtractor(wire="openai_chat")
+        ext.feed(b'event: message_start\ndata: {"type":"message_start",'
+                 b'"message":{"usage":{"input_tokens":88}}}\n\n')
+        self.assertEqual(ext.input_tokens, 0)
+
+
+# ── ADR-010 M3a：responses wire 模式（Codex 直通车道用量提取）───────
+
+class TestResponsesWireMode(unittest.TestCase):
+    def test_sse_completed_event_usage(self):
+        ext = UsageExtractor(wire="responses")
+        ext.feed(b'event: response.output_text.delta\n'
+                 b'data: {"type":"response.output_text.delta","delta":"x"}\n\n')
+        self.assertEqual(ext.input_tokens, 0)
+        ext.feed(b'data: {"type":"response.completed","response":{'
+                 b'"usage":{"input_tokens":21,"output_tokens":6,'
+                 b'"input_tokens_details":{"cached_tokens":9}}}}\n\n')
+        self.assertEqual(ext.input_tokens, 21)
+        self.assertEqual(ext.output_tokens, 6)
+        self.assertEqual(ext.cache_read_tokens, 9)
+
+    def test_json_mode_responses_fields(self):
+        ext = UsageExtractor(json_mode=True, wire="responses")
+        ext.feed(json.dumps({"usage": {
+            "input_tokens": 7, "output_tokens": 3,
+            "input_tokens_details": {"cached_tokens": 2}}}).encode())
+        self.assertEqual(ext.input_tokens, 7)
+        self.assertEqual(ext.output_tokens, 3)
+        self.assertEqual(ext.cache_read_tokens, 2)

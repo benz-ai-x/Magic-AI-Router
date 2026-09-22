@@ -134,8 +134,37 @@ class TestProviderRegistry(unittest.TestCase):
 
     def test_balance_matching_uses_registry_hosts(self):
         from shared.provider_auth import PROVIDER_REGISTRY
-        # 注册表 host 片段能在 base_url 里命中（与旧 PROVIDER_BALANCE_APIS
-        # 同语义：子串匹配）
+        # 注册表 host 片段能在端点 base_url 里命中（与旧 PROVIDER_BALANCE_APIS
+        # 同语义：子串匹配）。ADR-010 后无 anthropic 端点的厂商（openai/
+        # volces）顶层 base_url 为 None——不变量放宽为「命中任一端点卡」。
         for name, entry in PROVIDER_REGISTRY.items():
-            self.assertIn(entry["hosts"][0], entry["base_url"])
+            candidates = [card.get("base_url")
+                          for card in entry["endpoints"].values()]
+            if entry.get("base_url"):
+                candidates.append(entry["base_url"])
+            self.assertTrue(
+                any(c and entry["hosts"][0] in c for c in candidates),
+                f"{name}: hosts 片段未命中任何端点 base_url")
+
+    def test_endpoint_matrix_shape(self):
+        """ADR-010：每厂商至少一张端点卡；anthropic 卡带 anthropic_native；
+        unverified 标记（若有）为 bool。"""
+        from shared.provider_auth import PROVIDER_REGISTRY
+        for name, entry in PROVIDER_REGISTRY.items():
+            endpoints = entry["endpoints"]
+            self.assertIsInstance(endpoints, dict)
+            self.assertTrue(endpoints, f"{name} 缺端点矩阵")
+            for proto, card in endpoints.items():
+                self.assertIn(proto, ("anthropic", "openai", "responses"))
+                self.assertIsInstance(card["base_url"], str)
+                self.assertTrue(card["base_url"].startswith("https://"))
+                if proto == "anthropic":
+                    self.assertIsInstance(card["anthropic_native"], bool)
+                if "unverified" in card:
+                    self.assertIsInstance(card["unverified"], bool)
+            # 顶层兼容投影与 anthropic 卡一致（无卡时为 None）
+            top = entry.get("base_url")
+            self.assertEqual(
+                top, endpoints.get("anthropic", {}).get("base_url"),
+                f"{name}: 顶层 base_url 与 anthropic 卡漂移")
 

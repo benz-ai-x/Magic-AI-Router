@@ -34,6 +34,9 @@ class UsageEntry:
     latency_ms: int
     status: int
     error: str | None
+    # ADR-010 M5：来源 Agent（User-Agent 判别，proxy.agent_from_user_agent）。
+    # 空串 = 未识别（旧日志/无 UA）；旧 JSONL 行缺该键读方默认 ""。
+    agent: str = ""
 
 
 class UsageLogger:

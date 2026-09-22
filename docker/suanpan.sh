@@ -35,6 +35,10 @@ case "$cmd" in
   sync)
     docker compose exec suanpan python3 /app/docker/entry.py sync-claude-code "$@"
     ;;
+  sync-agent)
+    shift
+    docker compose exec suanpan python3 /app/docker/entry.py sync-agent "$@"
+    ;;
   config-ui)
     echo "配置页面: http://127.0.0.1:9528/"
     echo "Bearer token:"
