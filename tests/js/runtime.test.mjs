@@ -256,9 +256,12 @@ test("collectTunnel reads forward rows into the active tunnel", () => {
   // vm 跨 realm 对象不走 deepEqual（原型不同）——JSON 字符串钉形状
   assert.equal(rt.run("JSON.stringify(S.mp.tunnels[0].forwards)"),
     JSON.stringify([
-      { local_port: 9000, remote_host: "10.0.0.5", remote_port: 8000 },
-      { local_port: 0, remote_host: "127.0.0.1", remote_port: 0 },
-    ]), "行序即数组序；空白地址 trim 后缺省 127.0.0.1，空端口为 0");
+      { local_port: 9000, remote_host: "10.0.0.5", remote_port: 8000,
+        enabled: true },
+      { local_port: 0, remote_host: "127.0.0.1", remote_port: 0,
+        enabled: true },
+    ]), "行序即数组序；空白地址 trim 后缺省 127.0.0.1，空端口为 0，"
+    + "无开关（缺省）行为启用");
   assert.equal(rt.run("dirty"), true, "新增转发行必须点亮保存按钮");
 });
 
@@ -418,4 +421,44 @@ test("nfs view empty state without tunnels", () => {
   const rt = makeRuntime();
   const html = rt.run("S=normalizeState({mp:{tunnels:[]}});nfsHTML()");
   assert.match(html, /还没有配置隧道/);
+});
+
+
+test("collectTunnel reads per-row enabled switches", () => {
+  const rt = makeRuntime();
+  rt.run(`
+    S=normalizeState({mp:{tunnels:[{name:'t1',ssh_user:'u',ssh_host:'h',ssh_port:22,
+      auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]}]}});
+    baselineState=cloneData(S);baselineRoles={};ccRoles={};
+    activeView='tunnel';activeTunnel=0;recomputeDirty();
+    const fields={name:{value:'t1'},addr:{value:'u@h'},ssh_port:{value:'22'},
+      auth:{value:'key'},key:{value:''}};
+    const row=(vals,sw)=>({querySelector:function(sel){
+      const m=sel.match(/data-fwf="enabled"/);
+      if(m)return sw||null;
+      const k=sel.match(/data-fwf="(\\w+)"/);
+      return k?vals[k[1]]:null;}});
+    const rows=[row({local_port:{value:'9000'},remote_host:{value:'x'},
+      remote_port:{value:'80'}},{getAttribute:()=>'true'}),
+      row({local_port:{value:'9001'},remote_host:{value:'x'},
+      remote_port:{value:'81'}},{getAttribute:()=>'false'})];
+    window.__detail={querySelector:function(sel){
+      const m=sel.match(/data-tf="(\\w+)"/);
+      if(m&&fields[m[1]])return fields[m[1]];
+      if(m&&m[1]==='compress')return{getAttribute:()=>'true'};
+      return null;
+    },querySelectorAll:function(sel){
+      return sel.includes('data-fwr')?rows:[];
+    }};
+    document.querySelector=function(sel){
+      return sel.includes('detail-body')?window.__detail:null;
+    };
+  `);
+  rt.run("collectTunnel();recomputeDirty()");
+  assert.equal(rt.run("JSON.stringify(S.mp.tunnels[0].forwards)"),
+    JSON.stringify([
+      { local_port: 9000, remote_host: "x", remote_port: 80, enabled: true },
+      { local_port: 9001, remote_host: "x", remote_port: 81, enabled: false },
+    ]), "行内启用开关经 aria-checked 读回（逐条启停的配置面）");
+  assert.equal(rt.run("dirty"), true);
 });

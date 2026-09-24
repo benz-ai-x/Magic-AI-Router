@@ -10,6 +10,7 @@ until the user installs them (``pip3 install -r requirements-dev.txt``).
 """
 import logging
 import os
+import socket
 
 from tunnel.async_runtime import AsyncRuntime
 from shared.config_store import DEFAULT_PATHS, get_path
@@ -44,6 +45,19 @@ def default_config_yaml(usage_log_path=None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _probe_tcp(host, port, timeout=0.3):
+    """轻量「端口在听吗」探测：TCP connect 成功即真，OSError 即假。
+
+    回环 refused 是即时返回，timeout 只防过滤态悬挂。watchdog 审计用
+    （audit 的唯一探测原语，测试经 patch 此函数接桩）。
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 class SuanpanRuntime:
     """Manage the Suanpan gateway lifecycle via AsyncRuntime.
 
@@ -70,6 +84,26 @@ class SuanpanRuntime:
     @property
     def config_path(self):
         return self._config_path
+
+    def audit(self):
+        """状态旗标 vs 端口真相的健康审计（watchdog 谓词）。
+
+        返回 "stopped"（未运行——用户停/未启/崩溃，watchdog 绝不拉起）/
+        "healthy"（running 且声称的监听地址实际有人听）/"mismatch"
+        （running 但端口无人听——僵尸态，2026-09-22 真机案例类）。
+        审计的就是运行时自己的声明：探测 listen_address()（缓存值，
+        与 start/reload 同步失效）。探测为轻量 TCP connect，不落
+        mount_control（services→mount 跨域同层被架构守卫禁止）。
+        """
+        if not self.running:
+            return "stopped"
+        from shared import netloc
+        try:
+            host, port = netloc.parse_listen(
+                self.listen_address(), default_port=9527)
+        except ValueError:
+            return "mismatch"  # 声称的地址都解析不了——按失配处置
+        return "healthy" if _probe_tcp(host, port) else "mismatch"
 
     def _ensure_config(self):
         """Create a minimal default config if none exists yet.

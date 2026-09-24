@@ -151,14 +151,16 @@ class TestMergeConfigForwards(unittest.TestCase):
             {"local_port": "9000", "remote_host": "db", "remote_port": "5432"},
         ]}]})
         self.assertEqual(merged["tunnels"][0]["forwards"], [
-            {"local_port": 9000, "remote_host": "db", "remote_port": 5432}])
+            {"local_port": 9000, "remote_host": "db", "remote_port": 5432,
+             "enabled": True}])
 
     def test_unknown_keys_stripped_and_remote_host_defaults(self):
         merged = config.merge_config({"tunnels": [{"ssh_host": "s", "forwards": [
             {"local_port": 9000, "remote_port": 8000, "note": "dropped"},
         ]}]})
         self.assertEqual(merged["tunnels"][0]["forwards"], [
-            {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000}])
+            {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000,
+             "enabled": True}])
 
     def test_invalid_port_falls_to_zero_not_dropped(self):
         """非法端口落 0（下次保存被 prepare 拦），绝不静默丢行。"""
@@ -166,7 +168,8 @@ class TestMergeConfigForwards(unittest.TestCase):
             {"local_port": "abc", "remote_host": "h", "remote_port": 70000},
         ]}]})
         self.assertEqual(merged["tunnels"][0]["forwards"], [
-            {"local_port": 0, "remote_host": "h", "remote_port": 0}])
+            {"local_port": 0, "remote_host": "h", "remote_port": 0,
+             "enabled": True}])
 
     def test_non_dict_rows_and_non_list_dropped(self):
         merged = config.merge_config({"tunnels": [
@@ -175,7 +178,8 @@ class TestMergeConfigForwards(unittest.TestCase):
             {"ssh_host": "s2", "forwards": "not-a-list"},
         ]})
         self.assertEqual(merged["tunnels"][0]["forwards"], [
-            {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 80}])
+            {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 80,
+             "enabled": True}])
         self.assertEqual(merged["tunnels"][1]["forwards"], [])
 
     def test_forward_autostart_defaults_and_normalization(self):

@@ -495,6 +495,73 @@ class MagicProxyApp(rumps.App):
             self._dirty()
         return act
 
+    def make_toggle_forward(self, tunnel_id, index):
+        """菜单「端口映射逐条启停」：翻转该行磁盘 enabled + 守卫重建。
+
+        -L 集合只在会话启动时生效——只在会话已在跑时重建（未跑的绝不
+        拉起，if_connected 同精神）：转发会话 daemon 线程 restart；
+        代理隧道走整体 reconnect（连接/连接中才算在跑）。写径经
+        _update_mp_config（#46 事务写 + 磁盘真相推导目标态）。"""
+        def act(_):
+            cfg = load_config()
+            tunnel = next((t for t in (cfg or {}).get("tunnels", [])
+                           if isinstance(t, dict) and t.get("id") == tunnel_id),
+                          None)
+            rows = (tunnel or {}).get("forwards") or []
+            if not (0 <= index < len(rows)) or not isinstance(rows[index], dict):
+                return
+            row = rows[index]
+            enabled = row.get("enabled") is not False
+            lp, rp = row.get("local_port"), row.get("remote_port")
+
+            def mutate(c):
+                tunnels = []
+                for t in c.get("tunnels", []):
+                    if isinstance(t, dict) and t.get("id") == tunnel_id:
+                        fws = [dict(f) for f in (t.get("forwards") or [])]
+                        if 0 <= index < len(fws) and isinstance(fws[index], dict):
+                            fws[index]["enabled"] = not enabled
+                        tunnels.append({**t, "forwards": fws})
+                    else:
+                        tunnels.append(t)
+                return {**c, "tunnels": tunnels}
+
+            if not self._update_mp_config(mutate):
+                return
+            note = ""
+            if tunnel_id == self._conn.proxy_tunnel_id:
+                # 守卫与保存流同判（status=="connected"，不含 connecting）
+                # ——未运行的代理绝不因翻转转发被拉起（review c-1）
+                if self._conn.ssh.status == "connected":
+                    self.reconnect(None)
+                    note = "；代理会话重启中"
+            else:
+                # 守卫与保存流同判：仅 status=="connected" 才重建——
+                # error/退避态的滞留会话（stop_forward 才 pop）绝不因
+                # 翻转被 restart_forward→connect() 拉起（review c-1）
+                states = {s.tunnel_id: s.status
+                          for s in self._conn.forward_sessions()}
+                if states.get(tunnel_id) == "connected":
+                    # 全停用后 restart 实为收敛停止——文案如实（c-3）
+                    t_now = next(
+                        (t for t in (self._config.get("tunnels") or [])
+                         if isinstance(t, dict) and t.get("id") == tunnel_id),
+                        None)
+                    any_enabled = any(
+                        isinstance(f, dict) and f.get("enabled") is not False
+                        for f in ((t_now or {}).get("forwards") or []))
+                    threading.Thread(
+                        target=self._conn.restart_forward,
+                        args=(tunnel_id, self._reload_config_or_alert),
+                        name="ToggleForwardRebuild", daemon=True).start()
+                    note = ("；转发会话已停止（无启用中的转发）"
+                            if not any_enabled else "；转发会话重建中")
+            self._notify(
+                "端口映射已启用" if not enabled else "端口映射已停用",
+                f"{lp} → {rp}{note}")
+            self._dirty()
+        return act
+
     # ── NFS 挂载（ADR-007）───────────────────────────────
 
     def make_toggle_mount(self, tunnel_id, name):

@@ -158,6 +158,12 @@ def port_conflict_errors(mp, sp) -> list:
                 _lp = _f.get("local_port")
                 if not isinstance(_lp, int) or isinstance(_lp, bool):
                     continue
+                # 停用行不进会话 -L 集合、不占本地端口——退出冲突检查
+                # （同隧道重复检查同步退出，否则停 A 配 B 同端口被误拦；
+                # NFS "只在用才占端口" 同款口径）。行级形状校验不受
+                # 停用影响（tunnel_rows_errors 全量）。
+                if _f.get("enabled") is False:
+                    continue
                 if _lp in _fw_seen:
                     errors.append(
                         f"隧道 {_tname} 的转发本地端口 {_lp} 重复")

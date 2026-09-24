@@ -35,7 +35,7 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 ### 端口转发（Local Forward）
 
-per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达的 `remote_host:remote_port` 映射到本机 `127.0.0.1:local_port`。配置存于 `tunnels[i].forwards`（`{local_port, remote_host 缺省 127.0.0.1, remote_port}`），argv 由 `ssh_launch.build_tunnel_command` 拼装（`socks5_port=None` 即纯转发模式），绑定地址恒为回环。`ExitOnForwardFailure=yes` 使本地端口被占时该会话独立退避重试。本地端口在 prepare 与 JS 校验双层拦（全局唯一——不撞保留端口、不撞任何其他隧道）。保存后经 bridge `reconnectProxy {if_connected:true, tunnel_id?}` 守卫重连逐隧道定向应用——代理隧道保持「同一身份当前隧道」语义，转发会话按各自连接态守卫（未运行绝不拉起）；行内「测试」走 `probe_forward`（一次性 `ssh -W` 探测**表单当前值**——隧道与转发行都未保存可测，不依赖隧道状态）。
+per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达的 `remote_host:remote_port` 映射到本机 `127.0.0.1:local_port`。配置存于 `tunnels[i].forwards`（`{local_port, remote_host 缺省 127.0.0.1, remote_port, enabled 缺省 true}`）——**逐条启停**：停用行不进会话 -L 集合、不占本地端口（端口冲突检查退出，与挂载「只在用才占端口」同口径）；菜单「端口映射 ▸」逐条成行点击启停（守卫重建该隧道会话，未运行不拉起；代理隧道的转发行同样可停用，重建=代理会话重启），设置窗转发表内有开关列（保存流生效），argv 由 `ssh_launch.build_tunnel_command` 拼装（`socks5_port=None` 即纯转发模式），绑定地址恒为回环。`ExitOnForwardFailure=yes` 使本地端口被占时该会话独立退避重试。本地端口在 prepare 与 JS 校验双层拦（全局唯一——不撞保留端口、不撞任何其他隧道）。保存后经 bridge `reconnectProxy {if_connected:true, tunnel_id?}` 守卫重连逐隧道定向应用——代理隧道保持「同一身份当前隧道」语义，转发会话按各自连接态守卫（未运行绝不拉起）；行内「测试」走 `probe_forward`（一次性 `ssh -W` 探测**表单当前值**——隧道与转发行都未保存可测，不依赖隧道状态）。
 
 ### SSH 调用策略（ssh_launch）
 

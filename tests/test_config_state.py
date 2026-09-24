@@ -1112,3 +1112,40 @@ class TestReloadAfterMigration(unittest.TestCase):
         # 带 id 重载（真实磁盘路径）：幂等，不 raise
         n = assign_stable_ids(tunnels)
         self.assertEqual(n, 0)
+
+
+class TestDisabledForwardPortConflicts(unittest.TestCase):
+    """逐条启停：停用行不占本地端口——退出冲突检查（挂载同款口径）。"""
+
+    def _prepare(self, mp):
+        return ConfigStateStore().prepare(mp=mp)
+
+    def test_disabled_row_frees_port_for_reuse(self):
+        """停 A（enabled=False）配 B 同端口：放行——腾挪端口的常规操作。"""
+        plan = self._prepare({"tunnels": [
+            {"name": "a", "ssh_host": "h", "forwards": [
+                {"local_port": 9000, "remote_host": "127.0.0.1",
+                 "remote_port": 80, "enabled": False}]},
+            {"name": "b", "ssh_host": "h2", "forwards": [
+                {"local_port": 9000, "remote_host": "127.0.0.1",
+                 "remote_port": 81}]},
+        ]})
+        self.assertTrue(plan.ok, plan.errors)
+
+    def test_both_enabled_same_port_still_rejected(self):
+        plan = self._prepare({"tunnels": [
+            {"name": "a", "ssh_host": "h", "forwards": [
+                {"local_port": 9000, "remote_port": 80}]},
+            {"name": "b", "ssh_host": "h2", "forwards": [
+                {"local_port": 9000, "remote_port": 81}]},
+        ]})
+        self.assertFalse(plan.ok)
+
+    def test_disabled_row_shape_still_validated(self):
+        """行级形状校验不因停用放行（随时可重新启用）。"""
+        plan = self._prepare({"tunnels": [
+            {"name": "a", "ssh_host": "h", "forwards": [
+                {"local_port": "abc", "remote_port": 80,
+                 "enabled": False}]},
+        ]})
+        self.assertFalse(plan.ok)

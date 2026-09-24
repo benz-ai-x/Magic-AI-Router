@@ -455,6 +455,7 @@ function viewSnapshot(view,state,roles){
         local_port:numberDefault(f.local_port,0),
         remote_host:f.remote_host||'127.0.0.1',
         remote_port:numberDefault(f.remote_port,0),
+        enabled:f.enabled!==false,
       })),
     })),
   };
@@ -530,6 +531,7 @@ function validateConfig(S){
       // （数字形态仅在直改 state 时出现，String 兜底不抛 TypeError）
       const lp=f.local_port,rp=f.remote_port,rh=String(f.remote_host||'127.0.0.1');
       if(!Number.isInteger(lp)||lp<1||lp>65535)errors.push(`${tn}: 转发本地端口无效（须 1..65535）`);
+      else if(f.enabled===false){/* 停用行不占端口，重复也不拦 */}
       else if(fwSeen[lp])errors.push(`${tn}: 转发本地端口 ${lp} 重复`);
       else fwSeen[lp]=1;
       if(!Number.isInteger(rp)||rp<1||rp>65535)errors.push(`${tn}: 转发远程端口无效（须 1..65535）`);
@@ -558,6 +560,7 @@ function validateConfig(S){
     (t.forwards||[]).forEach(f=>{
       const lp=f.local_port;
       const ref=`${tn} 端口转发本地端口`;
+      if(f.enabled===false)return;  // 停用行不进会话 -L、不占本地端口
       if(lp){
         if(seen[lp])errors.push(`端口冲突：${seen[lp]} 与 ${ref} 同为 ${lp}`);
         else seen[lp]=ref;
@@ -842,7 +845,7 @@ function changedForwardTunnels(base,S){
   // 多活（v0.9）：返回 forwards 有变的隧道 id 数组——saveFlow 对「正在
   // 运行的」逐隧道触发守卫重连（代理隧道走代理守卫；转发会话按各自
   // 连接态定向守卫），未运行的不拉起。
-  const sig=t=>((t&&t.forwards)||[]).map(f=>`${f.local_port}|${f.remote_host}|${f.remote_port}`).join(';');
+  const sig=t=>((t&&t.forwards)||[]).map(f=>`${f.local_port}|${f.remote_host}|${f.remote_port}|${f.enabled===false?0:1}`).join(';');
   const byId=st=>{const m={};((st&&st.mp&&st.mp.tunnels)||[]).forEach(t=>{if(t&&t.id)m[t.id]=t;});return m;};
   const a=byId(base),b=byId(S);
   const out=[];
@@ -1242,11 +1245,12 @@ function toggleSwitch(el){
 // ── tunnel view (master-detail only) ──────────────────
 function fwRows(t){
   const fs=t.forwards||[];
-  if(!fs.length)return `<tr class="fw-empty"><td colspan="4">暂无端口转发规则——点「+ 添加转发」把远程端口映射到本机</td></tr>`;
+  if(!fs.length)return `<tr class="fw-empty"><td colspan="5">暂无端口转发规则——点「+ 添加转发」把远程端口映射到本机</td></tr>`;
   return fs.map((f,fi)=>`<tr data-fwr="${fi}">
     <td><input class="control mono" data-fwf="local_port" type="number" min="1" max="65535" value="${esc(f.local_port||'')}" placeholder="9000" aria-label="转发 ${fi+1} 本地端口"></td>
     <td><input class="control mono" data-fwf="remote_host" value="${esc(f.remote_host||'')}" placeholder="127.0.0.1" aria-label="转发 ${fi+1} 远程地址"></td>
     <td><input class="control mono" data-fwf="remote_port" type="number" min="1" max="65535" value="${esc(f.remote_port||'')}" placeholder="8000" aria-label="转发 ${fi+1} 远程端口"></td>
+    <td><button class="switch" data-fwf="enabled" role="switch" aria-checked="${f.enabled!==false}" aria-label="转发 ${fi+1} 启用映射" onclick="toggleSwitch(this)"></button></td>
     <td><div class="fw-actions"><button class="btn btn-sm" aria-label="测试转发 ${fi+1}" onclick="testForward(${fi},this)">测试</button>
       <button class="btn btn-sm btn-danger" aria-label="删除转发 ${fi+1}" onclick="removeForward(${fi})">删除</button>
       <span class="fw-status" id="fw-status-${fi}"></span></div></td>
@@ -1310,7 +1314,7 @@ function tunnelHTML(){
               <div class="switch-line"><span class="switch-label">${t.forward_autostart===true?'已启用':'已停用'}</span>
               <button class="switch" data-tf="fw_autostart" role="switch" aria-checked="${t.forward_autostart===true}" aria-label="随应用启动转发" onclick="toggleSwitch(this)"></button></div></div>
             <table class="rules-table fw-table"><thead><tr>
-              <th style="width:16%">本地端口</th><th style="width:44%">远程地址（服务器侧）</th><th style="width:14%">远程端口</th><th>操作</th>
+              <th style="width:15%">本地端口</th><th style="width:37%">远程地址（服务器侧）</th><th style="width:13%">远程端口</th><th style="width:11%">启用</th><th>操作</th>
             </tr></thead><tbody>${fwRows(t)}</tbody></table>
           </div>
         </div>
@@ -1336,7 +1340,7 @@ function addTunnel(){collectTunnel();S.mp.tunnels.push({name:'',ssh_user:'',ssh_
 // 删除时保全代理角色：删的是角色隧道（id 匹配）→ 清空 id 真相，靠下标
 // 钳制回落剩余首条；删前方隧道下标前移——角色始终指向同一条隧道
 function removeTunnel(i){if(!S.mp.tunnels.length)return;collectTunnel();const removed=S.mp.tunnels[i];S.mp.tunnels.splice(i,1);if(removed&&removed.id&&(removed.id===(S.mp.current_tunnel_id||'')))S.mp.current_tunnel_id='';const cur=S.mp.current_tunnel||0;if(i<cur)S.mp.current_tunnel=cur-1;else if(i===cur)S.mp.current_tunnel=Math.max(0,Math.min(cur,S.mp.tunnels.length-1));activeTunnel=Math.max(0,Math.min(i,S.mp.tunnels.length-1));recomputeDirty();renderView();}
-function addForward(){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t)return;(t.forwards=t.forwards||[]).push({local_port:0,remote_host:'127.0.0.1',remote_port:0});recomputeDirty();renderView();}
+function addForward(){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t)return;(t.forwards=t.forwards||[]).push({local_port:0,remote_host:'127.0.0.1',remote_port:0,enabled:true});recomputeDirty();renderView();}
 function removeForward(fi){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t||!(t.forwards||[]).length)return;t.forwards.splice(fi,1);recomputeDirty();renderView();}
 function collectTunnel(){
   const ts=S.mp.tunnels;if(!ts.length)return;const t=ts[activeTunnel];if(!t)return;
@@ -1355,9 +1359,11 @@ function collectTunnel(){
   const fws=[];
   d.querySelectorAll('.fw-table tbody tr[data-fwr]').forEach(tr=>{
     const g=k=>{const el=tr.querySelector(`[data-fwf="${k}"]`);return el?el.value:'';};
+    const sw=tr.querySelector('[data-fwf="enabled"]');
     fws.push({local_port:parseInt(g('local_port'),10)||0,
       remote_host:g('remote_host').trim()||'127.0.0.1',
-      remote_port:parseInt(g('remote_port'),10)||0});
+      remote_port:parseInt(g('remote_port'),10)||0,
+      enabled:!sw||sw.getAttribute('aria-checked')==='true'});
   });
   t.forwards=fws;
 }

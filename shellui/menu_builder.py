@@ -377,7 +377,11 @@ class MenuBuilder:
 
     def _build_forward_submenu(self):
         """端口映射 ▸ —— 只管纯 -L 转发会话（多活）：代理隧道自身显示
-        「随代理运行」信息行；其余隧道各自启停/单会话重连。"""
+        「随代理运行」信息行；其余隧道各自启停/单会话重连。
+
+        逐条启停（v0.11）：端口摘要不再挤在隧道行标题里——每条转发
+        独立成行（点击即启停），圆点随会话状态着色、停用行灰点。
+        """
         st = self._get_state()
         a = self._app
         parent = rumps.MenuItem("端口映射", callback=None)
@@ -394,27 +398,30 @@ class MenuBuilder:
             forwards = t.get("forwards") or []
             any_rules = any_rules or bool(forwards)
             if i == current_idx:
-                # 代理隧道自身：其 -L 随代理会话跑，此处仅呈现状态
+                # 代理隧道自身：其 -L 随代理会话跑，此处仅呈现状态——
+                # 但每条转发仍可逐条停用（守卫重建代理会话）
                 on = st.ssh_status == "connected"
                 row = rumps.MenuItem(
                     f"{name} — {'随代理运行' if on else '未随代理运行'}",
                     callback=None)
                 _apply_icon(row, "circle", point_size=9,
                             color=_status_color("ok" if on else "idle"))
+                self._add_forward_rows(row, a, tid, forwards,
+                                       session_up=on)
                 parent.add(row)
                 parent.add(None)
                 continue
+            session_up = fw_running.get(tid) == "connected"
             if tid in fw_running:
                 tail = _FW_TAIL.get(fw_running[tid], " — 转发重试中")
             else:
                 tail = " — 未启动"
-            summary = " · ".join(
-                f"{f.get('local_port')}→{f.get('remote_port')}"
-                for f in forwards if isinstance(f, dict)) if forwards else ""
-            title = f"{name}{tail}" + (f" · {summary}" if summary else "")
-            row = rumps.MenuItem(title, callback=None)
+            row = rumps.MenuItem(f"{name}{tail}", callback=None)
             _apply_icon(row, "tunnel_row")
+            self._add_forward_rows(row, a, tid, forwards,
+                                   session_up=session_up)
             if tid in fw_running:
+                row.add(None)
                 item = rumps.MenuItem("停止端口转发",
                                       callback=a.toggle_forward_session(tid))
                 _apply_icon(item, "fw_stop")
@@ -424,6 +431,7 @@ class MenuBuilder:
                 _apply_icon(item, "refresh")
                 row.add(item)
             elif forwards:
+                row.add(None)
                 item = rumps.MenuItem("启动端口转发",
                                       callback=a.toggle_forward_session(tid))
                 _apply_icon(item, "fw_start")
@@ -438,6 +446,28 @@ class MenuBuilder:
             parent.add(rumps.MenuItem("在偏好设置 → 隧道里添加转发规则",
                                       callback=None))
         return parent
+
+    def _add_forward_rows(self, parent, app, tunnel_id, forwards,
+                          session_up):
+        """隧道行下挂逐条转发子行：标题 "{lp} → {rp} · 状态"，点击即
+        启停（唯一动作，免四级嵌套）。着色：停用=灰；启用=随会话状态
+        （connected 绿 / 其余黄）。"""
+        for fi, f in enumerate(forwards):
+            if not isinstance(f, dict):
+                continue
+            lp, rp = f.get("local_port"), f.get("remote_port")
+            enabled = f.get("enabled") is not False
+            if enabled:
+                tail = "已映射" if session_up else "待会话"
+                color = _status_color("ok" if session_up else "warn")
+            else:
+                tail = "已停用"
+                color = _status_color("idle")
+            row = rumps.MenuItem(
+                f"{lp} → {rp} · {tail}",
+                callback=app.make_toggle_forward(tunnel_id, fi))
+            _apply_icon(row, "circle", point_size=8, color=color)
+            parent.add(row)
 
     def _build_mount_submenu(self):
         """远程挂载 ▸ —— NFS over SSH 挂载项（ADR-007）：跨隧道列出所有

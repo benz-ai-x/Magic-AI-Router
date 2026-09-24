@@ -479,3 +479,23 @@ class TestBuildTunnelCommandForwardMode(unittest.TestCase):
             self.assertIn("1080", sc.cmd)
         finally:
             sc.close_password_fd()
+
+
+class TestForwardArgsEnabledFilter(unittest.TestCase):
+    """逐条启停：停用行不进 -L 集合。"""
+
+    def test_disabled_row_skipped(self):
+        from tunnel.ssh_launch import _forward_args
+        args = _forward_args({"forwards": [
+            {"local_port": 9000, "remote_host": "127.0.0.1",
+             "remote_port": 80, "enabled": False},
+            {"local_port": 9001, "remote_host": "127.0.0.1",
+             "remote_port": 81},
+        ]})
+        self.assertEqual(args, ["-L", "127.0.0.1:9001:127.0.0.1:81"])
+
+    def test_absent_enabled_means_on(self):
+        from tunnel.ssh_launch import _forward_args
+        args = _forward_args({"forwards": [
+            {"local_port": 9000, "remote_port": 80}]})
+        self.assertEqual(args, ["-L", "127.0.0.1:9000:127.0.0.1:80"])

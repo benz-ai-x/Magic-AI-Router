@@ -18,13 +18,14 @@ spawn_fn 供 monitor.start（默认即 identity_fn；NFS 会话覆写为注入�
 
 
 def first_forward_port(tunnel):
-    """隧道第一条合法 -L 的本地端口（就绪探测口推导的单一归宿）。
+    """隧道第一条合法且启用 -L 的本地端口（就绪探测口推导的单一归宿）。
 
-    非法/缺字段行防御性跳过——prepare 校验与 merge 归一双保险下，
-    正常流转的配置永不触达跳过分支。
+    停用行（enabled=False）不进会话 -L 集合——探测口必须取实际会有的
+    端口，与 _forward_args 同口径。非法/缺字段行防御性跳过——prepare
+    校验与 merge 归一双保险下，正常流转的配置永不触达跳过分支。
     """
     for f in (tunnel or {}).get("forwards") or []:
-        if isinstance(f, dict):
+        if isinstance(f, dict) and f.get("enabled") is not False:
             lp = f.get("local_port")
             if isinstance(lp, int) and not isinstance(lp, bool) \
                     and 1 <= lp <= 65535:
