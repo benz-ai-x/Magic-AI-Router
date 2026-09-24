@@ -64,6 +64,27 @@ def parse_route_target(target: str) -> tuple[str, str]:
 _parse_target = parse_route_target
 
 
+def first_tier_route(rules: list, tier_prefix: str) -> str | None:
+    """既有规则里首个能路由 tier 前缀模型的 route_to（无则 None）。
+
+    前缀命中语义的逆查询（#42）：规则路由模型 M 当且仅当 M.startswith(
+    match_prefix)——对 tier 前缀 T，能路由某个 T* 模型的规则恰为
+    T.startswith(match_prefix)（更宽/相等规则）或 match_prefix.startswith(T)
+    （更细规则，如 claude-sonnet-4-5 对 tier claude-sonnet）。消费方是
+    raw 规则表（claude_code_setup 的 CC 角色种子推导）——与 parse_route_target
+    同一批 raw 配置消费者，语义与 decide_route 的首序命中同源，前缀知识
+    不落第二处。
+    """
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        mp = r.get("match_prefix")
+        if mp and r.get("route_to") and (
+                tier_prefix.startswith(mp) or mp.startswith(tier_prefix)):
+            return r["route_to"]
+    return None
+
+
 def _make_decision(
     slot_value: str | None,
     scenario: str,

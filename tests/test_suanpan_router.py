@@ -2,7 +2,7 @@
 import unittest
 
 from suanpan.config import AppConfig, ProviderConfig, RouterConfig
-from suanpan.router import decide_route, NoRouteMatched
+from suanpan.router import decide_route, first_tier_route, NoRouteMatched
 
 
 def _config(providers=None, router=None, rules=None):
@@ -135,6 +135,31 @@ class TestRules(unittest.TestCase):
         body = {"model": "claude-sonnet-4"}
         d = decide_route(body, config=cfg)
         self.assertEqual(d.target_model, "first")
+
+
+class TestFirstTierRoute(unittest.TestCase):
+    """前缀命中语义的逆查询（raw 规则表；CC 角色种子推导共用）——
+    语义与 decide_route 的规则匹配同源，前缀知识不落第二处。"""
+
+    def test_broader_or_equal_rule_routes_tier(self):
+        rules = [{"match_prefix": "claude", "route_to": "p/first"}]
+        self.assertEqual(first_tier_route(rules, "claude-sonnet"), "p/first")
+
+    def test_more_specific_rule_routes_tier(self):
+        rules = [{"match_prefix": "claude-sonnet-4-5", "route_to": "p/spec"}]
+        self.assertEqual(first_tier_route(rules, "claude-sonnet"), "p/spec")
+
+    def test_first_hit_wins_in_list_order(self):
+        rules = [{"match_prefix": "claude", "route_to": "p/first"},
+                 {"match_prefix": "claude-sonnet", "route_to": "p/second"}]
+        self.assertEqual(first_tier_route(rules, "claude-sonnet"), "p/first")
+
+    def test_unrelated_and_malformed_rows_return_none(self):
+        rules = [{"match_prefix": "gpt", "route_to": "p/gpt"},
+                 {"match_prefix": "", "route_to": "p/x"},
+                 {"route_to": "p/y"},
+                 "junk"]
+        self.assertIsNone(first_tier_route(rules, "claude-sonnet"))
 
 
 class TestDefaultFallback(unittest.TestCase):

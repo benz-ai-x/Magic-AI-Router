@@ -9,6 +9,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 - **端口映射逐条启停（像远程挂载一样 per-item）**：forwards 行新增 `enabled`（缺省 true，旧配置零迁移）——停用行不进会话 `-L` 集合、不占本地端口（端口冲突检查退出，与挂载「只在用才占端口」同口径；行级形状校验保持全量）。菜单「端口映射 ▸」重排：端口摘要从隧道行标题移出（治一行塞 N 组端口的拥挤），每条转发独立成行 `8030 → 3080 · 已映射/已停用/待会话`，**点击即启停**（圆点随会话状态着色，停用灰点）；代理隧道的转发行同样可停用（守卫重建代理会话，仅连接/连接中时）。设置窗转发表加启用开关列（保存流生效——`enabled` 纳入 changedForwardTunnels 签名，翻转保存即触发守卫重连）。启停在架构上与"编辑转发行保存"同构：`-L` 集合只在会话启动时生效，全部复用既有守卫重连机器，未运行的会话绝不拉起
 - **网关僵尸态自动检出与重建（watchdog）**：`SuanpanRuntime.audit()` 健康审计原语（running 旗标 vs 端口真相的 TCP 探测，stopped/healthy/mismatch 单一归宿）+ `LifecycleRuntime.tick` 对账（挂载协调器同款纪律：主线程轻检查、自愈动作丢 worker；5s 审计节奏 × 连续 3 次失配 ≈15s 检出，合法 reload 空窗不误触；失败退避 30s）。谓词只认"running 但端口无人听"——用户显式停止与崩溃态绝不拉起。Docker 形态同谓词进程内 watchdog（30s 循环，补上 compose 无 healthcheck 的缺口）。与 v0.11.0 的停机有界修复构成纵深防御
 
+### Changed
+- **claude_code_setup 收敛（架构评审 C4）**：①tier 规则前缀命中语义归还 `suanpan/router.first_tier_route`（原 `_first_tier_rule` 镜像 router 语义——前缀知识不落第二处，CC 角色种子与 decide_route 同源）；②OpenCode/ZCode 两条 JSON 车道的 owned 槽位 plan/apply 半成品合 `_json_provider_plan/_json_provider_apply`（两份 apply 原为逐字节镜像）——行为零变化，router 侧新增测试钉住逆查询语义
+
 ### Fixed
 - **远程挂载服务器清单「N 挂载中」徽标恒为 0**：v0.10.1 把 `/api/state` 的 `nfs_states` 值升为对象 `{status,error,fixable}` 后，清单徽标计数仍按旧字符串比较——对象形状全部漏计。计数移入设置窗 LAYER 1，与状态单元格共用同一形状归一助手 `nfsStateValue`，node 测试钉住两种形状的计数。同批修复：挂载 reconcile 确认已挂载/卸载完成两条路径此前不清 `fixable`（陈旧「修复导出」标记可能附着在非异常态进 `/api/state`，现随 error 同步清除）；`/api/nfs-setup-remote` 对 `mounts:[null]` 直接 400 拒绝（此前穿透校验，`shlex.quote(None)` 在 handler 线程抛 TypeError）
 - **设置窗端口冲突预检漏 NFS 本地端口（架构评审 C5）**：JS `validateConfig` 手抄镜像 prepare 校验器时漏了 NFS 端口——NFS×转发/全局端口撞车过第一道闸、只在提交时 422 现形。现补齐同一命名空间与同口径「实际在用才占端口」（enabled 或配置了挂载；纯默认节点不占），并补 NFS 端口行级范围校验；node 测试钉住冲突双向 + 默认节点不误报 + 越界行级报

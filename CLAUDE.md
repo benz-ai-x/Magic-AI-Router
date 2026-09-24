@@ -146,9 +146,10 @@ services/ ── 服务
     Claude Code 角色映射（写 ~/.claude/settings.json，ADR-003 不变；「保存
     并同步」同时把角色表 upsert 成网关 tier 路由规则——规则=持久真相、
     env 是 CC 投影，两面同源于一次保存，drift 结构上消失；推导路径
-    roles=None 只对齐不新增）+ 多 Agent 注册表引擎（codex tomlkit
+    roles=None 只对齐不新增；tier 规则查询经 router.first_tier_route——
+    前缀语义单一归宿）+ 多 Agent 注册表引擎（codex tomlkit
     增量编辑 config.toml / opencode opencode.json models 块必写 /
-    zcode kind=anthropic）
+    zcode kind=anthropic；JSON 家族共享 owned 槽位 plan/apply 半成品）
   lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约 +
     capture_state 单投影 + _on_sp_saved 双形态 + tick 网关健康对账
     （watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建；用户
@@ -165,7 +166,7 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
   proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread
   compat.py ── 协议适配唯一归宿（ADR-010）：body 归一化（anthropic_native 旗标）+ 转换 A（Anthropic⇄OpenAI Chat 请求/响应/SSE 翻译器）
   usage_extractor.py ── SSE 用量提取
-  router.py ── 路由决策 + parse_route_target 文法所有者 + fallback_from 可感知
+  router.py ── 路由决策 + parse_route_target 文法所有者 + first_tier_route tier 规则逆查询（CC 角色种子共用前缀语义）+ fallback_from 可感知
   usage_log.py ── 追加写 JSONL + 轮转
   prewarmer.py ── 启动预热 best-effort adapter
   __main__.py ── `python3 -m suanpan` 独立启动入口
