@@ -30,9 +30,8 @@ HOP_HEADERS = frozenset({
 #                出站 base + /v1/messages（Anthropic 生态惯例：base 不含 /v1）；
 #   "openai"：   {"base_url"}，出站 base + /chat/completions（OpenAI SDK
 #                惯例：base 含版本段），认证恒 Bearer；
-#   "responses": {"base_url", "unverified"(可选)}，出站 base + /responses
-#                （Codex 直通车道），恒 Bearer；仅文档快照未实证的端点标
-#                unverified，由 /api/probe-provider 运行时探测转正。
+#   "responses": {"base_url"}，出站 base + /responses（Codex 直通
+#                车道），恒 Bearer。
 # 顶层 base_url/anthropic_native 是 anthropic 卡的兼容投影（存量消费方
 # 零迁移）；路径不合惯例的厂商端点（MiniMax chat 的
 # /v1/text/chatcompletion_v2、火山方舟的 /api/v3/messages）不进内置卡，
@@ -77,9 +76,8 @@ PROVIDER_REGISTRY = {
             "anthropic": {"base_url": "https://open.bigmodel.cn/api/anthropic",
                           "anthropic_native": True},
             "openai": {"base_url": "https://open.bigmodel.cn/api/paas/v4"},
-            # 智谱 Responses 端点仅有文档快照线索，unverified 待探测实证
-            "responses": {"base_url": "https://open.bigmodel.cn/api/v1",
-                          "unverified": True},
+            # 智谱 Responses 端点仅有文档快照线索，未经真机探测实证
+            "responses": {"base_url": "https://open.bigmodel.cn/api/v1"},
         },
         # model_usage 端点：GLM 月度官方统计（本月窗口 token 用量+调用
         # 次数）——fetch_balance 组 startTime/endTime 本月范围；(url, parser)

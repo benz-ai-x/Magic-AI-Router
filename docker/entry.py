@@ -25,6 +25,7 @@ import sys
 import time
 
 from services.suanpan_runtime import SuanpanRuntime
+from services.gateway_watchdog import GatewayWatchdog
 from mpconf.config_state import recover_pending_txn
 
 
@@ -141,21 +142,43 @@ def load_app(sp_path: str):
     return create_app(config, config_path=sp_path), config.listen_port
 
 
-def _watchdog_loop(runner, interval=30.0):
-    """容器内网关健康对账：audit 失配（running 但端口无人听）即重建。
+def _watchdog_loop(runner):
+    """容器内网关健康对账：装配共享策略（services/gateway_watchdog）。
 
-    与 macOS 版 LifecycleRuntime._reconcile_gateway 同一谓词
-    （SuanpanRuntime.audit 单一归宿），容器形态无需防抖参数——主线程
-    串行循环天然互斥，interval 30s 即节奏与退避。
+    与 macOS 版同一策略、同一默认参数（5s 审计节奏 × 3 连失配 ≈15s
+    检出 + 30s 失败退避）——此前此处是丢了阈值与退避的简化手抄：
+    单采样落进合法 reload 的 3-5s 端口空窗即误判僵尸态，start() 内含
+    stop()，与 reload 线程竞态。主线程内联执行自愈（容器主循环无
+    并发面）。entry 只装配——策略体抄写视为回归（CONTEXT.md 部署形态）。
     """
+    wd = GatewayWatchdog(
+        # 惰性绑定：属性解析推迟到首拍审计（与旧循环的调用时机一致，
+        # serve 测试的 FakeRunner 在首个 sleep 即中断）
+        audit_fn=lambda: runner.audit(),
+        start_fn=runner.start,
+        error_fn=lambda: runner.error,
+        log=_StderrLog(),
+    )
     while True:
-        time.sleep(interval)
-        if runner.audit() == "mismatch":
-            print("watchdog: 网关僵尸态（running 但端口无人听），重建",
-                  file=sys.stderr, flush=True)
-            if not runner.start():
-                print(f"watchdog: 重建失败：{runner.error[:200]}",
-                      file=sys.stderr, flush=True)
+        time.sleep(1.0)
+        wd.tick()
+
+
+class _StderrLog:
+    """装配 adapter：策略模块的 logging 面落到容器 stderr（print，与
+    entry 其余输出同一通道；未配置 handler 时 INFO 级会被 lastResort
+    丢弃，不该静默）。"""
+
+    @staticmethod
+    def _emit(msg, *args):
+        text = msg % args if args else msg
+        print("watchdog: " + text, file=sys.stderr, flush=True)
+
+    def info(self, msg, *args):
+        self._emit(msg, *args)
+
+    def warning(self, msg, *args):
+        self._emit(msg, *args)
 
 
 def run_serve() -> int:
@@ -189,10 +212,11 @@ def run_serve() -> int:
         print(f"配置页面: {cfg.url}  Bearer token: {cfg.token}", flush=True)
     else:
         print("config-ui 启动失败（9528 占用？），仅跑网关", file=sys.stderr)
-    # 主线程阻塞保活 + 30s 网关对账（watchdog：compose 无 healthcheck，
-    # 进程活着但网关线程死了时容器不会重启——进程内自愈补上这个缺口）
+    # 主线程阻塞保活 + 网关对账（watchdog：compose 无 healthcheck，
+    # 进程活着但网关线程死了时容器不会重启——进程内自愈补上这个缺口；
+    # 策略与 macOS 版共享单一归宿，阈值吸收合法 reload 空窗）
     try:
-        _watchdog_loop(runner, interval=30.0)
+        _watchdog_loop(runner)
     except KeyboardInterrupt:
         runner.stop()
         cfg.stop()

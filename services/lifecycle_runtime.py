@@ -32,6 +32,7 @@ from capture.capture import CaptureMonitor
 from capture.capture_controller import CaptureController
 from services.suanpan_runtime import SuanpanRuntime
 from services.config_server import ConfigServer
+from services.gateway_watchdog import GatewayWatchdog
 from sysctl.sys_proxy_controller import SystemProxyController
 from services import sp_config
 from shared import netloc
@@ -55,10 +56,10 @@ def config_server_wanted(window_open, api_enabled, copy_latch):
     return bool(window_open or api_enabled or copy_latch)
 
 
-# ── 网关健康对账（watchdog）参数 ────────────────────────────────
-_GW_AUDIT_EVERY = 5      # 审计节奏：每 5 拍（1s tick → 5s）
-_GW_MISS_THRESHOLD = 3   # 连续失配阈值：≈15s 检出，合法 reload 空窗 3-5s 不误触
-_GW_HEAL_BACKOFF = 30    # 自愈失败退避（对齐 MOUNT_RETRY_BACKOFF 先例）
+# ── 网关健康对账（watchdog）─────────────────────────────────────
+# 策略（节奏/阈值/退避/忙位）单一归宿在 services/gateway_watchdog——
+# Docker 形态喂同一策略（此前两份手抄、参数漂移埋下 reload 竞态）。
+# macOS 侧执行纪律：1s tick 主线程只做轻检查，重建动作丢 worker。
 
 
 
@@ -136,10 +137,15 @@ class LifecycleRuntime:
         self._clock = clock
         self._gw_workers = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="GatewayHeal")
-        self._gw_tick = 0        # 计拍（每 _GW_AUDIT_EVERY 拍审计一次）
-        self._gw_misses = 0      # 连续失配计数
-        self._gw_healing = False  # 自愈 worker 忙位
-        self._gw_next_heal = 0.0  # 失败退避截止（clock 基准）
+        self._gw = GatewayWatchdog(
+            # 惰性绑定：测试可只换 _gw/_suanpan 之一（对象图不因构造期
+            # 方法绑定而刚性）
+            audit_fn=lambda: self._suanpan.audit(),
+            start_fn=self._suanpan.start,
+            error_fn=lambda: self._suanpan.error,
+            clock=clock,
+            submit=self._gw_workers.submit,
+        )
 
     # ── 直属子模块的合法暴露面（app.py 菜单/桥接需要直接引用）──────
     @property
@@ -226,49 +232,7 @@ class LifecycleRuntime:
         if self._capture_ctrl.enabled:
             self._capture.check(capture_port)
         self._sys_proxy.sync()
-        self._reconcile_gateway()
-
-    def _reconcile_gateway(self):
-        """网关健康对账（watchdog）：running 旗标 vs 端口真相（挂载
-        协调器同款 reconcile 纪律——主线程只做轻检查，动作丢 worker）。
-
-        谓词只认一种失配：running 且端口无人听（僵尸态）。用户显式
-        停止/崩溃（stopped）绝不拉起；合法 reload 的端口空窗由
-        「阈值连续失配」吸收。失败退避防死循环重试。
-        """
-        self._gw_tick += 1
-        if self._gw_tick % _GW_AUDIT_EVERY != 0:
-            return
-        if self._gw_healing:
-            return
-        verdict = self._suanpan.audit()
-        if verdict != "mismatch":
-            self._gw_misses = 0
-            return
-        self._gw_misses += 1
-        if self._gw_misses < _GW_MISS_THRESHOLD:
-            return
-        if self._clock() < self._gw_next_heal:
-            return
-        self._gw_healing = True
-        self._gw_workers.submit(self._gateway_heal_job)
-
-    def _gateway_heal_job(self):
-        """worker 线程：重建网关（start 内含僵尸 stop + 3s join，
-        绝不在主线程 tick 里跑）。忙位/计数复位在 finally 单出口。"""
-        try:
-            ok = self._suanpan.start()
-            if ok:
-                logger.info("网关对账自愈：检测到僵尸态（running 但端口"
-                            "无人听），已重建")
-            else:
-                logger.warning("网关对账自愈失败：%s",
-                               (self._suanpan.error or "未知原因")[:160])
-            self._gw_next_heal = 0.0 if ok else \
-                self._clock() + _GW_HEAL_BACKOFF
-        finally:
-            self._gw_misses = 0
-            self._gw_healing = False
+        self._gw.tick()
 
     def sync_sleep(self, ssh_status, paused, prevent_sleep_flag):
         """Converge caffeinate assertion (edge-triggered)."""

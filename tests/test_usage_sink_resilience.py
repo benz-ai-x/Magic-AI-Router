@@ -31,12 +31,17 @@ class TestWriteNeverBreaksResponse(unittest.TestCase):
             self.assertEqual(log.write_failures, 1, "失败指标可观测")
 
     def test_502_response_unchanged_by_write_failure(self):
-        from suanpan.proxy import make_502
+        from types import SimpleNamespace
+        from suanpan.proxy import _LaneCtx, make_502
         import json as _json
+        request = SimpleNamespace(headers={"user-agent": "pytest"})
+        decision = SimpleNamespace(provider="p", target_model="m2",
+                                   scenario="s")
+        ctx = _LaneCtx(request, decision, "m", 0.0)
         with tempfile.TemporaryDirectory() as d:
             log = UsageLogger(enabled=True, path=str(Path(d) / "u.jsonl"))
             with patch("suanpan.usage_log.os.open", side_effect=OSError("read-only")):
-                resp = make_502("p", "m", "m2", "s", "err", 0.0, log)
+                resp = make_502(ctx, "err", log)
         self.assertEqual(resp.status_code, 502,
                          "写失败不得遮蔽 502 状态")
         body = _json.loads(resp.body.decode())

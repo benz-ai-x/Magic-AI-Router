@@ -406,6 +406,19 @@ def _plan(roles=None):
     }
 
 
+def _backup_decision(path: str, exists: bool, first_write: bool) -> dict:
+    """备份三态（CC 与多 Agent 预览共用单一归宿）：目标不存在 = 新建
+    无需备份；首次接入 = 写前备份 .bak；此后 = 保留首次备份不覆盖。"""
+    if not exists:
+        return {"will": False, "path": None,
+                "note": "目标文件不存在，将新建（无需备份）"}
+    if first_write:
+        return {"will": True, "path": path + ".bak",
+                "note": "首次接入网关：写入前当前文件先备份为 .bak（之后的重复同步不再覆盖该备份）"}
+    return {"will": False, "path": path + ".bak",
+            "note": "已指向本网关；保留首次同步前创建的 .bak 备份不变"}
+
+
 def preview(roles=None):
     """Read-only dry run of setup(): target path, per-key env diff and the
     backup decision — without touching disk. Backs the settings-window
@@ -420,15 +433,8 @@ def preview(roles=None):
                     "gateway_url": plan["gateway_url"],
                     "backup": {"will": False, "path": None,
                                "note": "已指向本网关且映射与路由规则一致，重复同步不会写入，也不覆盖既有备份"}}
-        if not plan["exists"]:
-            backup = {"will": False, "path": None,
-                      "note": "目标文件不存在，将新建（无需备份）"}
-        elif plan["first_write"]:
-            backup = {"will": True, "path": plan["settings_path"] + ".bak",
-                      "note": "首次接入网关：写入前当前文件先备份为 .bak（之后的重复同步不再覆盖该备份）"}
-        else:
-            backup = {"will": False, "path": plan["settings_path"] + ".bak",
-                      "note": "已指向本网关；保留首次同步前创建的 .bak 备份不变"}
+        backup = _backup_decision(plan["settings_path"], plan["exists"],
+                                  plan["first_write"])
         # preview() 对外掩码 token（_plan 保留实值供防漂移守卫；UI/diff
         # 永不回显明文——决策 A×4 的掩码契约）
         masked = [({**c, "new": _mask_old(c["key"], c["new"])}
@@ -752,10 +758,6 @@ def _opencode_plan(options: dict | None) -> dict:
         f"{len(models)} 个模型，apiKey={_masked(token)}")
 
 
-def _opencode_apply(plan: dict) -> None:
-    _json_provider_apply(plan)
-
-
 def _opencode_synced() -> bool:
     path = config_store.get_path("opencode_config")
     if not path or not os.path.exists(path):
@@ -804,10 +806,6 @@ def _zcode_plan(options: dict | None) -> dict:
         f"{len(target['models'])} 个模型，apiKey={_masked(token)}")
 
 
-def _zcode_apply(plan: dict) -> None:
-    _json_provider_apply(plan)
-
-
 def _zcode_synced() -> bool:
     path = config_store.get_path("zcode_config")
     if not path or not os.path.exists(path):
@@ -833,13 +831,13 @@ _AGENT_REGISTRY = {
     "opencode": {
         "label": "OpenCode", "binary": "opencode",
         "dir": "~/.config/opencode", "paths_key": "opencode_config",
-        "plan": _opencode_plan, "apply": _opencode_apply,
+        "plan": _opencode_plan, "apply": _json_provider_apply,
         "synced": _opencode_synced, "protocol_hint": "anthropic|openai",
     },
     "zcode": {
         "label": "ZCode", "binary": "zcode", "dir": "~/.zcode",
         "paths_key": "zcode_config",
-        "plan": _zcode_plan, "apply": _zcode_apply, "synced": _zcode_synced,
+        "plan": _zcode_plan, "apply": _json_provider_apply, "synced": _zcode_synced,
         "protocol_hint": "anthropic",
     },
 }
@@ -887,14 +885,8 @@ def agent_preview(agent: str, options: dict | None = None) -> dict:
                 "gateway_url": _gateway_url(),
                 "backup": {"will": False, "path": None,
                            "note": "已指向本网关且配置一致，无需重复配置"}}
-    if not plan["exists"]:
-        backup = {"will": False, "path": None, "note": "目标文件不存在，将新建（无需备份）"}
-    elif plan["first_write"]:
-        backup = {"will": True, "path": plan["path"] + ".bak",
-                  "note": "首次接入网关：写入前当前文件先备份为 .bak（重复同步不再覆盖）"}
-    else:
-        backup = {"will": False, "path": plan["path"] + ".bak",
-                  "note": "已指向本网关；保留首次接入前创建的 .bak 备份不变"}
+    backup = _backup_decision(plan["path"], plan["exists"],
+                              plan["first_write"])
     return {"ok": True, "already": False, "target": plan["path"],
             "exists": plan["exists"], "gateway_url": _gateway_url(),
             "changes": plan["changes"], "backup": backup}

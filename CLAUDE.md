@@ -164,6 +164,10 @@ services/ ── 服务
     capture_state 单投影 + _on_sp_saved 双形态 + tick 网关健康对账
     （watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建；用户
     停止/崩溃绝不拉起，防抖=连续失配阈值+退避）
+  gateway_watchdog.py ── 网关对账策略单一归宿（R5）：节奏/连失配阈值/
+    失败退避/忙位参数化——LifecycleRuntime 1s tick 喂拍（worker 提交）
+    与 docker 主循环（内联执行）两 adapter 共用；谓词仍是
+    suanpan_runtime.audit
   authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围，含来源
     Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）；
@@ -174,7 +178,7 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
   validate.py ── sp 分域校验器（数值 + schema + 供应商 URL + 路由引用；经 prepare lazy import 保持无网关依赖宿主降级）
   main.py ── FastAPI app factory + 路由 handler
   middleware.py ── APIKey（常量时间比较）+ BodyLimit 中间件
-  proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread + 车道共用骨架（_LaneCtx/_send_upstream 幂等探针/_reject_5xx/_lane_out_headers/_stream_response——四车道发送纪律单一归宿）
+  proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread + 车道共用骨架（_LaneCtx/_send_upstream 幂等探针/_send_lane 发送前置块含 make_502 wire 塑形/_reject_5xx/_lane_out_headers/_stream_response——四车道发送纪律单一归宿）
   compat.py ── 协议适配唯一归宿（ADR-010）：body 归一化（anthropic_native 旗标）+ 转换 A（Anthropic⇄OpenAI Chat 请求/响应/SSE 翻译器）
   usage_extractor.py ── SSE 用量提取
   router.py ── 路由决策 + parse_route_target 文法所有者 + first_tier_route tier 规则逆查询（CC 角色种子共用前缀语义）+ fallback_from 可感知

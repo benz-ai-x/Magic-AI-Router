@@ -83,7 +83,7 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 ### 服务生命周期（LifecycleRuntime）
 
-后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内；tick 网关健康对账（watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建，用户停止/崩溃绝不拉起）。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。:9528 持有者（设置窗/复制指令闩锁/常驻开关）经 app 的 `_set_config_holders` 唯一写口变更即收敛；config_server 的 API 面是路由表 dispatch（一个端点一行声明，index 隧道解析 `_saved_tunnel_by_index` 单一归宿）。
+后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内；tick 网关健康对账（watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建，用户停止/崩溃绝不拉起）——对账**策略**（节奏/连失配阈值/失败退避/忙位）单一归宿在 `services/gateway_watchdog.GatewayWatchdog`，Docker 形态喂同一策略（R5：此前容器侧手抄丢了阈值，合法 reload 的端口空窗会误判僵尸态触发 stop/start 竞态）。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。:9528 持有者（设置窗/复制指令闩锁/常驻开关）经 app 的 `_set_config_holders` 唯一写口变更即收敛；config_server 的 API 面是路由表 dispatch（一个端点一行声明，index 隧道解析 `_saved_tunnel_by_index` 单一归宿）。
 
 ### 认证出站（AuthenticatedHttpClient）
 
@@ -117,11 +117,11 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 ### 部署形态（Deployment Form）
 
-macOS 菜单栏壳与 Docker 容器两种形态共享同一批 `services/` 模块；形态差异**全部是构造参数**，永不复制实现：`ConfigServer(bind_host, token)`（默认 127.0.0.1 + 自造随机 token；容器传 0.0.0.0 + 配置卷 local_client_token）、`SuanpanRuntime(bind_host)`（缺省取配置监听地址 + 强制回环守卫；容器传 0.0.0.0，守卫不适用——信任边界=宿主机端口映射）。`docker/entry.py` 只做装配（`redirect_paths` → `make_config_server` / `SuanpanRuntime`），掏私有符号或抄写函数体都视为回归。`shared/keychain` 的 Security 为可选导入（缺失即 None + 全吞异常兜底），Linux import 链无需 stub。
+macOS 菜单栏壳与 Docker 容器两种形态共享同一批 `services/` 模块；形态差异**全部是构造参数**，永不复制实现：`ConfigServer(bind_host, token)`（默认 127.0.0.1 + 自造随机 token；容器传 0.0.0.0 + 配置卷 local_client_token）、`SuanpanRuntime(bind_host)`（缺省取配置监听地址 + 强制回环守卫；容器传 0.0.0.0，守卫不适用——信任边界=宿主机端口映射）。`docker/entry.py` 只做装配（`redirect_paths` → `make_config_server` / `SuanpanRuntime`，网关对账喂 `services/gateway_watchdog` 共享策略——两形态同参，主循环内联执行自愈），掏私有符号或抄写函数体都视为回归。`shared/keychain` 的 Security 为可选导入（缺失即 None + 全吞异常兜底），Linux import 链无需 stub。
 
 ### Suanpan（算盘）
 
-AI 路由产品。三协议入站（ADR-010：Anthropic Messages / OpenAI Chat / Responses[Codex]），按模型规则路由转发到多家 LLM 后端——同协议直通优先、失配才经 compat 转换器。独立运行在自己的端口上，不经过 SSH 隧道。出站四车道（anthropic 主路径 / 转换 A / chat 直通 / responses 直通）共享发送纪律单一归宿（`proxy.py` 的 `_LaneCtx`/`_send_upstream` 幂等探针/`_reject_5xx`/`_lane_out_headers`/`_stream_response`），各车道只剩请求整备/URL/错误体形状/响应塑形的真差异。
+AI 路由产品。三协议入站（ADR-010：Anthropic Messages / OpenAI Chat / Responses[Codex]），按模型规则路由转发到多家 LLM 后端——同协议直通优先、失配才经 compat 转换器。独立运行在自己的端口上，不经过 SSH 隧道。出站四车道（anthropic 主路径 / 转换 A / chat 直通 / responses 直通）共享发送纪律单一归宿（`proxy.py` 的 `_LaneCtx`/`_send_upstream` 幂等探针/`_send_lane` 发送前置块（含 `make_502` 的 wire 塑形——错误体按入站协议取 anthropic 平铺或 openai error.message 形状）/`_reject_5xx`/`_lane_out_headers`/`_stream_response`），各车道只剩请求整备/URL/错误体形状/响应塑形的真差异。
 
 ### 供应商（Provider）
 

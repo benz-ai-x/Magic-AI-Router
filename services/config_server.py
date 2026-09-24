@@ -523,14 +523,9 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(forward, dict):
             self._json(400, {"ok": False, "error": "无效的转发行"})
             return
-        tunnel = data.get("tunnel")
-        if tunnel is None:
-            tunnel, error = self._saved_tunnel_by_index(data.get("index"))
-            if error:
-                self._json(400, {"ok": False, "error": error})
-                return
-        if not isinstance(tunnel, dict):
-            self._json(400, {"ok": False, "error": "无效的隧道"})
+        tunnel, error = self._resolve_tunnel(data)
+        if error:
+            self._json(400, {"ok": False, "error": error})
             return
         self._json(200, test_forward(tunnel, forward))
 
