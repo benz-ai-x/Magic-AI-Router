@@ -24,7 +24,7 @@ Magic AI Router — macOS 菜单栏应用（壳），承载两个独立产品：
 
 ## Tech Stack
 
-Python ≥3.9（自有代码下界；**打包工具链因 mitmproxy ≥12 需构建解释器 ≥3.12**，见 ADR-001）+ rumps（菜单栏 UI）+ asyncio（HTTP→SOCKS5 代理）+ PyObjC objc/AppKit/Foundation（WKWebView 设置窗 / CA 信任引导窗 `ca_trust.py` / 日志窗 `log_window.py`）+ Pillow（图标生成）+ mitmproxy 12.2.3（抓包模式 TLS MITM）+ FastAPI + uvicorn + httpx + pydantic（Suanpan AI 路由网关）；PyInstaller 打包 `.app`（`--windowed` + `LSUIElement=true`）；SSH 隧道经系统 `ssh` / `sshpass`（密码认证）；SSH 密码走 macOS Keychain。详见 ADR-000 + ADR-001。
+Python ≥3.9（自有代码下界；**打包工具链因 mitmproxy ≥12 需构建解释器 ≥3.12**，见 ADR-001）+ rumps（菜单栏 UI）+ asyncio（HTTP→SOCKS5 代理）+ PyObjC objc/AppKit/Foundation（WKWebView 设置窗 / CA 信任引导窗 `ca_trust.py` / 日志窗 `log_window.py`）+ Pillow（图标生成）+ mitmproxy 12.2.3（抓包模式 TLS MITM）+ FastAPI + uvicorn + httpx + pydantic（Suanpan AI 路由网关）+ tomlkit（Codex config.toml 增量编辑，ADR-010 M4——缺席时 Codex 车道提示安装，其余 Agent 不受影响）；PyInstaller 打包 `.app`（`--windowed` + `LSUIElement=true`）；SSH 隧道经系统 `ssh` / `sshpass`（密码认证）；SSH 密码走 macOS Keychain。详见 ADR-000 + ADR-001。
 
 ## 命令
 
@@ -86,7 +86,8 @@ mpconf/ ── 配置栈
   validate.py ── mp 分域校验器（顶层数值 + 隧道级行[forwards/nfs] + 全局端口/挂载点冲突；prepare 的校验半边）
   config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
     分域校验 orchestrator / commit（journal+MP+SP+Keychain+回调次序）/
-    recover 幂等重放 / update_mp 菜单写径
+    recover 幂等重放 / update_mp 菜单写径；READONLY_DECORATED_FIELDS
+    只读装饰剥除名单（运行态半边派生自 config.RUNTIME_DECORATED_FIELDS）
   local_token.py ── 本地客户端 token（掩码布尔契约，明文不出 UI）
 
 tunnel/ ── SSH 隧道核心
@@ -203,7 +204,8 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
 **硬约束（违反即出错）**
 - PyObjC 方法名不能以单下划线开头（会被当成 ObjC selector）
 - Config server（:9528）和 AI 路由网关（:9527）是两个独立端口，不可合并
-- 测试口径：`python3 -m pytest --cov`（omit 清单见 `.coveragerc`）+ `node --test tests/js/*.test.mjs`（glob 形式——node ≥26 目录模式报 MODULE_NOT_FOUND）；覆盖率数字以运行为准，不在此缓存
+- 测试口径：`python3 -m pytest --cov`（omit 清单见 `.coveragerc`）+ `node --test tests/js/*.test.mjs`（glob 形式——node ≥26 目录模式报 MODULE_NOT_FOUND；`validate_mirror.mjs` 非 .test 文件，由 pytest 的跨语言报警驱动）；覆盖率数字以运行为准，不在此缓存
+- 校验镜像纪律：设置窗 JS `validateConfig` 手抄镜像 Python 分域校验器（双层拦既定约定）——镜像族「同错同净」与单侧族白名单由 `tests/test_validation_mirror.py` 钉住（node 桥缺席自动 skip）；**新增单侧校验规则必须去白名单挂号**
 
 **形态事实（环境即真源，改代码即改）**
 - 菜单栏状态图标用 `MenubarIcon.png` 染色（绿=已连接 / 黄=连接中 / 灰=未连接）
