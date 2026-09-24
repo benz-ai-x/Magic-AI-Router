@@ -105,11 +105,19 @@ query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `
 | GET | `/api/usage?range=today\|7d\|month\|all` | 聚合本地用量日志；缺省 `all`，`month` = CST 自然月；返回总览、供应商、CST 每日与路由来源统计 |
 | POST | `/api/fetch-models` | 拉取供应商模型列表（body: `{"provider": "GLM_MAX"}`） |
 | POST | `/api/test-provider` | 测试供应商连通性（body: `{"provider": "GLM_MAX", "model": "glm-5.2"}`） |
+| GET | `/api/provider-templates` | 供应商快速模板单一真源（内置厂商卡：per-协议端点矩阵 / 认证头 / 原生协议位 + `custom` 恒在）——快速接入向导的数据面 |
+| POST | `/api/test-tunnel` | 测试已保存隧道的 SSH 可达性（body: `{"index": 0}`；一次性探针与真实隧道同一调用策略，未信任主机快速失败） |
 | POST | `/api/test-forward` | 测试一条端口转发（body: `{"tunnel": {…隧道字段…}, "forward": {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000}}`；一次性 `ssh -W` 探测表单当前值——隧道与转发都无需先保存，返回 `{"ok", "latency_ms"?, "error"?}`。兼容旧载荷 `{"index": 0, "forward": …}` 按已保存隧道解析） |
+| POST | `/api/nfs-check-remote` | 探测远程 NFS 状态（body: `{"tunnel": {…}}` 或 `{"index": 0}`；只读——发行版/已装/监听/导出表） |
+| POST | `/api/nfs-setup-remote` | 远程一键安装 + 配置导出（幂等；body: `{"tunnel"|"index", "mounts": ["/data"], "squash"?, "sudo_password"?}`——显式 sudo 密码成功后落 Keychain 复用） |
 | POST | `/api/probe-provider` | **ADR-010 端点三级探测**（免费 GET 语义）：body = provider 形态 dict（`base_url` 必填 + 可选 `api_key`/`auth_header`）→ 返回 anthropic/openai/responses 三协议各自的 `{reachable, auth_ok, latency_ms, models, error}` |
 | GET | `/api/agents` | **ADR-010 Agent 检测**：已装 Agent（Claude Code/Codex/OpenCode/ZCode）+ 各自同步态 + 推荐协议 |
 | POST | `/api/agent-setup-preview` | 预览某 Agent 的配置写入 diff（body: `{"agent": "codex", "options": {"model": "gpt-5.2"}}`；opencode 可传 `protocol`/`models`） |
 | POST | `/api/setup-agent` | 写入某 Agent 配置（幂等，首写备份 .bak，写入的是本地网关凭证而非厂商真 Key） |
+| GET | `/api/cc-default-roles` | Claude Code 角色表种子（`roles` + 表元数据 + `synced`/`drift`；`?seed=rules` 强制按路由规则推导） |
+| POST | `/api/cc-sync-preview` | CC「保存并同步」预览（body: `{"roles": {…}}` 或省略按规则推导；返回 env diff + 网关 tier 规则变更 + 备份决策；token 恒掩码） |
+| POST | `/api/setup-claude-code` | 写入 `~/.claude/settings.json`（角色→模型映射 + 本地网关凭证；首写备份 .bak）并同时 upsert 网关 tier 路由规则——规则=持久真相、env 是 CC 投影，两面同源于一次保存 |
+| POST | `/api/capture-clean` | 清空抓包目录（保留目录本身），返回 `{"ok", "removed"}` |
 
 ### 示例：读取当前配置
 
