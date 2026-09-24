@@ -746,8 +746,6 @@ def _opencode_plan(options: dict | None) -> dict:
               "options": {"baseURL": base_url, "apiKey": token},
               "models": models}
 
-    old_tbl = _old_provider_table(cfg)
-
     return _json_provider_plan(
         "opencode", path, exists, cfg, target,
         f"npm={npm}，baseURL={base_url}，"
@@ -799,8 +797,6 @@ def _zcode_plan(options: dict | None) -> dict:
         "enabled": True, "source": "custom",
         "models": {m: {"name": m} for m in models if isinstance(m, str)},
     }
-
-    old_tbl = _old_provider_table(cfg)
 
     return _json_provider_plan(
         "zcode", path, exists, cfg, target,
