@@ -118,17 +118,19 @@ class CaptureController:
         return trusted
 
     def menu_title(self):
-        """Derive the capture menu title from state + a live CA-trust check."""
+        """Derive the capture menu title from state + a live CA-trust check.
+
+        动词式（UX 批次：开关范式统一）——标题是点按将发生的动作。"""
         s = self._monitor.status
         if s == "error":
-            return "抓包模式：异常"
+            return "开启抓包模式（重试）"
         if self._enabled and s == "running":
-            return "抓包模式：开"
+            return "关闭抓包模式"
         if self._enabled:
-            return "抓包模式：启动中…"
+            return "关闭抓包模式（启动中…）"
         if not self._ca_trusted():
-            return "抓包模式：关（需信任证书）"
-        return "抓包模式：关"
+            return "开启抓包模式（需先信任证书）"
+        return "开启抓包模式"
 
     def error_hint(self):
         """Detail line for a crashed mitmdump; None when not applicable."""

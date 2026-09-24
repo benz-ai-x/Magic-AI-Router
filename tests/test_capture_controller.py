@@ -138,25 +138,25 @@ class TestMenuTitle(unittest.TestCase):
     def test_running_shows_on(self):
         ctrl = _ctrl(status="running")
         ctrl._enabled = True
-        self.assertEqual(ctrl.menu_title(), "抓包模式：开")
+        self.assertEqual(ctrl.menu_title(), "关闭抓包模式")
 
     def test_starting_shows_transitional(self):
         ctrl = _ctrl(status="starting")
         ctrl._enabled = True
-        self.assertEqual(ctrl.menu_title(), "抓包模式：启动中…")
+        self.assertEqual(ctrl.menu_title(), "关闭抓包模式（启动中…）")
 
     def test_error_shows_warning_even_if_enabled(self):
         ctrl = _ctrl(status="error")
         ctrl._enabled = True
-        self.assertEqual(ctrl.menu_title(), "抓包模式：异常")
+        self.assertEqual(ctrl.menu_title(), "开启抓包模式（重试）")
 
     def test_off_and_ca_trusted_shows_plain_off(self):
         with patch("capture.ca_trust.is_trusted", return_value=True):
-            self.assertEqual(_ctrl(status="stopped").menu_title(), "抓包模式：关")
+            self.assertEqual(_ctrl(status="stopped").menu_title(), "开启抓包模式")
 
     def test_off_and_ca_not_trusted_shows_hint(self):
         with patch("capture.ca_trust.is_trusted", return_value=False):
-            self.assertEqual(_ctrl(status="stopped").menu_title(), "抓包模式：关（需信任证书）")
+            self.assertEqual(_ctrl(status="stopped").menu_title(), "开启抓包模式（需先信任证书）")
 
     def test_does_not_check_ca_trust_while_enabled(self):
         ctrl = _ctrl(status="running")
@@ -194,9 +194,9 @@ class TestTrustCaching(unittest.TestCase):
         with patch("capture.ca_trust.is_trusted", side_effect=[False, True]) as is_trusted, \
              patch.object(capture_controller.time, "monotonic") as mono:
             mono.return_value = 0.0
-            self.assertEqual(ctrl.menu_title(), "抓包模式：关（需信任证书）")
+            self.assertEqual(ctrl.menu_title(), "开启抓包模式（需先信任证书）")
             mono.return_value = capture_controller.TRUST_CACHE_TTL + 1
-            self.assertEqual(ctrl.menu_title(), "抓包模式：关")
+            self.assertEqual(ctrl.menu_title(), "开启抓包模式")
         self.assertEqual(is_trusted.call_count, 2)
 
     def test_enable_invalidates_cache(self):
