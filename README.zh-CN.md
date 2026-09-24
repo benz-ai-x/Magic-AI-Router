@@ -13,11 +13,11 @@
 
 ![菜单栏](assets/docs/menu-bar-v091.png)
 
-路由器只管转发，代理只搬字节——**Magic AI Router 把闭环装进一个原生 macOS 应用**：接入层（你自己的 SSH 隧道）、路由层（Anthropic 兼容的本地网关）、观测层（AI 流量 TLS 解密）三层齐备。改一条路由规则，**同一应用里**就能看到真实的成本、延迟与返回变化。密钥永不出你的机器。
+路由器只管转发，代理只搬字节——**Magic AI Router 把闭环装进一个原生 macOS 应用**：接入层（你自己的 SSH 隧道）、路由层（讲你 Agent 协议的本地网关——Anthropic / OpenAI Chat / Responses）、观测层（AI 流量 TLS 解密）三层齐备。改一条路由规则，**同一应用里**就能看到真实的成本、延迟与返回变化。密钥永不出你的机器。
 
 | 层 | 你得到什么 |
 |---|---|
-| 🧮 **路由** | 本地网关（`:9527`）讲 **Anthropic Messages API**——Claude Code 指过来，按模型前缀路由到 **GLM / DeepSeek / Kimi / Qwen / Anthropic** |
+| 🧮 **路由** | 本地网关（`:9527`）三协议入站——**Anthropic Messages / OpenAI Chat / Responses**：Claude Code、Codex、OpenCode、ZCode 指过来，**一个 Key 配好全部 Agent**，按模型前缀路由到 **GLM / DeepSeek / Kimi / Qwen / OpenAI / Anthropic** 等 |
 | 🔗 **接入** | 经你自己服务器的 SSH SOCKS5 代理（`:8888`）+ **多隧道并行 `ssh -L` 端口转发**，全部菜单栏启停 |
 | 🔍 **验证** | TLS 抓包解密 AI 调用（OpenAI、Anthropic、DeepSeek、豆包、Qwen、MiniMax）落可读 JSONL + 分供应商用量、缓存命中率与余额统计 |
 
@@ -86,23 +86,23 @@ bash docker/suanpan.sh up      # 网关 :9527 + Web 配置 :9528
 bash docker/suanpan.sh sync    # 写入 ~/.claude/settings.json 接好 Claude Code
 ```
 
-macOS 首次运行：偏好设置 → **代理 → 隧道** 填 SSH 信息 → 菜单 **代 理 ▸ 连接代理** → 浏览器代理指 `127.0.0.1:8888`；在 **端口映射 ▸** 选另一条隧道把远程端口映射到本机。密码认证需先装一次 `sshpass`（`brew install hudochenkov/sshpass/sshpass`）。
+macOS 首次运行：偏好设置 → **代理 → 隧道** 填 SSH 信息 → 菜单 **代 理 ▸ 连接代理** → 浏览器代理指 `127.0.0.1:8888`；在 **端口映射 ▸** 把远程端口逐条映射到本机（行内点击即启停）。密码认证需先装一次 `sshpass`（`brew install hudochenkov/sshpass/sshpass`）。
 
 ## 里面有什么
 
 ### 🧮 算盘 — AI 路由网关
 
-- **供应商**——任何 Anthropic Messages 兼容端点；API Key 内联 / 环境变量 / 自定义认证头
+- **供应商**——GLM/DeepSeek/Kimi/Qwen/OpenAI/Anthropic/OpenRouter/硅基流动/火山方舟内置端点卡（每厂商 anthropic/openai/responses 三协议矩阵 + 认证头 + 余额语法），自定义端点随意加；API Key 内联 / 环境变量 / 自定义认证头
 - **路由**——前缀规则 → 默认路由；`供应商/模型` 内联覆盖；`<SUBAGENT-MODEL>` 子代理标签；显式误投大声回落（`x-suanpan-fallback` 头），绝不静默
 - **感知 Prompt 缓存**——`anthropic_native` 供应商保留 `cache_control`，上游缓存继续生效；统计页跟踪命中率
-- **流式**——SSE 全透传 + 用量提取；只做安全重试（非幂等请求绝不重放）
+- **协议与流式**——同协议直通优先、失配自动转换（Anthropic⇄OpenAI Chat 全量翻译含 SSE 流式）；用量提取四车道一致；只做安全重试（非幂等请求绝不重放）
 - **用量与余额**——JSONL 用量日志，今日/7天/月/全量按供应商与路由来源聚合；余额/配额面板
-- **Claude Code 同步**——角色（主线程/子代理/规划…）映射到模型，一键写入 `~/.claude/settings.json`
+- **Agent 配置引擎**——**一个 Key 配好全部 Agent**：Claude Code（角色映射到模型，写 `~/.claude/settings.json`）/ Codex（增量编辑 `config.toml`）/ OpenCode / ZCode；各 Agent 里只写本地网关凭证，厂商 Key 永不落 Agent 配置；「保存并同步」同时把角色表 upsert 成网关 tier 路由规则（规则=持久真相、env 是投影）
 
 ### 🔗 Magic Proxy — SSH 隧道 + 端口转发
 
 - asyncio HTTP→SOCKS5 代理，逐请求归属绑定（keep-alive 安全、CONNECT、chunked）
-- **v0.9 多活**：一条代理隧道（`-D`）+ 任意多条纯转发隧道（`-L`）并行——服务器 A 当代理、服务器 B 映射端口到 `127.0.0.1`；独立重试、独立 host-key 处理、`forward_autostart` 随启动恢复
+- **v0.9 多活**：一条代理隧道（`-D`）+ 任意多条纯转发隧道（`-L`）并行——服务器 A 当代理、服务器 B 映射端口到 `127.0.0.1`；独立重试、独立 host-key 处理、`forward_autostart` 随启动恢复；**转发行逐条点击启停**（停用不占端口，未运行的会话绝不拉起）
 - 每条规则一键 SSH 可达性测试（未保存的值也能测）
 - 密钥或密码认证（`sshpass`；密码只存 macOS 钥匙串，管道注入——绝不出现在 `argv`/`ps`）
 - TOFU 主机密钥 pinning；退避封顶 60s 永不放弃；唤醒即重连（约 5 秒）；事务式系统代理管理；Chromium 应用 `--proxy-server` 单独走代理
@@ -137,6 +137,9 @@ MIT 开源，路由到**你自己的**供应商账号。密钥存 `~/.suanpan.ya
 **和普通代理/普通路由器有什么区别？**
 代理搬字节但不会路由；路由器转发但看不见流量。本应用两者兼备并闭环：同一界面里看每条规则的成本、缓存与返回。
 
+**Codex / OpenCode / ZCode 也能接吗？**
+能——网关三协议入站，快速接入向导选厂商填一个 Key 即配好勾选的全部 Agent；各 Agent 持有的是本地网关凭证。
+
 **能把远程端口转发到本机且不暴露吗？**
 逐隧道 `ssh -L` 只绑 `127.0.0.1`，与 SOCKS5 隧道并行，重连互不影响。
 
@@ -145,11 +148,11 @@ Linux：算盘网关有 Docker 镜像。菜单栏壳、SSH 隧道与抓包为 ma
 
 ## 给清单维护者的一句话
 
-> **Magic AI Router** — 开源 macOS 菜单栏应用：把 Claude Code（Anthropic Messages API）经本地优先的网关路由到 GLM/DeepSeek/Kimi/Qwen，内置 SSH 隧道/端口转发管理与 TLS 层 AI 流量观测。MIT。
+> **Magic AI Router** — 开源 macOS 菜单栏应用：把 Claude Code / Codex 等 Agent（Anthropic / OpenAI 协议）经本地优先的网关路由到 GLM/DeepSeek/Kimi/Qwen/OpenAI 等，内置 SSH 隧道/端口转发管理与 TLS 层 AI 流量观测。MIT。
 
 ## 文档
 
-[`CHANGELOG.md`](CHANGELOG.md) · [`docs/docker-deploy.md`](docs/docker-deploy.md) · [`docs/adr/`](docs/adr/)（6 篇 ADR）· [`CONTEXT.md`](CONTEXT.md)（领域词汇表）
+[`CHANGELOG.md`](CHANGELOG.md) · [`docs/docker-deploy.md`](docs/docker-deploy.md) · [`docs/adr/`](docs/adr/)（10 篇 ADR）· [`CONTEXT.md`](CONTEXT.md)（领域词汇表）
 
 ## 许可
 

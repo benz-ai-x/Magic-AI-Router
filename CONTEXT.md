@@ -35,7 +35,7 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 ### 端口转发（Local Forward）
 
-per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达的 `remote_host:remote_port` 映射到本机 `127.0.0.1:local_port`。配置存于 `tunnels[i].forwards`（`{local_port, remote_host 缺省 127.0.0.1, remote_port, enabled 缺省 true}`）——**逐条启停**：停用行不进会话 -L 集合、不占本地端口（端口冲突检查退出，与挂载「只在用才占端口」同口径）；菜单「端口映射 ▸」逐条成行点击启停（守卫重建该隧道会话，未运行不拉起；代理隧道的转发行同样可停用，重建=代理会话重启），设置窗转发表内有开关列（保存流生效），argv 由 `ssh_launch.build_tunnel_command` 拼装（`socks5_port=None` 即纯转发模式），绑定地址恒为回环。`ExitOnForwardFailure=yes` 使本地端口被占时该会话独立退避重试。本地端口在 prepare 与 JS 校验双层拦（全局唯一——不撞保留端口、不撞任何其他隧道）。保存后经 bridge `reconnectProxy {if_connected:true, tunnel_id?}` 守卫重连逐隧道定向应用——代理隧道保持「同一身份当前隧道」语义，转发会话按各自连接态守卫（未运行绝不拉起）；行内「测试」走 `probe_forward`（一次性 `ssh -W` 探测**表单当前值**——隧道与转发行都未保存可测，不依赖隧道状态）。
+per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达的 `remote_host:remote_port` 映射到本机 `127.0.0.1:local_port`。配置存于 `tunnels[i].forwards`（`{local_port, remote_host 缺省 127.0.0.1, remote_port, enabled 缺省 true}`）——**逐条启停**：停用行不进会话 -L 集合、不占本地端口（端口冲突检查退出，与挂载「只在用才占端口」同口径）；菜单「端口映射 ▸」逐条成行点击启停（守卫重建该隧道会话，未运行不拉起；代理隧道的转发行同样可停用，重建=代理会话重启），设置窗转发表内有开关列（保存流生效），argv 由 `ssh_launch.build_tunnel_command` 拼装（`socks5_port=None` 即纯转发模式），绑定地址恒为回环。`ExitOnForwardFailure=yes` 使本地端口被占时该会话独立退避重试。本地端口在 prepare 与 JS 校验双层拦（全局唯一——不撞保留端口、不撞任何其他隧道；镜像契约由「校验镜像与漂移报警」钉住）。「未连接绝不拉起」守卫的单一归宿在 ConnectionCoordinator（`proxy_connected`/`forward_connected` 谓词 + `restart_forward_async(guarded=True)`——菜单翻转、桥接自动应用、保存流同判一处可寻；显式重连 `guarded=False` 保持 Spec-A「会话存在即重建」）。保存后经 bridge `reconnectProxy {if_connected:true, tunnel_id?}` 守卫重连逐隧道定向应用——代理隧道保持「同一身份当前隧道」语义，转发会话按各自连接态守卫（未运行绝不拉起）；行内「测试」走 `probe_forward`（一次性 `ssh -W` 探测**表单当前值**——隧道与转发行都未保存可测，不依赖隧道状态）。
 
 ### SSH 调用策略（ssh_launch）
 
@@ -75,11 +75,15 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 ### 运行态投影（RuntimeProjection）
 
-跨域运行态的一次快照（`shared/runtime_state.py`，叶子层零域知识容器）：`capture_active`（语义单一归宿在抓包域 `CaptureController.actively_running`——enabled 且 mitmdump 就绪）+ `forwards: [ForwardState]` + `mounts: [MountState]`。app 一处组装（三个生产者），LifecycleRuntime → ConfigServer → HTTP handler 单一 seam 透传（架构评审 R3：曾经的 capture_state + tunnel_states_fn + mount_states_fn 三参穿三层）；`/api/state` 装饰（is_proxy/forward_running/nfs_states/capture_active）全部从这一个投影读。下一个运行态字段 = 生产者加一个字段，不再加构造参数。
+跨域运行态的一次快照（`shared/runtime_state.py`，叶子层零域知识容器）：`capture_active`（语义单一归宿在抓包域 `CaptureController.actively_running`——enabled 且 mitmdump 就绪）+ `forwards: [ForwardState]` + `mounts: [MountState]`。app 一处组装（三个生产者），LifecycleRuntime → ConfigServer → HTTP handler 单一 seam 透传（架构评审 R3：曾经的 capture_state + tunnel_states_fn + mount_states_fn 三参穿三层）；`/api/state` 装饰（is_proxy/forward_running/nfs_states/capture_active）全部从这一个投影读——装饰构造归 `mpconf.config.decorate_runtime_state` 单一归宿（只写 `RUNTIME_DECORATED_FIELDS` 声明的键；`READONLY_DECORATED_FIELDS` 的运行态半边由它派生，剥除与注入同源；is_proxy 经 `resolve_proxy_tunnel` 与 merge 同一解析序）。下一个运行态字段 = 生产者加一个字段 + 装饰处加一个键，不再加构造参数。
+
+### 校验镜像与漂移报警（Validation Mirror）
+
+设置窗 JS `validateConfig`（第一道闸）手抄镜像 Python 分域校验器（prepare 422 兜底）——双层拦是既定约定，但镜像无单一真相，历史两次实际漂移（NFS 端口漏计、五端口 falsy-0 漏检）。报警器：`tests/test_validation_mirror.py` + `tests/js/validate_mirror.mjs` 同一语料两侧同跑（JS 侧经 extract.mjs 取随包发布的 LAYER 1），镜像族断言「同错同净」，单侧族（py_only：挂载点冲突/挂载行形状/数值范围/base_url origin；js_only：供应商空名）显式白名单——新增单侧规则必须挂号，静默漂移变显式决策。
 
 ### 服务生命周期（LifecycleRuntime）
 
-后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。
+后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内；tick 网关健康对账（watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建，用户停止/崩溃绝不拉起）。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。:9528 持有者（设置窗/复制指令闩锁/常驻开关）经 app 的 `_set_config_holders` 唯一写口变更即收敛；config_server 的 API 面是路由表 dispatch（一个端点一行声明，index 隧道解析 `_saved_tunnel_by_index` 单一归宿）。
 
 ### 认证出站（AuthenticatedHttpClient）
 
@@ -117,11 +121,11 @@ macOS 菜单栏壳与 Docker 容器两种形态共享同一批 `services/` 模�
 
 ### Suanpan（算盘）
 
-AI 路由产品。将多家 LLM 后端统一成 Anthropic Messages API，按请求场景和模型规则路由转发。独立运行在自己的端口上，不经过 SSH 隧道。
+AI 路由产品。三协议入站（ADR-010：Anthropic Messages / OpenAI Chat / Responses[Codex]），按模型规则路由转发到多家 LLM 后端——同协议直通优先、失配才经 compat 转换器。独立运行在自己的端口上，不经过 SSH 隧道。出站四车道（anthropic 主路径 / 转换 A / chat 直通 / responses 直通）共享发送纪律单一归宿（`proxy.py` 的 `_LaneCtx`/`_send_upstream` 幂等探针/`_reject_5xx`/`_lane_out_headers`/`_stream_response`），各车道只剩请求整备/URL/错误体形状/响应塑形的真差异。
 
 ### 供应商（Provider）
 
-Suanpan 的 LLM 后端（如 DeepSeek、GLM、Kimi）。每个供应商有 Base URL、API Key（或环境变量）、认证头和启用状态。需兼容 Anthropic Messages 协议。
+Suanpan 的 LLM 后端（如 DeepSeek、GLM、Kimi）。每个供应商有 Base URL、API Key（或环境变量）、认证头和启用状态；协议按端点卡走（openai 协议供应商经转换 A 服务 Anthropic 入站）。内置厂商知识单一归宿是 `shared/provider_auth.PROVIDER_REGISTRY`——每厂商一张卡：端点矩阵（anthropic/openai/responses）+ 认证头 + 余额 API（含响应语法名 parser，归一按卡路由）+ 模型用量端点，新增厂商 = 加一张卡（UI 模板/余额/探测共消费）。
 
 ### 路由场景（Routing Scenario）
 
