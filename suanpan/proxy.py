@@ -8,6 +8,7 @@ message_delta events.
 from __future__ import annotations
 
 import time
+from typing import Literal
 
 import httpx
 import logging
@@ -183,7 +184,7 @@ def agent_from_user_agent(user_agent: str | None) -> str:
 
 
 def make_502(ctx: "_LaneCtx", error: str, logger: "UsageLogger", *,
-             wire: str = "anthropic") -> JSONResponse:
+             wire: Literal["anthropic", "openai"] = "anthropic") -> JSONResponse:
     """502 失败响应 + 全零用量记账（四车道共用塑形）。
 
     ``wire`` 决定错误体形状：anthropic 入站客户端认平铺 error；openai
@@ -282,7 +283,7 @@ async def _reject_5xx(upstream_resp, provider_name):
 
 
 async def _send_lane(http_client, request, url, out_body, headers, ctx,
-                     logger, *, wire: str = "anthropic"):
+                     logger, *, wire: Literal["anthropic", "openai"] = "anthropic"):
     """车道发送前置块（R5 候选 2）：发送 → 传输错误/5xx 的 502 塑形。
 
     曾四份手抄（只差 502 塑形器形状）——步骤骨架之外，编排也归一处。

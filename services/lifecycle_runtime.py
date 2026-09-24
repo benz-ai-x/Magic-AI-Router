@@ -138,7 +138,9 @@ class LifecycleRuntime:
         self._gw_workers = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="GatewayHeal")
         self._gw = GatewayWatchdog(
-            audit_fn=self._suanpan.audit,
+            # 惰性绑定：测试可只换 _gw/_suanpan 之一（对象图不因构造期
+            # 方法绑定而刚性）
+            audit_fn=lambda: self._suanpan.audit(),
             start_fn=self._suanpan.start,
             error_fn=lambda: self._suanpan.error,
             clock=clock,
