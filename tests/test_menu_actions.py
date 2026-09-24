@@ -45,6 +45,26 @@ def _make_app(config=None):
     # MagicMock，收敛调用被吸收）
     a._config_window_open = False
     a._copy_api_latch = False
+    # 用户意图单一归宿（R5 候选 1）：同步执行器保断言确定性；notify/
+    # update_mp 经 lambda 晚绑定（事后 patch.object(a, "_notify") 仍可
+    # 拦截）；reload_config 直传绑定方法（ToggleForward 断言调用身份）
+    from services.intents import UserIntents
+    a._intents = UserIntents(
+        conn=a._conn,
+        mounts=a._mounts,
+        notify=lambda s, m="": a._notify(s, m),
+        mark_dirty=lambda: a._dirty(),
+        update_mp=lambda mut: a._update_mp_config(mut),
+        reload_config=a._reload_config_or_alert,
+        spawn=lambda target, name=None: target(),
+        capture_ctrl=a._capture_ctrl,
+        get_capture_dir=lambda: a._config.get(
+            "capture_dir", "~/captures"),
+        alert=lambda message: app.rumps.alert(
+            title="Magic AI Router", message=message),
+        hold_copy_latch=lambda: a._set_config_holders(copy_latch=True),
+        get_agent_instructions=lambda: a._config_server.agent_instructions(),
+    )
     return a
 
 
@@ -281,7 +301,7 @@ class TestCaptureActions(unittest.TestCase):
         a = _make_app()
         a._capture_ctrl.enable.return_value = False
         with patch.object(app.rumps, "alert") as alert:
-            a._enable_capture_or_alert()
+            a._intents.set_capture(True)
         alert.assert_called_once()
 
     def test_open_capture_dir(self):
@@ -453,13 +473,13 @@ class TestBridgeActions(unittest.TestCase):
 
     def test_reconnect_action_runs_reconnect_off_thread(self):
         a = _make_app()
-        with patch.object(app.threading, "Thread") as thread:
-            a._bridge_action({"type": "reconnectProxy"})
-        thread.assert_called_once()
-        self.assertEqual(thread.call_args[1].get("daemon"), True)
-        # The reconnect callback itself is what the thread runs — verify the
-        # wiring without actually spawning it.
-        self.assertEqual(thread.call_args[1]["target"], a.reconnect)
+        spawned = []
+        a._intents._spawn = (lambda target, name=None:
+                             spawned.append((target, name)))
+        a._bridge_action({"type": "reconnectProxy"})
+        self.assertEqual(len(spawned), 1)
+        # 后台跑的是 intents 的重连核心（真线程纪律在 test_intents 钉住）
+        self.assertEqual(spawned[0][0], a._intents._do_reconnect)
 
     def test_open_path_capture_dir_reuses_menu_handler(self):
         a = _make_app()
@@ -667,14 +687,13 @@ class TestToggleForward(unittest.TestCase):
 
     def test_proxy_connecting_not_pulled_up(self):
         """review c-1：connecting 不算在跑——守卫谓词 proxy_connected
-        （仅 connected）归 coordinator，app 只消费。"""
+        （仅 connected）归 coordinator，意图只消费。"""
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_port": 80}])
         a._conn.proxy_tunnel_id = tid
         a._conn.proxy_connected = False
-        with patch.object(a, "reconnect") as rc:
-            a.make_toggle_forward(tid, 0)(None)
-            rc.assert_not_called()
+        a.make_toggle_forward(tid, 0)(None)
+        a._conn.restart.assert_not_called()  # 代理未跑：只写配置
 
     def test_disabling_last_enabled_forward_says_stopped(self):
         """review c-3：全停用后 restart 实为收敛停止——通知如实。"""
@@ -695,12 +714,11 @@ class TestToggleForward(unittest.TestCase):
             [{"local_port": 9000, "remote_port": 80}])
         a._conn.proxy_tunnel_id = tid   # 该隧道就是代理隧道
         a._conn.proxy_connected = False
-        with patch.object(a, "reconnect") as rc:
-            a.make_toggle_forward(tid, 0)(None)
-            rc.assert_not_called()   # 代理未跑：只写配置
-            a._conn.proxy_connected = True
-            a.make_toggle_forward(tid, 0)(None)
-            rc.assert_called_once()
+        a.make_toggle_forward(tid, 0)(None)
+        a._conn.restart.assert_not_called()   # 代理未跑：只写配置
+        a._conn.proxy_connected = True
+        a.make_toggle_forward(tid, 0)(None)
+        a._conn.restart.assert_called_once()  # 连接中：翻转即重建代理会话
 
 
 class TestConfigHoldersAtomicity(unittest.TestCase):
@@ -740,6 +758,6 @@ class TestConfigHoldersAtomicity(unittest.TestCase):
         a._config_server.agent_instructions.return_value = "curl ..."
         with patch.object(app.subprocess, "Popen"), \
              patch.object(a, "_notify"):
-            a._copy_agent_instructions()
+            a.copy_agent_instructions(None)
         self.assertTrue(a._copy_api_latch)
         a._lifecycle.sync_config_server.assert_called_once_with(True)
