@@ -184,14 +184,55 @@ class TestCopyAgentInstructions(unittest.TestCase):
         calls = []
         ui, _, _, notes, _ = _intents(
             hold_copy_latch=lambda: calls.append("latch"),
-            get_agent_instructions=lambda: "curl ...",
+            get_agent_instructions=lambda: (calls.append("text"), "curl ...")[1],
         )
         with patch.object(intents_mod.subprocess, "Popen") as popen:
             ui.copy_agent_instructions()
-        self.assertEqual(calls, ["latch"])  # 先闩锁——curl 立即可用
+        # 先闩锁再取文本——次序钉死（curl 要立即可用，文本依赖服务在听）
+        self.assertEqual(calls, ["latch", "text"])
         popen.assert_called_once()
         self.assertEqual(notes, [("已复制 AI 助手指令",
                                   "含 token 的 curl 已就绪；配置 API 已开启供助手访问")])
+
+
+class TestToggleForwardRow(unittest.TestCase):
+    """端口映射行启停写径：写径失败中止、守卫分派、如实文案。"""
+
+    def _seed(self, tmpdir, enabled=True, tid="t-fw"):
+        import json
+        from shared import config_store as cs
+        cs.PATHS["mp"] = str(tmpdir / "mp.json")
+        tunnels = [{"name": "fw", "id": tid, "ssh_user": "u",
+                    "ssh_host": "h", "ssh_port": 22, "auth_type": "key",
+                    "forwards": [{"local_port": 9000, "remote_port": 80,
+                                  "enabled": enabled}]}]
+        with open(cs.PATHS["mp"], "w") as f:
+            json.dump({"current_tunnel": 0, "tunnels": tunnels}, f)
+        return tid
+
+    def test_write_failure_aborts_without_notify(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as d:
+            tid = self._seed(pathlib.Path(d))
+            ui, conn, _, notes, dirties = _intents(
+                update_mp=lambda mut: False)
+            ui.toggle_forward_row(tid, 0)
+            conn.restart_forward_async.assert_not_called()
+            self.assertEqual(notes, [])
+            self.assertEqual(dirties, [])
+
+    def test_rebuild_note_says_stopped_when_none_enabled(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as d:
+            tid = self._seed(pathlib.Path(d), enabled=True)
+            ui, conn, _, notes, _ = _intents()
+            conn.proxy_tunnel_id = "t-proxy"
+            conn.restart_forward_async.return_value = True
+            ui.toggle_forward_row(tid, 0)
+            conn.restart_forward_async.assert_called_once_with(
+                tid, ui._reload_config, thread_name="ToggleForwardRebuild")
+            self.assertIn("已停用", notes[0][0])
+            self.assertIn("已停止（无启用中的转发）", notes[0][1])
 
 
 if __name__ == "__main__":
