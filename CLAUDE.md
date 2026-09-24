@@ -51,7 +51,9 @@ bash scripts/notarize.sh
 单一归属原则（每域一个归宿模块；逐模块清单是防漂移守卫 `tests/test_docs_drift.py` 钉住的契约面）。分层 DAG 只向下（叶子 shared/ → 域 → services/shellui → app/docker；同层只许同域，唯一白名单见守卫内 `_ALLOWED_SAME_LAYER`）——`tests/test_arch_imports.py` 钉死：
 
 ```
-app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有）
+app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有；
+  用户流只做意图胶水——「未连接绝不拉起」守卫与守卫重建归
+  ConnectionCoordinator、:9528 启停单一路径经 lifecycle.sync_config_server）
 util.py ── resource_path（frozen 平铺 / dev 按域包子目录查找）+ 版本戳
 
 shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 迁入）
@@ -79,7 +81,8 @@ mpconf/ ── 配置栈
     代理角色双表示：current_tunnel_id 稳定 id 真相 + current_tunnel
     下标兼容投影，解析序 id→下标→首条，resolve_proxy_tunnel 单一判定）
     + decorate_runtime_state /api/state 运行态装饰单一归宿（只写
-    RUNTIME_DECORATED_FIELDS 声明键，strip 名单同源派生）
+    RUNTIME_DECORATED_FIELDS 声明键，strip 名单同源派生）+
+    forward_row(s)/toggle_forward_row 转发行读写纯函数（翻转意图共用）
   validate.py ── mp 分域校验器（顶层数值 + 隧道级行[forwards/nfs] + 全局端口/挂载点冲突；prepare 的校验半边）
   config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
     分域校验 orchestrator / commit（journal+MP+SP+Keychain+回调次序）/
@@ -93,7 +96,9 @@ tunnel/ ── SSH 隧道核心
   ssh_session.py ── SshSession：SSH 会话 deep module（三件套编排 +
     连接序列 + 僵尸重建 + 每秒健康泵 tick；转发/NFS 会话共用，
     ADR-007 收敛）
-  connection_coordinator.py ── 连接/重试编排（持 _lifecycle_lock）
+  connection_coordinator.py ── 连接/重试编排（持 _lifecycle_lock）+
+    「未连接绝不拉起」守卫单一归宿（proxy_connected/forward_connected/
+    restart_forward_async guarded——菜单翻转/桥接自动应用共用）
   retry_scheduler.py ── SSH 重试退避调度（无限退避封顶 60s，永不放弃）
   reconnect_trigger.py ── 唤醒事件→立即重连触发器（去抖 + NSWorkspace 源）
   host_key.py ── SSH known_hosts 管理

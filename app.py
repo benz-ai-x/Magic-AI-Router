@@ -24,7 +24,8 @@ from shellui.bridge_protocol import (ACTION_COPY_AGENT_INSTRUCTIONS,
     ACTION_RECONNECT_PROXY)
 from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
-    DEFAULT_CONFIG, load_config, merge_config, resolve_mount_dir)
+    DEFAULT_CONFIG, forward_row, forward_rows, load_config, merge_config,
+    resolve_mount_dir, toggle_forward_row)
 from mount.coordinator import MountCoordinator
 from shared.runtime_state import RuntimeProjection
 from shellui.log_window import LogBuffer, show_log_window
@@ -483,77 +484,50 @@ class MagicProxyApp(rumps.App):
 
     def make_reconnect_tunnel(self, tunnel_id):
         """重连指定隧道：代理隧道走整体 restart（含降级逻辑），转发会话
-        单会话重建（重读磁盘配置——统一经 _reload_config_or_alert）。"""
+        单会话重建（显式意图——会话存在即重建，Spec-A 语义）。"""
         def act(_):
             if tunnel_id == self._conn.proxy_tunnel_id:
                 self.reconnect(None)
                 return
-            threading.Thread(
-                target=self._conn.restart_forward,
-                args=(tunnel_id, self._reload_config_or_alert),
-                name="BridgeReconnectForward", daemon=True).start()
+            self._conn.restart_forward_async(
+                tunnel_id, self._reload_config_or_alert, guarded=False,
+                thread_name="BridgeReconnectForward")
             self._dirty()
         return act
 
     def make_toggle_forward(self, tunnel_id, index):
         """菜单「端口映射逐条启停」：翻转该行磁盘 enabled + 守卫重建。
 
-        -L 集合只在会话启动时生效——只在会话已在跑时重建（未跑的绝不
-        拉起，if_connected 同精神）：转发会话 daemon 线程 restart；
-        代理隧道走整体 reconnect（连接/连接中才算在跑）。写径经
-        _update_mp_config（#46 事务写 + 磁盘真相推导目标态）。"""
+        -L 集合只在会话启动时生效——「未连接绝不拉起」守卫在
+        ConnectionCoordinator（proxy_connected / restart_forward_async
+        guarded）单一归宿；mutate 构造归 mpconf.toggle_forward_row；
+        写径经 _update_mp_config（#46 事务写 + 磁盘真相推导目标态）。"""
         def act(_):
-            cfg = load_config()
-            tunnel = next((t for t in (cfg or {}).get("tunnels", [])
-                           if isinstance(t, dict) and t.get("id") == tunnel_id),
-                          None)
-            rows = (tunnel or {}).get("forwards") or []
-            if not (0 <= index < len(rows)) or not isinstance(rows[index], dict):
+            row = forward_row(load_config(), tunnel_id, index)
+            if row is None:
                 return
-            row = rows[index]
             enabled = row.get("enabled") is not False
             lp, rp = row.get("local_port"), row.get("remote_port")
-
-            def mutate(c):
-                tunnels = []
-                for t in c.get("tunnels", []):
-                    if isinstance(t, dict) and t.get("id") == tunnel_id:
-                        fws = [dict(f) for f in (t.get("forwards") or [])]
-                        if 0 <= index < len(fws) and isinstance(fws[index], dict):
-                            fws[index]["enabled"] = not enabled
-                        tunnels.append({**t, "forwards": fws})
-                    else:
-                        tunnels.append(t)
-                return {**c, "tunnels": tunnels}
-
-            if not self._update_mp_config(mutate):
+            if not self._update_mp_config(
+                    lambda c: toggle_forward_row(
+                        c, tunnel_id, index, not enabled)):
                 return
             note = ""
             if tunnel_id == self._conn.proxy_tunnel_id:
-                # 守卫与保存流同判（status=="connected"，不含 connecting）
-                # ——未运行的代理绝不因翻转转发被拉起（review c-1）
-                if self._conn.ssh.status == "connected":
+                # 守卫与保存流同判（proxy_connected=仅 connected，不含
+                # connecting）——未运行的代理绝不因翻转转发被拉起（c-1）
+                if self._conn.proxy_connected:
                     self.reconnect(None)
                     note = "；代理会话重启中"
             else:
-                # 守卫与保存流同判：仅 status=="connected" 才重建——
-                # error/退避态的滞留会话（stop_forward 才 pop）绝不因
-                # 翻转被 restart_forward→connect() 拉起（review c-1）
-                states = {s.tunnel_id: s.status
-                          for s in self._conn.forward_sessions()}
-                if states.get(tunnel_id) == "connected":
-                    # 全停用后 restart 实为收敛停止——文案如实（c-3）
-                    t_now = next(
-                        (t for t in (self._config.get("tunnels") or [])
-                         if isinstance(t, dict) and t.get("id") == tunnel_id),
-                        None)
+                # 守卫重建；放行后按新配置推导如实文案（c-3：全停用后
+                # restart 实为收敛停止）
+                if self._conn.restart_forward_async(
+                        tunnel_id, self._reload_config_or_alert,
+                        thread_name="ToggleForwardRebuild"):
                     any_enabled = any(
                         isinstance(f, dict) and f.get("enabled") is not False
-                        for f in ((t_now or {}).get("forwards") or []))
-                    threading.Thread(
-                        target=self._conn.restart_forward,
-                        args=(tunnel_id, self._reload_config_or_alert),
-                        name="ToggleForwardRebuild", daemon=True).start()
+                        for f in forward_rows(self._config, tunnel_id))
                     note = ("；转发会话已停止（无启用中的转发）"
                             if not any_enabled else "；转发会话重建中")
             self._notify(
@@ -854,7 +828,10 @@ class MagicProxyApp(rumps.App):
             # （show_config_window 关旧窗的回调在调用内触发，晚置位会让
             # 旧窗关闭误判"无持有者"而停掉刚要用的服务）。
             self._config_window_open = True
-            if not self._config_server.start():
+            # 启停全经 lifecycle 单一归宿（架构评审 C1：删直调
+            # config_server.start() 的第二条启动路径——两路径曾是两份
+            # 启动语义）
+            if not self._sync_config_server():
                 self._config_window_open = False
                 rumps.alert(title="Magic AI Router", message="配置服务端口被占用，无法打开设置。")
                 return
@@ -874,8 +851,10 @@ class MagicProxyApp(rumps.App):
         self._sync_config_server()
 
     def _sync_config_server(self):
-        """ADR-009 持有状态机收敛：三持有者任一在场即监听 :9528，否则释放。"""
-        self._lifecycle.sync_config_server(config_server_wanted(
+        """ADR-009 持有状态机收敛：三持有者任一在场即监听 :9528，否则
+        释放。返回收敛结果（False = 想起但端口被占用）——开窗路径据此
+        提示，不再有第二条直启路径。"""
+        return self._lifecycle.sync_config_server(config_server_wanted(
             self._config_window_open,
             bool(self._config.get("config_api_enabled")),
             self._copy_api_latch))
@@ -922,37 +901,23 @@ class MagicProxyApp(rumps.App):
         kind = action.get("type")
         if kind == ACTION_RECONNECT_PROXY:
             # if_connected 守卫（端口转发保存后的自动应用）：未连接的
-            # 隧道绝不能因保存配置被拉起——restart 会无条件启停，必须在此
-            # 拦；显式点击路径不带旗标，行为不变。tunnel_id 指定转发会话
-            # 时按该会话自身的连接态守卫（多活）。
+            # 隧道绝不能因保存配置被拉起。守卫谓词与守卫重建都归
+            # ConnectionCoordinator 单一归宿（架构评审 C1：此处与菜单
+            # 翻转流原为两份手写守卫）；tunnel_id 指定转发会话时按该
+            # 会话自身的连接态守卫（多活）。
             tunnel_id = action.get("tunnel_id")
-            is_forward = bool(tunnel_id) and \
-                tunnel_id != self._conn.proxy_tunnel_id
-            if action.get("if_connected"):
-                if is_forward:
-                    # 定向守卫：仅该转发会话已连接才重建，未运行不拉起
-                    states = {s.tunnel_id: s.status
-                              for s in self._conn.forward_sessions()}
-                    if states.get(tunnel_id) != "connected":
-                        logger.info(
-                            "转发会话自动重连跳过：%s 未连接（status=%s）",
-                            tunnel_id, states.get(tunnel_id))
-                        return
-                elif self._conn.ssh.status != "connected":
-                    logger.info(
-                        "端口转发自动重连跳过：隧道未连接（status=%s）",
-                        self._conn.ssh.status)
-                    return
-            if is_forward:
-                # 显式点击转发隧道的「重新连接」——单会话重建（守卫放行
-                # 或不带旗标都到这）
-                threading.Thread(
-                    target=self.make_reconnect_tunnel(tunnel_id),
-                    args=(None,), name="BridgeReconnectForward",
-                    daemon=True).start()
-                return
-            threading.Thread(target=self.reconnect, args=(None,),
-                             name="BridgeReconnect", daemon=True).start()
+            if tunnel_id and tunnel_id != self._conn.proxy_tunnel_id:
+                self._conn.restart_forward_async(
+                    tunnel_id, self._reload_config_or_alert,
+                    guarded=bool(action.get("if_connected")),
+                    thread_name="BridgeReconnectForward")
+            elif action.get("if_connected") and not self._conn.proxy_connected:
+                logger.info(
+                    "端口转发自动重连跳过：隧道未连接（status=%s）",
+                    self._conn.ssh.status)
+            else:
+                threading.Thread(target=self.reconnect, args=(None,),
+                                 name="BridgeReconnect", daemon=True).start()
         elif kind == ACTION_FORWARD_SESSION:
             # 多活：设置窗「启动/停止端口转发」。start 走 host-key 首连
             # 流程（内含 AppKit alert——host_key_flow 自带 callAfter 回主

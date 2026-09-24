@@ -283,6 +283,39 @@ def save_config(config, path=None):
 EXTRA_CONFIG_FIELDS: set = set()
 
 
+def forward_row(cfg, tunnel_id, index):
+    """按稳定 id + 行下标取转发行（磁盘真相读侧）——翻转意图的目标行
+    推导单一归宿（None = 隧道/行不存在或形状不符）。"""
+    rows = forward_rows(cfg, tunnel_id)
+    if 0 <= index < len(rows) and isinstance(rows[index], dict):
+        return rows[index]
+    return None
+
+
+def forward_rows(cfg, tunnel_id):
+    """按稳定 id 取该隧道全部转发行（形状安全；无隧道/无行 = []）——
+    翻转后的「还有启用行吗」等读侧推导共用。"""
+    tunnel = next((t for t in (cfg or {}).get("tunnels", [])
+                   if isinstance(t, dict) and t.get("id") == tunnel_id), None)
+    rows = (tunnel or {}).get("forwards") or []
+    return rows if isinstance(rows, list) else []
+
+
+def toggle_forward_row(cfg, tunnel_id, index, enabled):
+    """update_mp 的 mutate 构造（架构评审 C1）：翻转指定转发行的
+    enabled，浅拷贝构造不动原 cfg；行不存在时原样返回（读侧已校验）。"""
+    tunnels = []
+    for t in (cfg or {}).get("tunnels", []):
+        if isinstance(t, dict) and t.get("id") == tunnel_id:
+            fws = [dict(f) for f in (t.get("forwards") or [])]
+            if 0 <= index < len(fws) and isinstance(fws[index], dict):
+                fws[index]["enabled"] = bool(enabled)
+            tunnels.append({**t, "forwards": fws})
+        else:
+            tunnels.append(t)
+    return {**cfg, "tunnels": tunnels}
+
+
 def resolve_proxy_tunnel(tunnels, current_tunnel_id, current_tunnel):
     """代理角色单一解析：有效 id（真相）→ 旧下标（兼容无 id 旧档/手编
     配置）→ 首条。merge 双写回与 /api/state 装饰（is_proxy）共用的唯一
