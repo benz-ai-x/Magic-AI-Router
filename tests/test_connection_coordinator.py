@@ -617,3 +617,43 @@ class TestCurrentTunnelResolution(unittest.TestCase):
 
     def test_empty_tunnels_yields_none(self):
         self.assertIsNone(self._conn({"tunnels": []}).current_tunnel)
+
+
+class TestEnabledForwardsGuards(unittest.TestCase):
+    """逐条启停：全部停用的隧道等价于"无转发规则"。"""
+
+    def _conn_cfg(self, tunnels):
+        return ConnectionCoordinator(
+            stats=MagicMock(),
+            ssh_log_sink=lambda line: None,
+            get_config=lambda: {"current_tunnel": 0, "tunnels": tunnels},
+            get_tunnel_password=lambda t: "",
+        )
+
+    def test_start_forward_rejects_all_disabled(self):
+        # 双隧道：0 号为代理角色，t-1 才是纯转发隧道
+        conn = self._conn_cfg([
+            {"name": "px", "id": "t-px", "ssh_host": "p"},
+            {"name": "fw", "id": "t-1", "ssh_host": "h",
+             "forwards": [{"local_port": 9000, "remote_port": 80,
+                           "enabled": False}]}])
+        ok, reason = conn.start_forward("t-1")
+        self.assertFalse(ok)
+        self.assertIn("启用", reason)
+
+    def test_check_forwards_stops_session_when_all_disabled(self):
+        cfg = {"current_tunnel": 0, "tunnels": [
+            {"name": "px", "id": "t-px", "ssh_host": "p"},
+            {"name": "fw", "id": "t-1", "ssh_host": "h",
+             "forwards": [{"local_port": 9000, "remote_port": 80}]}]}
+        conn = ConnectionCoordinator(
+            stats=MagicMock(),
+            ssh_log_sink=lambda line: None,
+            get_config=lambda: cfg,
+            get_tunnel_password=lambda t: "",
+        )
+        conn.start_forward("t-1")
+        # 磁盘态翻成全停用后，check 应收敛停会话（同"forwards 清空"）
+        cfg["tunnels"][1]["forwards"][0]["enabled"] = False
+        conn.check_forwards()
+        self.assertNotIn("t-1", conn._forward_sessions)

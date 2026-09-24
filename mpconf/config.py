@@ -89,12 +89,15 @@ def _normalize_forward(row) -> dict:
     共享默认值，这里逐行构造全新 dict。prepare 校验在 merge 前做严格
     检查（非 int 即拒）；本函数是读路径的容错半边：手编字符串端口接受，
     非法值落 0（下次保存被 prepare 拦下，绝不静默丢行）。
+    enabled（逐条启停，随 v0.11）：缺省 True——旧配置零迁移；False 的
+    行不进会话 -L 集合、不占本地端口（冲突检查退出）。
     """
     remote_host = str(row.get("remote_host") or "").strip() or "127.0.0.1"
     return {
         "local_port": _coerce_port(row.get("local_port"), 0),
         "remote_host": remote_host,
         "remote_port": _coerce_port(row.get("remote_port"), 0),
+        "enabled": row.get("enabled") is not False,
     }
 
 

@@ -1001,7 +1001,8 @@ test("viewSnapshot projects tunnel forwards with collect-compatible defaults", (
     { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 },
   ] }] } });
   assert.deepEqual(L.viewSnapshot("tunnel", loaded).tunnels[0].forwards, [
-    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 },
+    { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000,
+      enabled: true },
   ]);
   assert.equal(L.viewSnapshot("tunnel", loaded).tunnels[0].forward_autostart, false,
     "forward_autostart 入快照（用户可编辑）；is_proxy/forward_running 不入");
@@ -1009,7 +1010,8 @@ test("viewSnapshot projects tunnel forwards with collect-compatible defaults", (
   const bare = L.viewSnapshot("tunnel",
     L.normalizeState({ mp: { tunnels: [{ ssh_host: "h", forwards: [{}] }] } }));
   assert.deepEqual(bare.tunnels[0].forwards, [
-    { local_port: 0, remote_host: "127.0.0.1", remote_port: 0 },
+    { local_port: 0, remote_host: "127.0.0.1", remote_port: 0,
+      enabled: true },
   ]);
   const noKey = L.viewSnapshot("tunnel",
     L.normalizeState({ mp: { tunnels: [{ ssh_host: "h" }] } }));
@@ -1233,4 +1235,46 @@ test("mergeRuntimeDecorations skips unmatched/anonymous tunnels", () => {
   L.mergeRuntimeDecorations(S, fetched);
   assert.equal(S.mp.tunnels[0].name, "keep");
   assert.equal(S.mp.tunnels[1].name, "no-id");
+});
+
+// ── 逐条启停（enabled）：投影/签名/校验镜像 ──────────────────────
+test("viewSnapshot preserves explicit disabled forwards", () => {
+  const loaded = L.normalizeState({ mp: { tunnels: [{ ssh_host: "h", forwards: [
+    { local_port: 9000, remote_port: 80, enabled: false },
+  ] }] } });
+  assert.equal(L.viewSnapshot("tunnel", loaded).tunnels[0].forwards[0].enabled,
+    false);
+});
+
+test("changedForwardTunnels signature includes enabled flips", () => {
+  // 翻转 enabled 即触发保存后守卫重连——签名必须感知
+  const mk = (fw) => ({ mp: { tunnels: [{ id: "t-1", ssh_host: "h",
+    forwards: fw }] }, sp: {} });
+  const base = mk([{ local_port: 9000, remote_host: "127.0.0.1",
+    remote_port: 80, enabled: true }]);
+  const flipped = mk([{ local_port: 9000, remote_host: "127.0.0.1",
+    remote_port: 80, enabled: false }]);
+  assert.deepEqual(L.changedForwardTunnels(base, flipped), ["t-1"]);
+  assert.deepEqual(L.changedForwardTunnels(base, mk(
+    [{ local_port: 9000, remote_host: "127.0.0.1", remote_port: 80 }])), [],
+    "缺省 enabled 与 true 同签名（读兼容——不产生假重连）");
+});
+
+test("validateConfig excludes disabled forwards from port conflicts", () => {
+  const mk = (fw) => L.normalizeState({ mp: {
+    socks5_port: 1080, http_listen_port: 8888, capture_port: 8080,
+    config_port: 9528,
+    tunnels: [
+      { ssh_host: "a", forwards: fw },
+      { ssh_host: "b", forwards: [
+        { local_port: 9000, remote_host: "127.0.0.1", remote_port: 81 }] },
+    ] }, sp: { listen_port: 9527 } });
+  // 同端口 9000：一行停用 → 不冲突（腾挪端口放行）
+  const withDisabled = mk([{ local_port: 9000, remote_host: "127.0.0.1",
+    remote_port: 80, enabled: false }]);
+  assert.equal(L.validateConfig(withDisabled).some(e => e.includes("端口冲突")), false);
+  // 双启用 → 冲突照报
+  const bothOn = mk([{ local_port: 9000, remote_host: "127.0.0.1",
+    remote_port: 80, enabled: true }]);
+  assert.equal(L.validateConfig(bothOn).some(e => e.includes("端口冲突")), true);
 });

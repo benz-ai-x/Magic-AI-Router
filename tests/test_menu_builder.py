@@ -102,8 +102,11 @@ class TestMultiActiveTunnels(unittest.TestCase):
         running = [s for s in subs if s.title.startswith("AWS-ap")]
         self.assertTrue(running, titles)
         self.assertIn("— 转发中", running[0].title)
-        self.assertIn("9001→81", running[0].title)     # 转发摘要
-        items = [i.title for i in list(running[0].values())]
+        self.assertNotIn("9001→81", running[0].title)  # 端口串移出隧道行标题
+        items = [i.title for i in list(running[0].values())
+                 if hasattr(i, "title")]
+        # 逐条转发子行（点击即启停）在前，会话动作在后
+        self.assertIn("9001 → 81 · 已映射", items)
         self.assertIn("停止端口转发", items)
         self.assertIn("重新连接", items)
 
@@ -114,7 +117,8 @@ class TestMultiActiveTunnels(unittest.TestCase):
         titles = self._titles
         idle = [s for s in subs if s.title.startswith("AWS-ap")]
         self.assertIn("— 未启动", idle[0].title)
-        items = [i.title for i in list(idle[0].values())]
+        items = [i.title for i in list(idle[0].values())
+                 if hasattr(i, "title")]
         self.assertIn("启动端口转发（需先配置转发规则）", items)
         # t-1 有规则 → 不出现全局空态提示
         self.assertNotIn("在偏好设置 → 隧道里添加转发规则", titles)
@@ -256,3 +260,69 @@ class TestMountSubmenu(unittest.TestCase):
         mb.refresh_titles()
         title = mb.refs["proxy_status"].title
         self.assertIn("1 挂载", title)
+
+
+class TestForwardRowPerItemToggle(unittest.TestCase):
+    """逐条启停：转发行独立成行 + 状态尾标 + 回调接线。"""
+
+    @staticmethod
+    def _cfg():
+        return {"current_tunnel": 0, "tunnels": [
+            {"id": "t-1", "name": "Aws-eu", "ssh_host": "a",
+             "forwards": [{"local_port": 9000, "remote_host": "h",
+                           "remote_port": 80}]},
+            {"id": "t-2", "name": "AWS-ap", "ssh_host": "b",
+             "forwards": [{"local_port": 9001, "remote_host": "h",
+                           "remote_port": 81}]},
+        ]}
+
+    @staticmethod
+    def _flat_titles(parent):
+        """顶层 + 隧道行下一层的全部标题（转发行在隧道行子级）。"""
+        out = []
+        for i in parent.values():
+            if not hasattr(i, "title"):
+                continue
+            out.append(i.title)
+            out += [j.title for j in i.values() if hasattr(j, "title")]
+        return out
+
+    def _fw_menu(self, forwards=None, cfg=None, ssh_status="connected",
+                 forward_states=None):
+        cfg = cfg or self._cfg()
+        if forwards is not None:
+            cfg["tunnels"][1]["forwards"] = forwards
+        if forward_states is None and ssh_status == "connected":
+            forward_states = (ForwardState("t-2", "AWS-ap", "connected"),)
+        mb = MenuBuilder(MagicMock(), lambda: _state(
+            ssh_status=ssh_status, config=cfg,
+            forward_states=forward_states or ()))
+        return mb._build_forward_submenu()
+
+    def test_disabled_row_shows_tail(self):
+        parent = self._fw_menu([
+            {"local_port": 9001, "remote_host": "127.0.0.1",
+             "remote_port": 81},
+            {"local_port": 9002, "remote_host": "127.0.0.1",
+             "remote_port": 82, "enabled": False}])
+        titles = self._flat_titles(parent)
+        self.assertIn("9001 → 81 · 已映射", titles)
+        self.assertIn("9002 → 82 · 已停用", titles)
+
+    def test_proxy_tunnel_forwards_get_rows(self):
+        cfg = self._cfg()
+        cfg["tunnels"][0]["forwards"] = [
+            {"local_port": 7001, "remote_port": 71}]
+        parent = self._fw_menu(cfg=cfg)
+        proxy_rows = [i for i in parent.values()
+                      if hasattr(i, "title") and i.title.startswith("Aws-eu")]
+        sub_titles = [i.title for i in list(proxy_rows[0].values())
+                      if hasattr(i, "title")]
+        # 代理隧道信息行的子项里有逐条转发行（点击启停，守卫重建代理会话）
+        self.assertIn("7001 → 71 · 已映射", sub_titles)
+
+    def test_forward_row_pending_when_session_down(self):
+        parent = self._fw_menu(ssh_status="stopped", forward_states=())
+        titles = self._flat_titles(parent)
+        # 会话未跑：启用行"待会话"（守卫语义——未运行绝不拉起）
+        self.assertIn("9001 → 81 · 待会话", titles)

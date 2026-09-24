@@ -42,6 +42,19 @@ from shared.stats import Stats
 logger = logging.getLogger("magic-proxy.connection")
 
 
+def has_enabled_forwards(tunnel):
+    """该隧道是否有 ≥1 条启用中的转发行（会话可存在性的单一口径）。
+
+    enabled=False 的行不进 -L 集合（_forward_args 同口径）——全部停用
+    的隧道等价于"无转发规则"：start 拒、check 收敛停、autostart 跳过。
+    """
+    for f in (tunnel or {}).get("forwards") or []:
+        if isinstance(f, dict) and f.get("enabled") is not False:
+            return True
+    return False
+
+
+
 class ForwardState(NamedTuple):
     """一条转发会话的运行态快照（菜单/UI/配置服务共用投影）。
 
@@ -216,10 +229,10 @@ class ConnectionCoordinator:
             for tunnel_id in list(self._forward_sessions):
                 session = self._forward_sessions[tunnel_id]
                 tunnel = self._tunnel_by_id(tunnel_id)
-                if tunnel is None or not tunnel.get("forwards"):
+                if tunnel is None or not has_enabled_forwards(tunnel):
                     del self._forward_sessions[tunnel_id]
                     session.stop()
-                    logger.info("转发会话收敛停止：%s（无隧道或无转发规则）",
+                    logger.info("转发会话收敛停止：%s（无隧道或无启用中的转发规则）",
                                 tunnel_id)
                     continue
                 session.tick()
@@ -246,8 +259,8 @@ class ConnectionCoordinator:
                 return False, "隧道不存在"
             if tunnel_id == self.proxy_tunnel_id:
                 return False, "代理隧道自身随「连接代理」启动"
-            if not tunnel.get("forwards"):
-                return False, "该隧道没有端口转发规则"
+            if not has_enabled_forwards(tunnel):
+                return False, "该隧道没有启用中的端口转发规则"
             if tunnel_id in self._forward_sessions:
                 session = self._forward_sessions[tunnel_id]
                 if session.monitor.status in ("stopped", "error"):
@@ -288,7 +301,7 @@ class ConnectionCoordinator:
             session.stop()
             reload_config_fn()
             tunnel = self._tunnel_by_id(tunnel_id)
-            if tunnel is None or not tunnel.get("forwards"):
+            if tunnel is None or not has_enabled_forwards(tunnel):
                 del self._forward_sessions[tunnel_id]
                 return True
             session.connect()
@@ -302,7 +315,7 @@ class ConnectionCoordinator:
             tid = t.get("id")
             if tid and tid != self.proxy_tunnel_id \
                     and tid not in self._forward_sessions \
-                    and t.get("forwards"):
+                    and has_enabled_forwards(t):
                 self.start_forward(tid)
 
     def handle_reconnect_trigger(self):
@@ -347,7 +360,7 @@ class ConnectionCoordinator:
             # 旧代理隧道降级续跑：有 forwards 转 0-D 会话；无则清干净
             if old_proxy_id and old_proxy_id != self.proxy_tunnel_id:
                 old_tunnel = self._tunnel_by_id(old_proxy_id)
-                if old_tunnel and old_tunnel.get("forwards"):
+                if old_tunnel and has_enabled_forwards(old_tunnel):
                     if old_proxy_id not in self._forward_sessions:
                         self.start_forward(old_proxy_id)
                 else:

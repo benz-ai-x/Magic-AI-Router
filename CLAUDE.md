@@ -139,7 +139,8 @@ sysctl/ ── 系统集成
 services/ ── 服务
   config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token +
     agent_instructions 指令模板归宿）
-  suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）
+  suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）+ audit()
+    健康审计原语（stopped/healthy/mismatch 单一归宿，Docker watchdog 同谓词）
   sp_config.py ── suanpan 配置读取桥（sp_load*/suanpan_listen，lazy import）
   claude_code_setup.py ── Agent 自动配置唯一归宿（ADR-010 M4）：
     Claude Code 角色映射（写 ~/.claude/settings.json，ADR-003 不变；「保存
@@ -149,7 +150,9 @@ services/ ── 服务
     增量编辑 config.toml / opencode opencode.json models 块必写 /
     zcode kind=anthropic）
   lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约 +
-    capture_state 单投影 + _on_sp_saved 双形态
+    capture_state 单投影 + _on_sp_saved 双形态 + tick 网关健康对账
+    （watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建；用户
+    停止/崩溃绝不拉起，防抖=连续失配阈值+退避）
   authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围，含来源
     Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）
@@ -170,7 +173,7 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
 
 **线程模型：** 主线程跑 rumps NSRunLoop（菜单栏）。后台 daemon 线程跑：asyncio 事件循环（代理服务 ProxyRuntime）、Suanpan 网关（uvicorn）、config server（http.server）。
 
-**菜单结构（六组）：** 状态区（着色圆点 + 流量行 + 转发/挂载计数）→ 代 理 ▸（-D 会话：启停/系统代理/角色单选/经代理启动）→ 端口映射 ▸（-L 多活会话）→ 远程挂载 ▸（NFS 挂载项启停/打开目录，ADR-007）→ AI 路由 ▸ → 抓 包 ▸ → 系 统 ▸（防睡眠/登录启动/配置 API 服务开关，ADR-009）→ 页脚（偏好/日志/复制 AI 助手指令/关于/退出）；菜单项图标走 SF Symbols（`menu_builder._apply_icon`，旧系统静默降级）
+**菜单结构（六组）：** 状态区（着色圆点 + 流量行 + 转发/挂载计数）→ 代 理 ▸（-D 会话：启停/系统代理/角色单选/经代理启动）→ 端口映射 ▸（-L 多活会话 + 逐条转发启停行）→ 远程挂载 ▸（NFS 挂载项启停/打开目录，ADR-007）→ AI 路由 ▸ → 抓 包 ▸ → 系 统 ▸（防睡眠/登录启动/配置 API 服务开关，ADR-009）→ 页脚（偏好/日志/复制 AI 助手指令/关于/退出）；菜单项图标走 SF Symbols（`menu_builder._apply_icon`，旧系统静默降级）
 
 **偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 远程挂载 / 网络设置）+ AI 路由（快速接入 / 供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。同一页面可浏览器直开（输 token 登录）——依赖原生 bridge 的操作在该场景逐项降级：重连/转发启停 toast 提示需在应用设置窗内用，「复制 AI 助手指令」经认证 `GET /api/agent-instructions`（文本取 `agent_instructions()` 单一归宿）回退 + Clipboard API 写剪贴板。配置服务端口生命周期（ADR-009）：默认**不常驻**监听 :9528——设置窗开着 / 「复制 AI 助手指令」会话闩锁 / `config_api_enabled` 常驻开关（系 统 ▸ 菜单 + UI 系统页）三持有者任一在场才监听，全离场即释放（Docker 形态不受影响，恒常驻）。
 

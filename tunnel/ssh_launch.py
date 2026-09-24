@@ -153,12 +153,13 @@ def _port_ok(v):
 def _forward_args(tunnel):
     """本地端口转发（-L）argv 段：绑定地址恒 127.0.0.1（本机回环面）。
 
-    非法行（端口越界/缺字段/非对象）防御性跳过——prepare 校验与 merge
-    归一双保险下，正常流转的配置永不触达跳过分支。
+    停用行（enabled=False，逐条启停）不进 -L 集合。非法行（端口越界/
+    缺字段/非对象）防御性跳过——prepare 校验与 merge 归一双保险下，
+    正常流转的配置永不触达跳过分支。
     """
     args = []
     for f in tunnel.get("forwards") or []:
-        if not isinstance(f, dict):
+        if not isinstance(f, dict) or f.get("enabled") is False:
             continue
         lp, rp = f.get("local_port"), f.get("remote_port")
         if not _port_ok(lp) or not _port_ok(rp):

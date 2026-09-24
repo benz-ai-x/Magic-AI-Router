@@ -600,3 +600,64 @@ class TestSwitchTunnelStableRole(unittest.TestCase):
         self.assertEqual(disk.get("current_tunnel_id"), "t-b")
         self.assertEqual(disk.get("current_tunnel"), 1)
         a._conn.restart.assert_called_once()
+
+
+class TestToggleForward(unittest.TestCase):
+    """菜单「端口映射逐条启停」：翻转磁盘 enabled + 守卫重建。"""
+
+    class _FakeThread:
+        """同步执行 target——保断言确定性（daemon 真线程会竞态）。"""
+        def __init__(self, target=None, args=(), name=None, daemon=None):
+            self._target, self._args = target, args
+
+        def start(self):
+            self._target(*self._args)
+
+    def _seed_and_app(self, forwards, tid="t-abc"):
+        import json as _json
+        from shared import config_store as _cs
+        tunnels = [{"name": "fw", "id": tid, "ssh_user": "u",
+                    "ssh_host": "h", "ssh_port": 22, "auth_type": "key",
+                    "forwards": forwards}]
+        with open(_cs.PATHS["mp"], "w") as f:
+            _json.dump({"current_tunnel": 0, "tunnels": tunnels}, f)
+        a = _make_app({"current_tunnel": 0, "tunnels": tunnels})
+        return a, tid
+
+    def test_flips_disk_enabled_and_rebuilds_running_session(self):
+        a, tid = self._seed_and_app(
+            [{"local_port": 9000, "remote_host": "127.0.0.1",
+              "remote_port": 80, "enabled": True}])
+        a._conn.forward_sessions.return_value = []
+        a._conn.proxy_tunnel_id = "t-other"
+        with patch.object(app.threading, "Thread", self._FakeThread):
+            a.make_toggle_forward(tid, 0)(None)
+        import json as _json
+        from shared import config_store
+        disk = _json.loads(open(config_store.PATHS["mp"]).read())
+        # 未运行的会话只写配置，绝不拉起
+        self.assertIs(disk["tunnels"][0]["forwards"][0]["enabled"], False)
+        a._conn.restart_forward.assert_not_called()
+
+    def test_running_session_gets_rebuild(self):
+        from tunnel.connection_coordinator import ForwardState
+        a, tid = self._seed_and_app(
+            [{"local_port": 9000, "remote_port": 80}])
+        a._conn.forward_sessions.return_value = [
+            ForwardState(tid, "fw", "connected")]
+        a._conn.proxy_tunnel_id = "t-other"
+        with patch.object(app.threading, "Thread", self._FakeThread):
+            a.make_toggle_forward(tid, 0)(None)
+        a._conn.restart_forward.assert_called_once()
+
+    def test_proxy_tunnel_rebuild_only_when_connected(self):
+        a, tid = self._seed_and_app(
+            [{"local_port": 9000, "remote_port": 80}])
+        a._conn.proxy_tunnel_id = tid   # 该隧道就是代理隧道
+        a._conn.ssh.status = "stopped"
+        with patch.object(a, "reconnect") as rc:
+            a.make_toggle_forward(tid, 0)(None)
+            rc.assert_not_called()   # 代理未跑：只写配置
+            a._conn.ssh.status = "connected"
+            a.make_toggle_forward(tid, 0)(None)
+            rc.assert_called_once()

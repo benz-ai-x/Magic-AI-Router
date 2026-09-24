@@ -495,6 +495,57 @@ class MagicProxyApp(rumps.App):
             self._dirty()
         return act
 
+    def make_toggle_forward(self, tunnel_id, index):
+        """菜单「端口映射逐条启停」：翻转该行磁盘 enabled + 守卫重建。
+
+        -L 集合只在会话启动时生效——只在会话已在跑时重建（未跑的绝不
+        拉起，if_connected 同精神）：转发会话 daemon 线程 restart；
+        代理隧道走整体 reconnect（连接/连接中才算在跑）。写径经
+        _update_mp_config（#46 事务写 + 磁盘真相推导目标态）。"""
+        def act(_):
+            cfg = load_config()
+            tunnel = next((t for t in (cfg or {}).get("tunnels", [])
+                           if isinstance(t, dict) and t.get("id") == tunnel_id),
+                          None)
+            rows = (tunnel or {}).get("forwards") or []
+            if not (0 <= index < len(rows)) or not isinstance(rows[index], dict):
+                return
+            row = rows[index]
+            enabled = row.get("enabled") is not False
+            lp, rp = row.get("local_port"), row.get("remote_port")
+
+            def mutate(c):
+                tunnels = []
+                for t in c.get("tunnels", []):
+                    if isinstance(t, dict) and t.get("id") == tunnel_id:
+                        fws = [dict(f) for f in (t.get("forwards") or [])]
+                        if 0 <= index < len(fws) and isinstance(fws[index], dict):
+                            fws[index]["enabled"] = not enabled
+                        tunnels.append({**t, "forwards": fws})
+                    else:
+                        tunnels.append(t)
+                return {**c, "tunnels": tunnels}
+
+            if not self._update_mp_config(mutate):
+                return
+            note = ""
+            if tunnel_id == self._conn.proxy_tunnel_id:
+                if self._conn.ssh.status in ("connected", "connecting"):
+                    self.reconnect(None)
+                    note = "；代理会话重启中"
+            elif tunnel_id in {s.tunnel_id for s
+                               in self._conn.forward_sessions()}:
+                threading.Thread(
+                    target=self._conn.restart_forward,
+                    args=(tunnel_id, self._reload_config_or_alert),
+                    name="ToggleForwardRebuild", daemon=True).start()
+                note = "；转发会话重建中"
+            self._notify(
+                "端口映射已启用" if not enabled else "端口映射已停用",
+                f"{lp} → {rp}{note}")
+            self._dirty()
+        return act
+
     # ── NFS 挂载（ADR-007）───────────────────────────────
 
     def make_toggle_mount(self, tunnel_id, name):
