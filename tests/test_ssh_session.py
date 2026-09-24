@@ -6,7 +6,6 @@ HostKeyFlow 与 SSHMonitor 打桩——真实组装由两个 coordinator 的既�
 测试覆盖（test_connection_coordinator / test_mount_coordinator）。
 """
 import unittest
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from tunnel import ssh_session
@@ -21,7 +20,7 @@ def _session(identity_fn=None, spawn_fn=None, probe_port_fn=lambda: None,
                    "remote_port": 80}]},
               "spawn": spawn_fn}
     with patch.object(ssh_session, "SSHMonitor") as monitor_cls, \
-            patch.object(ssh_session, "HostKeyFlow") as hostkey_cls:
+            patch.object(ssh_session, "HostKeyFlow"):
         monitor_cls.return_value = MagicMock(status="stopped")
         s = SshSession(
             log_sink=lambda line: None,

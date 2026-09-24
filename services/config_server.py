@@ -589,9 +589,11 @@ class _Handler(BaseHTTPRequestHandler):
         if error:
             return 400, {"ok": False, "error": error, "stage": "detect"}
         mounts = data.get("mounts")
-        if not isinstance(mounts, list) or \
+        # None 条目不豁免——[null] 曾穿透 all() 生成器短路（空序列恒
+        # True），下游 shlex.quote(None) 会在 handler 线程抛 TypeError
+        if not isinstance(mounts, list) or not mounts or \
                 not all(isinstance(p, str) and p.startswith("/")
-                        for p in mounts if p is not None) or not mounts:
+                        for p in mounts):
             return 400, {"ok": False,
                          "error": "mounts 须为非空的绝对路径列表",
                          "stage": "detect"}

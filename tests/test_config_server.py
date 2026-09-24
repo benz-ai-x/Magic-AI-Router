@@ -1269,3 +1269,49 @@ class TestAgentSetupEndpoints(unittest.TestCase):
                      body='{"agent": "zcode", "options": "junk"}',
                      token=self.token)
         su.assert_called_once_with("zcode", None)
+
+
+class TestNfsSetupRemoteEndpoint(unittest.TestCase):
+    """POST /api/nfs-setup-remote 的 mounts 入参校验。"""
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def _post(self, body, token=None):
+        return _request(self.port, "POST", "/api/nfs-setup-remote",
+                        body=body,
+                        token=self.token if token is None else token)
+
+    def test_requires_token(self):
+        status, _ = self._post('{"mounts": []}', token=False)
+        self.assertEqual(status, 401)
+
+    def test_null_mount_entries_rejected(self):
+        # [null] 曾穿透 all() 生成器短路（空序列恒 True）→
+        # shlex.quote(None) 在 handler 线程抛 TypeError
+        status, data = self._post(
+            '{"tunnel": {"ssh_host": "srv"}, "mounts": [null]}')
+        self.assertEqual(status, 400)
+        body = json.loads(data)
+        self.assertFalse(body["ok"])
+        self.assertIn("mounts", body["error"])
+
+    def test_mixed_null_entry_rejected(self):
+        status, data = self._post(
+            '{"tunnel": {"ssh_host": "srv"}, "mounts": ["/data", null]}')
+        self.assertEqual(status, 400)
+        self.assertFalse(json.loads(data)["ok"])
+
+    def test_valid_mounts_forwarded(self):
+        with patch.object(config_server, "nfs_setup_remote",
+                          return_value={"ok": True}) as setup:
+            status, data = self._post(
+                '{"tunnel": {"ssh_host": "srv"}, "mounts": ["/data"], '
+                '"squash": true}')
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(data)["ok"])
+        setup.assert_called_once()

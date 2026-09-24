@@ -394,11 +394,18 @@ function numberDefault(value,fallback){
 // =12049、空字段=''、auto_mount 严格布尔，未触碰的隧道不产生假 dirty。
 // nfs_states 装饰值归一（对象 {status,error,fixable}；字符串 = 旧形状
 // 兼容测试夹具）——可见性链路：分类(fixable)→投影→装饰→此处→状态单元格
-function nfsStateOf(states,name){
-  const v=(states||{})[name];
+function nfsStateValue(v){
   if(v==null)return{status:'unmounted',error:'',fixable:''};
   if(typeof v==='string')return{status:v,error:'',fixable:''};
   return{status:v.status||'unmounted',error:v.error||'',fixable:v.fixable||''};
+}
+function nfsStateOf(states,name){
+  return nfsStateValue((states||{})[name]);
+}
+// 计数与状态单元格共用同一形状归一——nfs_states 生产形状是对象，
+// 字符串比较会把对象形状全部漏计
+function _nfsMountedCount(t){
+  return Object.values(t.nfs_states||{}).filter(v=>nfsStateValue(v).status==='mounted').length;
 }
 // 运行态装饰定向合并：只动装饰字段，绝不覆盖表单字段（dirty 真相在
 // 表单）——曾有的坑：整页 renderView 会冲掉未保存的编辑
@@ -1441,9 +1448,6 @@ function toggleForwardSession(btn,tunnelId,action){
 // ── NFS 远程挂载 view（ADR-007，master-detail 同隧道页）──
 const NFS_STATUS_LABEL={mounted:['已挂载','ok'],mounting:['挂载中…','warn'],
   unmounting:['卸载中…','warn'],error:['异常','err'],unmounted:['未挂载','muted']};
-function _nfsMountedCount(t){
-  return Object.values(t.nfs_states||{}).filter(s=>s==='mounted').length;
-}
 function nfsMountRows(t){
   const n=t.nfs||{},states=t.nfs_states||{};
   const ms=n.mounts||[];

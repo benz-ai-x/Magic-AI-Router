@@ -77,7 +77,6 @@ class TestNfsMountsAndIsMounted(unittest.TestCase):
 
 class TestProbeLocalPort(unittest.TestCase):
     def test_connect_success(self):
-        import socket as _socket
         with patch.object(mount_control.socket, "socket") as factory:
             inst = factory.return_value
             self.assertTrue(mount_control.probe_local_port(12049))

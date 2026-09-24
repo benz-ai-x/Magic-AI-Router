@@ -1209,6 +1209,24 @@ test("nfsStateOf normalizes object/string/absent shapes", () => {
     {status:"error",error:"远程路径不存在或未导出",fixable:"exports"});
 });
 
+test("nfsStateValue normalizes a single decoration value", () => {
+  assert.deepEqual(L.nfsStateValue(undefined), {status:"unmounted",error:"",fixable:""});
+  assert.deepEqual(L.nfsStateValue("mounted"), {status:"mounted",error:"",fixable:""});
+  assert.deepEqual(L.nfsStateValue({status:"error",error:"x",fixable:"exports"}),
+    {status:"error",error:"x",fixable:"exports"});
+});
+
+test("_nfsMountedCount counts both decoration shapes", () => {
+  // 生产形状是对象；字符串 = 旧夹具形状——计数必须两种都认
+  const objs = {nfs_states:{a:{status:"mounted"},
+    b:{status:"error",error:"x"},c:{status:"unmounted"},d:{status:"mounting"}}};
+  assert.equal(L._nfsMountedCount(objs), 1);
+  const strs = {nfs_states:{a:"mounted", b:"error"}};
+  assert.equal(L._nfsMountedCount(strs), 1);
+  assert.equal(L._nfsMountedCount({}), 0);
+  assert.equal(L._nfsMountedCount({nfs_states:null}), 0);
+});
+
 test("mergeRuntimeDecorations updates decorations but never form fields", () => {
   const S = L.normalizeState({mp:{tunnels:[
     {id:"t-1", name:"本地编辑中的名字", ssh_host:"h", nfs:{enabled:true,local_port:12049,mounts:[]}}]}});

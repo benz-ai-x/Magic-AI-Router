@@ -165,9 +165,12 @@ class TestPrepareNfsValidation(unittest.TestCase):
         self.assertTrue(any("/Volumes/data" in e for e in plan.errors))
 
     def test_disabled_nfs_still_port_checked(self):
-        # enabled=False 也查端口——用户随时会打开，冲突要提前暴露
+        # enabled=False 也查端口——用户随时会打开，冲突要提前暴露。
+        # 基线：prepare 只校验传入原样（socks5_port 缺省不参与），单独放行；
+        # 显式给 socks5_port=1080 后即冲突——禁用不豁免。
         plan = self._prepare([_tunnel(enabled=False, local_port=1080,
                                       mounts=[_mount()])])
+        self.assertTrue(plan.ok, plan.errors)
         plan2 = self.store.prepare(mp={
             "tunnels": [_tunnel(enabled=False, local_port=1080,
                                 mounts=[_mount()])],
@@ -177,6 +180,7 @@ class TestPrepareNfsValidation(unittest.TestCase):
     def test_nfs_states_decorated_field_stripped(self):
         plan = self._prepare([_tunnel(enabled=True,
                                       mounts=[_mount()])])
+        self.assertTrue(plan.ok, plan.errors)
         # prepare 输入剥除只读装饰字段：nfs_states 不落盘
         t_in = _tunnel(enabled=True, mounts=[_mount()])
         t_in["nfs_states"] = {"data": "mounted"}
