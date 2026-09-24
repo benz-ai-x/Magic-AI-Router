@@ -219,6 +219,75 @@ def _annotate_fallback(out_headers, decision, provider_name):
                      decision.fallback_from, provider_name, decision.scenario)
 
 
+# ── 车道共用骨架（架构评审 R2-1）───────────────────────────────────
+# 四个 forward_* 共享同一发送纪律（build → RetryPolicy → 幂等探针 →
+# 5xx 拒绝 → 响应头三件套 → 流式尾）——曾四份手抄（幂等探针逐字 ×4、
+# 5xx 块 ×4）。骨架在此单一归宿；各车道只剩真差异：请求整备、URL、
+# 错误体形状（anthropic vs openai 客户端）、响应塑形（直通/转换）。
+
+_IDEMPOTENCY_HEADERS = ("idempotency-key", "x-idempotency-key")
+
+
+class _LaneCtx:
+    """一条转发请求的记账上下文（四车道同款 prologue 的单一归宿）。"""
+
+    __slots__ = ("provider", "source_model", "target_model", "scenario",
+                 "started", "agent")
+
+    def __init__(self, request, decision, source_model, started):
+        self.provider = decision.provider
+        self.source_model = source_model
+        self.target_model = decision.target_model
+        self.scenario = decision.scenario
+        self.started = started
+        self.agent = agent_from_user_agent(request.headers.get("user-agent"))
+
+
+async def _send_upstream(http_client, request, url, out_body, headers):
+    """build_request + RetryPolicy 发送 + 幂等探针（车道共用）。
+
+    明确幂等语义（issue #7 验收③）：客户端携带幂等键头即视为可安全
+    重放——探针判定单一归宿，不再逐车道手抄。"""
+    upstream_req = http_client.build_request(
+        "POST", url, json=out_body, headers=headers)
+    return await _send_with_retry(
+        http_client, upstream_req,
+        idempotent=any(h in request.headers for h in _IDEMPOTENCY_HEADERS))
+
+
+async def _reject_5xx(upstream_resp, provider_name):
+    """5xx → 关流并返回错误串（无重试、无后端切换——车道共用纪律）。"""
+    status = upstream_resp.status_code
+    await upstream_resp.aclose()
+    error = f"HTTP {status}"
+    _log.error("upstream_5xx provider=%s status=%s", provider_name, status)
+    return error
+
+
+def _lane_out_headers(upstream_headers, ctx, decision):
+    """响应头三件套：hop 头过滤 + 宣告 provider + fallback 可感知。"""
+    out_headers = filter_response_headers(upstream_headers)
+    out_headers["x-suanpan-provider"] = ctx.provider
+    _annotate_fallback(out_headers, decision, ctx.provider)
+    return out_headers
+
+
+def _stream_response(upstream_resp, extractor, logger, ctx, out_headers, *,
+                     translator=None, media_type):
+    """流式尾（车道共用）：drain_and_log tee 用量 + 原样下发字节。"""
+    return StreamingResponse(
+        drain_and_log(
+            upstream_resp, extractor, logger,
+            provider=ctx.provider, source_model=ctx.source_model,
+            target_model=ctx.target_model, scenario=ctx.scenario,
+            started=ctx.started, translator=translator, agent=ctx.agent,
+        ),
+        status_code=upstream_resp.status_code,
+        headers=out_headers,
+        media_type=media_type,
+    )
+
+
 async def forward_request(
     request: Request,
     body: dict,
@@ -231,56 +300,40 @@ async def forward_request(
         strip_marker(body)
 
     source_model = body.get("model", "")
-    started = time.monotonic()
-    agent = agent_from_user_agent(request.headers.get("user-agent"))
+    ctx = _LaneCtx(request, decision, source_model, time.monotonic())
 
-    # Convert headers once
-    incoming_headers = dict(request.headers)
-
-    provider_name = decision.provider
-    target_model = decision.target_model
-    provider_cfg = config.providers[provider_name]
+    provider_cfg = config.providers[ctx.provider]
     api_key = provider_cfg.resolve_api_key()
 
-    body["model"] = target_model
+    body["model"] = ctx.target_model
     if provider_cfg.protocol == "openai":
         # ADR-010 转换 A：Anthropic 入站 × openai 端点（Claude Code 用
         # OpenAI/OpenRouter/通义/硅基流动等）。anthropic 主路径零改动。
         return await _forward_request_openai(
             request, body, decision, provider_cfg, api_key, logger,
-            http_client, source_model=source_model, started=started,
-            agent=agent)
-    normalize_body(body, provider_name,
+            http_client, ctx=ctx)
+    normalize_body(body, ctx.provider,
                    anthropic_native=provider_cfg.anthropic_native)
     headers = provider_cfg.build_outbound_headers(
-        incoming_headers, api_key)
+        dict(request.headers), api_key)
     url = f"{provider_cfg.base_url.rstrip('/')}/v1/messages"
 
     try:
-        upstream_req = http_client.build_request("POST", url, json=body, headers=headers)
-        upstream_resp = await _send_with_retry(
-            http_client, upstream_req,
-            # 明确幂等语义（issue #7 验收③）：客户端携带幂等键头即视为
-            # 可安全重放
-            idempotent=any(h in request.headers
-                           for h in ("idempotency-key", "x-idempotency-key")))
+        upstream_resp = await _send_upstream(
+            http_client, request, url, body, headers)
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error provider=%s error=%s", provider_name, error)
-        return make_502(provider_name, source_model, target_model, decision.scenario, error, started, logger, agent=agent)
-
-    # 5xx → 502 (no retry, no backend switch)
+        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
+        return make_502(ctx.provider, ctx.source_model, ctx.target_model,
+                        ctx.scenario, error, ctx.started, logger,
+                        agent=ctx.agent)
     if upstream_resp.status_code >= 500:
-        await upstream_resp.aclose()
-        error = f"HTTP {upstream_resp.status_code}"
-        _log.error("upstream_5xx provider=%s status=%s",
-                   provider_name, upstream_resp.status_code)
-        return make_502(provider_name, source_model, target_model, decision.scenario, error, started, logger, agent=agent)
+        error = await _reject_5xx(upstream_resp, ctx.provider)
+        return make_502(ctx.provider, ctx.source_model, ctx.target_model,
+                        ctx.scenario, error, ctx.started, logger,
+                        agent=ctx.agent)
 
-    # Success (2xx or 4xx) — stream response to client
-    out_headers = filter_response_headers(upstream_resp.headers)
-    out_headers["x-suanpan-provider"] = provider_name
-    _annotate_fallback(out_headers, decision, provider_name)
+    out_headers = _lane_out_headers(upstream_resp.headers, ctx, decision)
 
     # Non-streaming upstreams answer application/json with usage at the
     # top level — the SSE scanner would read zeros (DeepSeek stream:false
@@ -288,19 +341,9 @@ async def forward_request(
     content_type = upstream_resp.headers.get("content-type", "")
     extractor = UsageExtractor(json_mode="json" in content_type.lower())
 
-    return StreamingResponse(
-        drain_and_log(
-            upstream_resp, extractor, logger,
-            provider=provider_name,
-            source_model=source_model,
-            target_model=target_model,
-            scenario=decision.scenario,
-            started=started,
-        ),
-        status_code=upstream_resp.status_code,
-        headers=out_headers,
-        media_type=upstream_resp.headers.get("content-type"),
-    )
+    return _stream_response(
+        upstream_resp, extractor, logger, ctx, out_headers,
+        media_type=upstream_resp.headers.get("content-type"))
 
 
 async def _forward_request_openai(
@@ -312,9 +355,7 @@ async def _forward_request_openai(
     logger: UsageLogger,
     http_client: httpx.AsyncClient,
     *,
-    source_model: str,
-    started: float,
-    agent: str = "",
+    ctx: _LaneCtx,
 ) -> StreamingResponse | JSONResponse:
     """转换 A 的 openai 出站半边（ADR-010）：请求向转换 → {base}/chat/
     completions → 响应向转换（非流式 JSON / 流式 SSE 翻译）。
@@ -322,8 +363,6 @@ async def _forward_request_openai(
     翻译后的字节流即合法 Anthropic 响应——客户端 SDK 与 UsageExtractor
     都无需感知 openai 线格式。
     """
-    provider_name = decision.provider
-    target_model = decision.target_model
     out_body = anthropic_to_openai_request(body)
     # openai 车道认证恒 Bearer（ADR-010）：auth_header 仅对 anthropic
     # 车道有意义，绕开 Provider 方法直用共享实现的默认 Bearer 形态。
@@ -331,26 +370,19 @@ async def _forward_request_openai(
     url = f"{provider_cfg.base_url.rstrip('/')}/chat/completions"
 
     try:
-        upstream_req = http_client.build_request(
-            "POST", url, json=out_body, headers=headers)
-        upstream_resp = await _send_with_retry(
-            http_client, upstream_req,
-            idempotent=any(h in request.headers
-                           for h in ("idempotency-key", "x-idempotency-key")))
+        upstream_resp = await _send_upstream(
+            http_client, request, url, out_body, headers)
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error provider=%s error=%s", provider_name, error)
-        return make_502(provider_name, source_model, target_model,
-                        decision.scenario, error, started, logger, agent=agent)
-
-    # 5xx → 502 (no retry, no backend switch)——与 anthropic 车道同纪律
+        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
+        return make_502(ctx.provider, ctx.source_model, ctx.target_model,
+                        ctx.scenario, error, ctx.started, logger,
+                        agent=ctx.agent)
     if upstream_resp.status_code >= 500:
-        await upstream_resp.aclose()
-        error = f"HTTP {upstream_resp.status_code}"
-        _log.error("upstream_5xx provider=%s status=%s",
-                   provider_name, upstream_resp.status_code)
-        return make_502(provider_name, source_model, target_model,
-                        decision.scenario, error, started, logger, agent=agent)
+        error = await _reject_5xx(upstream_resp, ctx.provider)
+        return make_502(ctx.provider, ctx.source_model, ctx.target_model,
+                        ctx.scenario, error, ctx.started, logger,
+                        agent=ctx.agent)
 
     content_type = upstream_resp.headers.get("content-type", "")
     streaming = ("event-stream" in content_type.lower()
@@ -366,53 +398,42 @@ async def _forward_request_openai(
                 pass
             error = f"{type(e).__name__}: {e}"
             _log.error("upstream_error provider=%s error=%s",
-                       provider_name, error)
-            return make_502(provider_name, source_model, target_model,
-                            decision.scenario, error, started, logger)
+                       ctx.provider, error)
+            return make_502(ctx.provider, ctx.source_model, ctx.target_model,
+                            ctx.scenario, error, ctx.started, logger,
+                            agent=ctx.agent)
         try:
             payload = upstream_resp.json()
         except ValueError:
             payload = None
         status = upstream_resp.status_code
-        out_headers = filter_response_headers(upstream_resp.headers)
-        out_headers["x-suanpan-provider"] = provider_name
-        _annotate_fallback(out_headers, decision, provider_name)
+        out_headers = _lane_out_headers(upstream_resp.headers, ctx, decision)
         if status >= 400:
             converted = openai_error_to_anthropic(payload, status)
             usage = {"input_tokens": 0, "output_tokens": 0}
         else:
             converted = openai_chat_response_to_anthropic(
-                payload, model=target_model)
+                payload, model=ctx.target_model)
             usage = converted.get("usage") or {}
         logger.write(UsageEntry(
-            provider=provider_name, source_model=source_model,
-            target_model=target_model, scenario=decision.scenario,
-            agent=agent,
+            provider=ctx.provider, source_model=ctx.source_model,
+            target_model=ctx.target_model, scenario=ctx.scenario,
+            agent=ctx.agent,
             input_tokens=usage.get("input_tokens", 0),
             output_tokens=usage.get("output_tokens", 0),
             cache_read_tokens=usage.get("cache_read_input_tokens", 0),
             cache_creation_tokens=0,
-            latency_ms=int((time.monotonic() - started) * 1000),
+            latency_ms=int((time.monotonic() - ctx.started) * 1000),
             status=status, error=None))
         return JSONResponse(converted, status_code=status, headers=out_headers)
 
     # 流式：SSE 翻译生成器（输出即 Anthropic 事件流，extractor 无感）
-    out_headers = filter_response_headers(upstream_resp.headers)
-    out_headers["x-suanpan-provider"] = provider_name
-    _annotate_fallback(out_headers, decision, provider_name)
-    translator = OpenAIChatToAnthropicSSE(model=target_model)
+    out_headers = _lane_out_headers(upstream_resp.headers, ctx, decision)
+    translator = OpenAIChatToAnthropicSSE(model=ctx.target_model)
     extractor = UsageExtractor()
-    return StreamingResponse(
-        drain_and_log(
-            upstream_resp, extractor, logger,
-            provider=provider_name, source_model=source_model,
-            target_model=target_model, scenario=decision.scenario,
-            started=started, translator=translator, agent=agent,
-        ),
-        status_code=upstream_resp.status_code,
-        headers=out_headers,
-        media_type="text/event-stream",
-    )
+    return _stream_response(
+        upstream_resp, extractor, logger, ctx, out_headers,
+        translator=translator, media_type="text/event-stream")
 
 
 def make_502_openai(
@@ -453,16 +474,13 @@ async def forward_chat_passthrough(
     用量）；响应流**字节直通**（openai 客户端拿到原生 openai 响应），
     用量经 wire=openai_chat 的 UsageExtractor tee 提取。
     """
-    provider_name = decision.provider
-    provider_cfg = config.providers[provider_name]
-    target_model = decision.target_model
+    provider_cfg = config.providers[decision.provider]
     source_model = body.get("model", "")
-    started = time.monotonic()
-    agent = agent_from_user_agent(request.headers.get("user-agent"))
+    ctx = _LaneCtx(request, decision, source_model, time.monotonic())
 
     if decision.strip_marker:
         openai_strip_subagent_marker(body)
-    body["model"] = target_model
+    body["model"] = ctx.target_model
     if body.get("stream"):
         opts = body.get("stream_options")
         if isinstance(opts, dict):
@@ -475,48 +493,30 @@ async def forward_chat_passthrough(
     url = f"{provider_cfg.base_url.rstrip('/')}/chat/completions"
 
     try:
-        upstream_req = http_client.build_request(
-            "POST", url, json=body, headers=headers)
-        upstream_resp = await _send_with_retry(
-            http_client, upstream_req,
-            idempotent=any(h in request.headers
-                           for h in ("idempotency-key", "x-idempotency-key")))
+        upstream_resp = await _send_upstream(
+            http_client, request, url, body, headers)
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error provider=%s error=%s", provider_name, error)
-        return make_502_openai(provider_name, error, started, logger,
-                               source_model=source_model,
-                               target_model=target_model,
-                               scenario=decision.scenario, agent=agent)
-
+        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
+        return make_502_openai(ctx.provider, error, ctx.started, logger,
+                               source_model=ctx.source_model,
+                               target_model=ctx.target_model,
+                               scenario=ctx.scenario, agent=ctx.agent)
     if upstream_resp.status_code >= 500:
-        await upstream_resp.aclose()
-        error = f"HTTP {upstream_resp.status_code}"
-        _log.error("upstream_5xx provider=%s status=%s",
-                   provider_name, upstream_resp.status_code)
-        return make_502_openai(provider_name, error, started, logger,
-                               source_model=source_model,
-                               target_model=target_model,
-                               scenario=decision.scenario, agent=agent)
+        error = await _reject_5xx(upstream_resp, ctx.provider)
+        return make_502_openai(ctx.provider, error, ctx.started, logger,
+                               source_model=ctx.source_model,
+                               target_model=ctx.target_model,
+                               scenario=ctx.scenario, agent=ctx.agent)
 
-    out_headers = filter_response_headers(upstream_resp.headers)
-    out_headers["x-suanpan-provider"] = provider_name
-    _annotate_fallback(out_headers, decision, provider_name)
+    out_headers = _lane_out_headers(upstream_resp.headers, ctx, decision)
 
     content_type = upstream_resp.headers.get("content-type", "")
     extractor = UsageExtractor(json_mode="json" in content_type.lower(),
                                wire="openai_chat")
-    return StreamingResponse(
-        drain_and_log(
-            upstream_resp, extractor, logger,
-            provider=provider_name, source_model=source_model,
-            target_model=target_model, scenario=decision.scenario,
-            started=started, agent=agent,
-        ),
-        status_code=upstream_resp.status_code,
-        headers=out_headers,
-        media_type=content_type or None,
-    )
+    return _stream_response(
+        upstream_resp, extractor, logger, ctx, out_headers,
+        media_type=content_type or None)
 
 
 async def forward_responses_passthrough(
@@ -536,64 +536,43 @@ async def forward_responses_passthrough(
     """
     from suanpan.compat import responses_strip_subagent_marker
 
-    provider_name = decision.provider
-    provider_cfg = config.providers[provider_name]
-    target_model = decision.target_model
+    provider_cfg = config.providers[decision.provider]
     source_model = body.get("model", "")
-    started = time.monotonic()
-    agent = agent_from_user_agent(request.headers.get("user-agent"))
+    ctx = _LaneCtx(request, decision, source_model, time.monotonic())
 
     if decision.strip_marker:
         responses_strip_subagent_marker(body)
-    body["model"] = target_model
+    body["model"] = ctx.target_model
 
     api_key = provider_cfg.resolve_api_key()
     headers = _build_headers_openai(dict(request.headers), api_key)
     url = f"{provider_cfg.responses_base_url.rstrip('/')}/responses"
 
     try:
-        upstream_req = http_client.build_request(
-            "POST", url, json=body, headers=headers)
-        upstream_resp = await _send_with_retry(
-            http_client, upstream_req,
-            idempotent=any(h in request.headers
-                           for h in ("idempotency-key", "x-idempotency-key")))
+        upstream_resp = await _send_upstream(
+            http_client, request, url, body, headers)
     except httpx.HTTPError as e:
         error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error provider=%s error=%s", provider_name, error)
-        return make_502_openai(provider_name, error, started, logger,
-                               source_model=source_model,
-                               target_model=target_model,
-                               scenario=decision.scenario, agent=agent)
-
+        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
+        return make_502_openai(ctx.provider, error, ctx.started, logger,
+                               source_model=ctx.source_model,
+                               target_model=ctx.target_model,
+                               scenario=ctx.scenario, agent=ctx.agent)
     if upstream_resp.status_code >= 500:
-        await upstream_resp.aclose()
-        error = f"HTTP {upstream_resp.status_code}"
-        _log.error("upstream_5xx provider=%s status=%s",
-                   provider_name, upstream_resp.status_code)
-        return make_502_openai(provider_name, error, started, logger,
-                               source_model=source_model,
-                               target_model=target_model,
-                               scenario=decision.scenario, agent=agent)
+        error = await _reject_5xx(upstream_resp, ctx.provider)
+        return make_502_openai(ctx.provider, error, ctx.started, logger,
+                               source_model=ctx.source_model,
+                               target_model=ctx.target_model,
+                               scenario=ctx.scenario, agent=ctx.agent)
 
-    out_headers = filter_response_headers(upstream_resp.headers)
-    out_headers["x-suanpan-provider"] = provider_name
-    _annotate_fallback(out_headers, decision, provider_name)
+    out_headers = _lane_out_headers(upstream_resp.headers, ctx, decision)
 
     content_type = upstream_resp.headers.get("content-type", "")
     extractor = UsageExtractor(json_mode="json" in content_type.lower(),
                                wire="responses")
-    return StreamingResponse(
-        drain_and_log(
-            upstream_resp, extractor, logger,
-            provider=provider_name, source_model=source_model,
-            target_model=target_model, scenario=decision.scenario,
-            started=started, agent=agent,
-        ),
-        status_code=upstream_resp.status_code,
-        headers=out_headers,
-        media_type=content_type or None,
-    )
+    return _stream_response(
+        upstream_resp, extractor, logger, ctx, out_headers,
+        media_type=content_type or None)
 
 
 async def forward_count_tokens(

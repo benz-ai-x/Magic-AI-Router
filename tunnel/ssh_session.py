@@ -16,6 +16,14 @@ spawn_fn 供 monitor.start（默认即 identity_fn；NFS 会话覆写为注入�
 （推导助手 first_forward_port）——不留隐式默认，探测语义一处可寻。
 """
 
+import logging
+
+from tunnel.proxy import SSHMonitor
+from tunnel.retry_scheduler import RetryScheduler
+from tunnel.host_key_flow import HostKeyFlow
+
+logger = logging.getLogger("magic-proxy.ssh-session")
+
 
 def first_forward_port(tunnel):
     """隧道第一条合法且启用 -L 的本地端口（就绪探测口推导的单一归宿）。
@@ -31,13 +39,6 @@ def first_forward_port(tunnel):
                     and 1 <= lp <= 65535:
                 return lp
     return None
-import logging
-
-from tunnel.proxy import SSHMonitor
-from tunnel.retry_scheduler import RetryScheduler
-from tunnel.host_key_flow import HostKeyFlow
-
-logger = logging.getLogger("magic-proxy.ssh-session")
 
 
 def check_and_recover(monitor, retry, host_key, probe_port):

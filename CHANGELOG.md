@@ -9,6 +9,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 - **端口映射逐条启停（像远程挂载一样 per-item）**：forwards 行新增 `enabled`（缺省 true，旧配置零迁移）——停用行不进会话 `-L` 集合、不占本地端口（端口冲突检查退出，与挂载「只在用才占端口」同口径；行级形状校验保持全量）。菜单「端口映射 ▸」重排：端口摘要从隧道行标题移出（治一行塞 N 组端口的拥挤），每条转发独立成行 `8030 → 3080 · 已映射/已停用/待会话`，**点击即启停**（圆点随会话状态着色，停用灰点）；代理隧道的转发行同样可停用（守卫重建代理会话，仅连接/连接中时）。设置窗转发表加启用开关列（保存流生效——`enabled` 纳入 changedForwardTunnels 签名，翻转保存即触发守卫重连）。启停在架构上与"编辑转发行保存"同构：`-L` 集合只在会话启动时生效，全部复用既有守卫重连机器，未运行的会话绝不拉起
 - **网关僵尸态自动检出与重建（watchdog）**：`SuanpanRuntime.audit()` 健康审计原语（running 旗标 vs 端口真相的 TCP 探测，stopped/healthy/mismatch 单一归宿）+ `LifecycleRuntime.tick` 对账（挂载协调器同款纪律：主线程轻检查、自愈动作丢 worker；5s 审计节奏 × 连续 3 次失配 ≈15s 检出，合法 reload 空窗不误触；失败退避 30s）。谓词只认"running 但端口无人听"——用户显式停止与崩溃态绝不拉起。Docker 形态同谓词进程内 watchdog（30s 循环，补上 compose 无 healthcheck 的缺口）。与 v0.11.0 的停机有界修复构成纵深防御
 
+### Changed
+- **网关车道共用骨架（架构评审 R2-1）**：四个 forward_* 共享的发送纪律上收单一归宿——`_LaneCtx` 记账上下文（prologue ×4）、`_send_upstream`（build + RetryPolicy + 幂等探针，曾逐字 ×4）、`_reject_5xx`（5xx 拒绝块 ×4）、`_lane_out_headers`（过滤+provider 宣告+fallback 三件套 ×4）、`_stream_response`（流式尾 ×3）；各车道只剩真差异（请求整备/URL/错误体形状/响应塑形）。顺手数据质量修复：anthropic 流式路径与转换车道非流式读体错误路径此前漏记 agent 维度（ADR-010 M5 统计口径），现四车道统一归因。count_tokens 契约 genuinely 不同（无 5xx 改写/无用量日志）保持独立
+- **ConfigServer 路由表化（架构评审 R2-2）**：23 个端点从「白名单 tuple ↔ elif 链双份声明 + 每 elif 手抄 auth/shape/域调用仪式」收敛为三张路由表（GET 7 / POST 12 / PUT 1，一个端点一行声明）——do_* 只剩表遍历，新增端点 = 表里加一行 + 一个 handler 方法；index 隧道解析三处手抄（test-tunnel / test-forward 旧载荷 / NFS 端点）归 `_saved_tunnel_by_index` 单一归宿。行为零变化（含认证顺序、401/404 边界、旧载荷兼容）；路由表自洽测试钉住表项可调、POST/PUT 不共享路径、端点计数
+- **app.py 用户流下沉（架构评审 C1，第一批）**：「未连接绝不拉起」守卫三处手写（菜单翻转 / 桥接 if_connected / 注释互引的保存流同判）收敛进 `ConnectionCoordinator` 单一归宿——`proxy_connected`/`forward_connected` 谓词 + `restart_forward_async(guarded=True)` 守卫重建入口（daemon 线程纪律同归）；65 行翻转闭包的 mutate 构造归 `mpconf.toggle_forward_row` 纯函数（读侧 `forward_row(s)`），app.py 只剩意图胶水；`_open_config_window` 的第二条直启路径（直调 `config_server.start()`）删除——:9528 启停全经 `lifecycle.sync_config_server` 单一归宿。coordinator 新增守卫真值表测试；lifecycle 属性别名清理留作后续批次
+- **运行态装饰单一归宿（架构评审 C2）**：`/api/state` 的内联装饰（capture_active/is_proxy/forward_running/nfs_states 约 30 行）上收为 `mpconf.config.decorate_runtime_state` 纯函数——装饰写入的键 = `RUNTIME_DECORATED_FIELDS` 单点声明，`READONLY_DECORATED_FIELDS` 的运行态半边由它派生（两份手维护名单合一）；is_proxy 的角色解析（id→下标→首条）与 merge 收敛为 `resolve_proxy_tunnel` 单一判定（装饰处原为手写第三种变体）。新增一条运行态事实 = 投影加字段 + 装饰处加一个键，config_server 的 `/api/state` handler 不再持有装饰知识
+- **供应商卡片 additive（架构评审 C3）**：余额响应语法从 `normalize_balance` 的形状嗅探链移入注册表 API 卡（第 4 元 `parser` 名 + `model_usage_url` 升 `(url, parser)`）——归一按卡精确路由、形状嗅探只作兜底，新增厂商=加一张卡不再往嗅探链加分支；测试机器检查每张卡都带语法名。设置窗 Anthropic 原生端点提示删 JS 平行硬编码表（漂移源），改派生自 `/api/provider-templates` 的 `anthropic_native` 位（单一真源注册表）。刻意的例外：compat 的 `_NEEDS_COMPLETION_TOKENS` 是模型族知识（按模型名前缀、跨厂商适用）不进厂商卡；capture identify() 维持资源契约独立
+- **claude_code_setup 收敛（架构评审 C4）**：①tier 规则前缀命中语义归还 `suanpan/router.first_tier_route`（原 `_first_tier_rule` 镜像 router 语义——前缀知识不落第二处，CC 角色种子与 decide_route 同源）；②OpenCode/ZCode 两条 JSON 车道的 owned 槽位 plan/apply 半成品合 `_json_provider_plan/_json_provider_apply`（两份 apply 原为逐字节镜像）——行为零变化，router 侧新增测试钉住逆查询语义
+
+### Fixed
+- **五个全局端口的 JS 预检漏显式 0（架构评审 R2-3，报警器首跑实锄）**：`S.mp.socks5_port&&(…)` 的 falsy 短路让 `端口=0` 过第一道闸、只在提交 422 现形（与 R1-C5 的 NFS 端口同类洞）——socks5/http/抓包/配置服务/网关五处全部改 `portInvalid` 共享跳过语义（null/''=未填跳过，0 必报），与 prepare 同判
+
+### Added
+- **跨语言校验漂移报警（架构评审 R2-3）**：`tests/test_validation_mirror.py` + `tests/js/validate_mirror.mjs`——同一语料两侧同跑（Python 分域校验器直调 + 经 extract.mjs 取设置窗真实发布的 LAYER 1），镜像族断言「同错同净」、单侧族（py_only 6 项 / js_only 1 项）显式白名单登记。镜像结构本身保留（双层拦是既定约定），但单侧改规则不跟另一侧、或新增单侧规则不挂号都会红——静默漂移变显式决策。首跑即抓到上述 falsy-0 活缺陷
+
+- **:9528 孤儿监听（架构评审 R2-4）**：开设置窗路径的 except 分支此前重置持有者但不收敛——`show_config_window` 在服务已启动后抛异常时，零持有者状态下 :9528 持续常驻直到下一个偶然的收敛事件。修复：持有者变更收进 `_set_config_holders` 唯一写口（置位/清位与收敛是一个动作，开窗/关窗/复制闩锁/异常路径全部走此口）；唯一刻意不收敛的是开窗启动失败分支（服务未在听，收敛无益——文档化）。测试钉住：异常路径收敛两次、关窗经写口、闩锁经写口
+- **远程挂载服务器清单「N 挂载中」徽标恒为 0**：v0.10.1 把 `/api/state` 的 `nfs_states` 值升为对象 `{status,error,fixable}` 后，清单徽标计数仍按旧字符串比较——对象形状全部漏计。计数移入设置窗 LAYER 1，与状态单元格共用同一形状归一助手 `nfsStateValue`，node 测试钉住两种形状的计数。同批修复：挂载 reconcile 确认已挂载/卸载完成两条路径此前不清 `fixable`（陈旧「修复导出」标记可能附着在非异常态进 `/api/state`，现随 error 同步清除）；`/api/nfs-setup-remote` 对 `mounts:[null]` 直接 400 拒绝（此前穿透校验，`shlex.quote(None)` 在 handler 线程抛 TypeError）
+- **设置窗端口冲突预检漏 NFS 本地端口（架构评审 C5）**：JS `validateConfig` 手抄镜像 prepare 校验器时漏了 NFS 端口——NFS×转发/全局端口撞车过第一道闸、只在提交时 422 现形。现补齐同一命名空间与同口径「实际在用才占端口」（enabled 或配置了挂载；纯默认节点不占），并补 NFS 端口行级范围校验；node 测试钉住冲突双向 + 默认节点不误报 + 越界行级报
+
 ## [v0.11.0] — 2026-09-22 — ADR-010 协议矩阵：三协议入站 + 一个 Key 配好全部 Agent
 
 ### Added

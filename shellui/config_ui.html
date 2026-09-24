@@ -394,11 +394,18 @@ function numberDefault(value,fallback){
 // =12049、空字段=''、auto_mount 严格布尔，未触碰的隧道不产生假 dirty。
 // nfs_states 装饰值归一（对象 {status,error,fixable}；字符串 = 旧形状
 // 兼容测试夹具）——可见性链路：分类(fixable)→投影→装饰→此处→状态单元格
-function nfsStateOf(states,name){
-  const v=(states||{})[name];
+function nfsStateValue(v){
   if(v==null)return{status:'unmounted',error:'',fixable:''};
   if(typeof v==='string')return{status:v,error:'',fixable:''};
   return{status:v.status||'unmounted',error:v.error||'',fixable:v.fixable||''};
+}
+function nfsStateOf(states,name){
+  return nfsStateValue((states||{})[name]);
+}
+// 计数与状态单元格共用同一形状归一——nfs_states 生产形状是对象，
+// 字符串比较会把对象形状全部漏计
+function _nfsMountedCount(t){
+  return Object.values(t.nfs_states||{}).filter(v=>nfsStateValue(v).status==='mounted').length;
 }
 // 运行态装饰定向合并：只动装饰字段，绝不覆盖表单字段（dirty 真相在
 // 表单）——曾有的坑：整页 renderView 会冲掉未保存的编辑
@@ -537,12 +544,25 @@ function validateConfig(S){
       if(!Number.isInteger(rp)||rp<1||rp>65535)errors.push(`${tn}: 转发远程端口无效（须 1..65535）`);
       if(/\s/.test(rh)||rh.includes(':'))errors.push(`${tn}: 转发远程地址无效（暂不支持 IPv6）`);
     });
+    // NFS 本地端口行级形状（镜像 prepare 的 _nfs_errors；无效值不再
+    // 进冲突命名空间——两个错误不得叠加报）
+    const n=t.nfs;
+    if(n&&typeof n==='object'){
+      const np=n.local_port;
+      if(np!=null&&np!==''&&(!Number.isInteger(np)||np<1||np>65535))
+        errors.push(`${tn}: NFS 本地端口无效（须 1..65535）`);
+    }
   });
-  if(S.mp.socks5_port&&(S.mp.socks5_port<1||S.mp.socks5_port>65535))errors.push('SOCKS5 端口无效');
-  if(S.mp.http_listen_port&&(S.mp.http_listen_port<1||S.mp.http_listen_port>65535))errors.push('HTTP 监听端口无效');
-  if(S.mp.capture_port&&(S.mp.capture_port<1||S.mp.capture_port>65535))errors.push('抓包端口无效');
-  if(S.mp.config_port&&(S.mp.config_port<1||S.mp.config_port>65535))errors.push('配置服务端口无效');
-  if(S.sp.listen_port&&(S.sp.listen_port<1||S.sp.listen_port>65535))errors.push('路由网关端口无效');
+  // 端口行级校验共享跳过语义：null/''/undefined = 未填跳过；显式 0
+  // 等非法值必报（曾因 falsy 短路漏 0——listen_port=0 过第一道闸
+  // 只在 422 现形，与 R1-C5 的 NFS 端口同类洞；跨语言报警
+  // test_validation_mirror 钉住与 prepare 的同错同净）
+  const portInvalid=v=>v!=null&&v!==''&&(v<1||v>65535);
+  if(portInvalid(S.mp.socks5_port))errors.push('SOCKS5 端口无效');
+  if(portInvalid(S.mp.http_listen_port))errors.push('HTTP 监听端口无效');
+  if(portInvalid(S.mp.capture_port))errors.push('抓包端口无效');
+  if(portInvalid(S.mp.config_port))errors.push('配置服务端口无效');
+  if(portInvalid(S.sp.listen_port))errors.push('路由网关端口无效');
   // Port uniqueness across services — a duplicate only fails at bind time
   // otherwise, long after the user left the form. Absent values are skipped
   // (collect() fills defaults once the view has been visited).
@@ -566,6 +586,20 @@ function validateConfig(S){
         else seen[lp]=ref;
       }
     });
+  });
+  // NFS 本地端口进同一命名空间（镜像 prepare 的「实际在用才占端口」：
+  // enabled 或配置了挂载；merge 填的纯默认节点不占——两条隧道不得互报
+  // 假冲突）。曾漏：NFS×转发/全局端口撞车过第一道闸、只在 422 现形
+  (S.mp.tunnels||[]).forEach(t=>{
+    const n=t.nfs;
+    if(!n||typeof n!=='object')return;
+    if(!(n.enabled===true||(n.mounts&&n.mounts.length)))return;
+    const np=n.local_port;
+    if(!Number.isInteger(np)||np<1||np>65535)return;  // 形状归行级校验
+    const tn=t.name||t.ssh_host||'隧道';
+    const ref=`${tn} NFS 本地端口`;
+    if(seen[np])errors.push(`端口冲突：${seen[np]} 与 ${ref} 同为 ${np}`);
+    else seen[np]=ref;
   });
   Object.entries(S.sp.providers||{}).forEach(([k,p])=>{
     if(!k||!k.trim())errors.push('供应商名称不能为空');
@@ -613,17 +647,24 @@ const ROUTE_SOURCE_LABELS={
   default:'默认路由',
 };
 function routeSourceLabel(source){return ROUTE_SOURCE_LABELS[source]||source;}
-const ANTHROPIC_CACHE_ENDPOINTS=[
-  {host:'api.anthropic.com',path:'/'},
-  {host:'open.bigmodel.cn',path:'/api/anthropic'},
-  {host:'api.kimi.com',path:'/coding'},
-];
+// C3：Anthropic 原生端点集合派生自 /api/provider-templates 的
+// anthropic_native 位（单一真源 PROVIDER_REGISTRY）——原平行硬编码
+// host/path 表是漂移源（模板未到时 custom-only 兜底 = 恒 false，
+// 模板到达后 load() 的竞态收口会重渲染 providers 视图）
+function anthropicNativeEndpoints(){
+  return PROVIDER_TEMPLATES
+    .filter(t=>t&&t.anthropic_native===true&&t.base_url)
+    .map(t=>{try{const u=new URL(t.base_url);
+      return{host:u.hostname.toLowerCase(),
+        path:u.pathname.replace(/\/+$/,'')||'/'};}catch(e){return null;}})
+    .filter(Boolean);
+}
 function supportsAnthropicPromptCaching(provider){
   let endpoint;
   try{endpoint=new URL(provider?.base_url||'');}catch(e){return false;}
   const host=endpoint.hostname.toLowerCase();
   const path=endpoint.pathname.replace(/\/+$/,'')||'/';
-  return ANTHROPIC_CACHE_ENDPOINTS.some(x=>x.host===host&&(
+  return anthropicNativeEndpoints().some(x=>x.host===host&&(
     x.path==='/'||path===x.path||path.startsWith(x.path+'/')
   ));
 }
@@ -1441,9 +1482,6 @@ function toggleForwardSession(btn,tunnelId,action){
 // ── NFS 远程挂载 view（ADR-007，master-detail 同隧道页）──
 const NFS_STATUS_LABEL={mounted:['已挂载','ok'],mounting:['挂载中…','warn'],
   unmounting:['卸载中…','warn'],error:['异常','err'],unmounted:['未挂载','muted']};
-function _nfsMountedCount(t){
-  return Object.values(t.nfs_states||{}).filter(s=>s==='mounted').length;
-}
 function nfsMountRows(t){
   const n=t.nfs||{},states=t.nfs_states||{};
   const ms=n.mounts||[];

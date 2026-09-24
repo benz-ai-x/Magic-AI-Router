@@ -628,61 +628,64 @@ class TestToggleForward(unittest.TestCase):
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_host": "127.0.0.1",
               "remote_port": 80, "enabled": True}])
-        a._conn.forward_sessions.return_value = []
         a._conn.proxy_tunnel_id = "t-other"
-        with patch.object(app.threading, "Thread", self._FakeThread):
-            a.make_toggle_forward(tid, 0)(None)
+        a.make_toggle_forward(tid, 0)(None)
         import json as _json
         from shared import config_store
         disk = _json.loads(open(config_store.PATHS["mp"]).read())
-        # 未运行的会话只写配置，绝不拉起
+        # 磁盘翻转走事务写径；重建分发恒走守卫入口（guarded 默认 True，
+        # 未连接绝不拉起的真值表见 coordinator 的 TestForwardGuards）
         self.assertIs(disk["tunnels"][0]["forwards"][0]["enabled"], False)
+        a._conn.restart_forward_async.assert_called_once_with(
+            tid, a._reload_config_or_alert,
+            thread_name="ToggleForwardRebuild")
         a._conn.restart_forward.assert_not_called()
 
     def test_running_session_gets_rebuild(self):
-        from tunnel.connection_coordinator import ForwardState
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_port": 80}])
-        a._conn.forward_sessions.return_value = [
-            ForwardState(tid, "fw", "connected")]
-        a._conn.proxy_tunnel_id = "t-other"
-        with patch.object(app.threading, "Thread", self._FakeThread):
-            a.make_toggle_forward(tid, 0)(None)
-        a._conn.restart_forward.assert_called_once()
-
-    def test_error_state_session_not_pulled_up(self):
-        """review c-1：SSH 失败滞留的 error 态会话——翻转绝不拉起。"""
-        from tunnel.connection_coordinator import ForwardState
-        a, tid = self._seed_and_app(
-            [{"local_port": 9000, "remote_port": 80}])
-        a._conn.forward_sessions.return_value = [
-            ForwardState(tid, "fw", "error")]
+        a._conn.forward_connected.return_value = True
+        a._conn.restart_forward_async.return_value = True
         a._conn.proxy_tunnel_id = "t-other"
         a.make_toggle_forward(tid, 0)(None)
+        a._conn.restart_forward_async.assert_called_once_with(
+            tid, a._reload_config_or_alert,
+            thread_name="ToggleForwardRebuild")
+
+    def test_error_state_session_not_pulled_up(self):
+        """review c-1：SSH 失败滞留的 error 态会话——翻转绝不拉起。
+        app 只经守卫入口分发（guard 在 coordinator 内判定）；底层
+        restart_forward 不被触达。"""
+        a, tid = self._seed_and_app(
+            [{"local_port": 9000, "remote_port": 80}])
+        a._conn.proxy_tunnel_id = "t-other"
+        a.make_toggle_forward(tid, 0)(None)
+        a._conn.restart_forward_async.assert_called_once_with(
+            tid, a._reload_config_or_alert,
+            thread_name="ToggleForwardRebuild")
         a._conn.restart_forward.assert_not_called()
 
-    def test_proxy_connecting_not_rebuilt(self):
-        """review c-1：connecting 不算在跑——与保存流同判（仅 connected）。"""
+    def test_proxy_connecting_not_pulled_up(self):
+        """review c-1：connecting 不算在跑——守卫谓词 proxy_connected
+        （仅 connected）归 coordinator，app 只消费。"""
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_port": 80}])
         a._conn.proxy_tunnel_id = tid
-        a._conn.ssh.status = "connecting"
+        a._conn.proxy_connected = False
         with patch.object(a, "reconnect") as rc:
             a.make_toggle_forward(tid, 0)(None)
             rc.assert_not_called()
 
     def test_disabling_last_enabled_forward_says_stopped(self):
         """review c-3：全停用后 restart 实为收敛停止——通知如实。"""
-        from tunnel.connection_coordinator import ForwardState
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_port": 80}])
-        a._conn.forward_sessions.return_value = [
-            ForwardState(tid, "fw", "connected")]
+        a._conn.forward_connected.return_value = True
+        a._conn.restart_forward_async.return_value = True
         a._conn.proxy_tunnel_id = "t-other"
-        with patch.object(app.threading, "Thread", self._FakeThread), \
-             patch.object(a, "_notify") as notify:
+        with patch.object(a, "_notify") as notify:
             a.make_toggle_forward(tid, 0)(None)
-        a._conn.restart_forward.assert_called_once()
+        a._conn.restart_forward_async.assert_called_once()
         msg = notify.call_args[0][1]
         self.assertIn("已停止", msg)
         self.assertNotIn("重建中", msg)
@@ -691,10 +694,52 @@ class TestToggleForward(unittest.TestCase):
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_port": 80}])
         a._conn.proxy_tunnel_id = tid   # 该隧道就是代理隧道
-        a._conn.ssh.status = "stopped"
+        a._conn.proxy_connected = False
         with patch.object(a, "reconnect") as rc:
             a.make_toggle_forward(tid, 0)(None)
             rc.assert_not_called()   # 代理未跑：只写配置
-            a._conn.ssh.status = "connected"
+            a._conn.proxy_connected = True
             a.make_toggle_forward(tid, 0)(None)
             rc.assert_called_once()
+
+
+class TestConfigHoldersAtomicity(unittest.TestCase):
+    """ADR-009 持有者唯一写口（架构评审 R2-4）：变更即收敛——
+    except 路径曾重置持有者不收敛，零持有者时 :9528 常驻。"""
+
+    def test_open_window_failure_leaves_holder_reset_without_converge(self):
+        a = _make_app()
+        a._lifecycle.sync_config_server.return_value = False
+        with patch.object(app.rumps, "alert"):
+            a._open_config_window("")
+        self.assertFalse(a._config_window_open)
+        self.assertEqual(a._lifecycle.sync_config_server.call_count, 1)
+
+    def test_open_window_exception_converges_down(self):
+        """R2-4 修复点：show_config_window 抛异常（服务可能已在听）→
+        清位必须收敛——孤儿监听结构性不可能。"""
+        a = _make_app()
+        a._lifecycle.sync_config_server.return_value = True
+        with patch.object(app, "show_config_window",
+                          side_effect=RuntimeError("boom")), \
+             patch.object(app.rumps, "alert"):
+            a._open_config_window("#quickstart")
+        self.assertFalse(a._config_window_open)
+        # 置位收敛 + 异常清位收敛 = 2 次
+        self.assertEqual(a._lifecycle.sync_config_server.call_count, 2)
+
+    def test_window_close_releases_via_write_port(self):
+        a = _make_app()
+        a._on_config_window_closed()
+        self.assertFalse(a._config_window_open)
+        a._lifecycle.sync_config_server.assert_called_once_with(False)
+
+    def test_copy_instructions_latches_via_write_port(self):
+        a = _make_app()
+        a._config_server = MagicMock()
+        a._config_server.agent_instructions.return_value = "curl ..."
+        with patch.object(app.subprocess, "Popen"), \
+             patch.object(a, "_notify"):
+            a._copy_agent_instructions()
+        self.assertTrue(a._copy_api_latch)
+        a._lifecycle.sync_config_server.assert_called_once_with(True)

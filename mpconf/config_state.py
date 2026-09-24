@@ -68,10 +68,12 @@ def _read_one(path: str, loader):
 
 # 服务端注入的只读装饰字段（#52 单点声明）：config_server 读取时注入
 # 供 UI 展示，prepare 剥除保证持久化配置永不携带——两侧共用此名单，
-# 新增装饰字段不再靠注释对齐。
+# 新增装饰字段不再靠注释对齐。运行态半边派生自 mpconf.config
+# （RUNTIME_DECORATED_FIELDS：装饰写入的键即剥除的键，一处声明）。
+from mpconf.config import RUNTIME_DECORATED_FIELDS
+
 READONLY_DECORATED_FIELDS = frozenset(
-    {"has_password", "capture_active", "is_proxy", "forward_running",
-     "nfs_states"})
+    {"has_password"}) | RUNTIME_DECORATED_FIELDS
 
 
 def recover_pending_txn() -> bool:

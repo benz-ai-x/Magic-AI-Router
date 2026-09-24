@@ -1269,3 +1269,74 @@ class TestAgentSetupEndpoints(unittest.TestCase):
                      body='{"agent": "zcode", "options": "junk"}',
                      token=self.token)
         su.assert_called_once_with("zcode", None)
+
+
+class TestNfsSetupRemoteEndpoint(unittest.TestCase):
+    """POST /api/nfs-setup-remote 的 mounts 入参校验。"""
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def _post(self, body, token=None):
+        return _request(self.port, "POST", "/api/nfs-setup-remote",
+                        body=body,
+                        token=self.token if token is None else token)
+
+    def test_requires_token(self):
+        status, _ = self._post('{"mounts": []}', token=False)
+        self.assertEqual(status, 401)
+
+    def test_null_mount_entries_rejected(self):
+        # [null] 曾穿透 all() 生成器短路（空序列恒 True）→
+        # shlex.quote(None) 在 handler 线程抛 TypeError
+        status, data = self._post(
+            '{"tunnel": {"ssh_host": "srv"}, "mounts": [null]}')
+        self.assertEqual(status, 400)
+        body = json.loads(data)
+        self.assertFalse(body["ok"])
+        self.assertIn("mounts", body["error"])
+
+    def test_mixed_null_entry_rejected(self):
+        status, data = self._post(
+            '{"tunnel": {"ssh_host": "srv"}, "mounts": ["/data", null]}')
+        self.assertEqual(status, 400)
+        self.assertFalse(json.loads(data)["ok"])
+
+    def test_valid_mounts_forwarded(self):
+        with patch.object(config_server, "nfs_setup_remote",
+                          return_value={"ok": True}) as setup:
+            status, data = self._post(
+                '{"tunnel": {"ssh_host": "srv"}, "mounts": ["/data"], '
+                '"squash": true}')
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(data)["ok"])
+        setup.assert_called_once()
+
+
+class TestDispatchTables(unittest.TestCase):
+    """路由表自洽（架构评审 R2-2）：一个端点一行声明——表项必可调、
+    GET/PUT 不越 method、覆盖数与端点清单一致。"""
+
+    def test_tables_map_to_callable_handlers(self):
+        from services import config_server as cs
+        for table in (cs._API_GET, cs._API_POST, cs._API_PUT):
+            for path, handler in table.items():
+                self.assertTrue(path.startswith("/api/"), path)
+                self.assertTrue(callable(handler), path)
+
+    def test_post_and_put_paths_disjoint(self):
+        # GET+PUT 同路径（/api/state 读写对）是正常 REST；带 body 的
+        # POST 与 PUT 不得共享路径——共享即语义混淆
+        from services import config_server as cs
+        self.assertFalse(set(cs._API_POST) & set(cs._API_PUT))
+
+    def test_endpoint_count(self):
+        # 端点增减须显式改这里的数字——防表项被误删
+        from services import config_server as cs
+        self.assertEqual(len(cs._API_GET), 7)
+        self.assertEqual(len(cs._API_POST), 12)
+        self.assertEqual(len(cs._API_PUT), 1)

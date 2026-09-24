@@ -76,6 +76,43 @@ test("validateConfig skips port conflict check when ports absent", () => {
   assert.deepEqual(L.validateConfig(S), []);
 });
 
+// ── NFS 端口进冲突命名空间（镜像 prepare 的「实际在用才占端口」）──
+test("validateConfig flags NFS port conflicting with a forward port", () => {
+  // 曾漏：NFS×转发撞端口过第一道闸、只在 422 现形
+  const S = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "a", nfs: { enabled: true, local_port: 9000, mounts: [{ name: "d", remote_path: "/d" }] } },
+    { ssh_host: "b", forwards: [{ local_port: 9000, remote_host: "127.0.0.1", remote_port: 80 }] },
+  ] } });
+  const errs = L.validateConfig(S);
+  assert.ok(errs.some((e) => e.includes("端口冲突") && e.includes("NFS 本地端口") && e.includes("9000")));
+});
+
+test("validateConfig flags NFS port conflicting with a global service port", () => {
+  const S = L.normalizeState({ mp: {
+    socks5_port: 12049,
+    tunnels: [{ ssh_host: "a", nfs: { enabled: false, local_port: 12049, mounts: [{ name: "d", remote_path: "/d" }] } }],
+  } });
+  const errs = L.validateConfig(S);
+  assert.ok(errs.some((e) => e === "端口冲突：SOCKS5 与 a NFS 本地端口 同为 12049"));
+});
+
+test("validateConfig NFS occupies only when enabled or has mounts", () => {
+  // merge 会给每条隧道填纯默认 nfs 节（enabled=False、无挂载、12049）——
+  // 两条隧道的默认节点不得互报假冲突
+  const S = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "a", nfs: { enabled: false, local_port: 12049, mounts: [] } },
+    { ssh_host: "b", nfs: { enabled: false, local_port: 12049, mounts: [] } },
+  ] } });
+  assert.deepEqual(L.validateConfig(S), []);
+});
+
+test("validateConfig flags out-of-range NFS local port at row level", () => {
+  const S = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "a", nfs: { enabled: true, local_port: 70000, mounts: [{ name: "d", remote_path: "/d" }] } },
+  ] } });
+  assert.ok(L.validateConfig(S).some((e) => e === "a: NFS 本地端口无效（须 1..65535）"));
+});
+
 // ── parseAddr ─────────────────────────────────────────
 test("parseAddr handles user@host", () => {
   assert.deepEqual(L.parseAddr("ubuntu@example.com"), { user: "ubuntu", host: "example.com" });
@@ -193,50 +230,95 @@ test("balanceRowModel splits apis into quota and money zones", () => {
   assert.deepEqual(L.balanceRowModel({ provider: "a", supported: true }).quotaApis, []);
 });
 
+// C3：原生端点集合派生自 PROVIDER_TEMPLATES（服务端注册表单一真源）——
+// 测试先种子模板（镜像真实 boot 载荷），结束恢复 custom-only 默认
+function seedNativeTemplates() {
+  L.setProviderTemplates([
+    {id: "anthropic", label: "Anthropic", base_url: "https://api.anthropic.com", anthropic_native: true},
+    {id: "glm", label: "GLM", base_url: "https://open.bigmodel.cn/api/anthropic", anthropic_native: true},
+    {id: "kimi", label: "KIMI", base_url: "https://api.kimi.com/coding", anthropic_native: true},
+    {id: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com", anthropic_native: false},
+  ]);
+}
+function resetTemplates() {
+  L.setProviderTemplates([{id: "custom", label: "自定义"}]);
+}
+
 test("providerCacheHint only flags uncached traffic without native mode", () => {
-  const uncached = {
-    calls: 2, input_tokens: 100, cache_read_tokens: 0,
-    cache_creation_tokens: 0, cache_hit_rate: 0,
-  };
-  assert.equal(
-    L.providerCacheHint({
+  seedNativeTemplates();
+  try {
+    const uncached = {
+      calls: 2, input_tokens: 100, cache_read_tokens: 0,
+      cache_creation_tokens: 0, cache_hit_rate: 0,
+    };
+    assert.equal(
+      L.providerCacheHint({
+        base_url: "https://open.bigmodel.cn/api/anthropic",
+        anthropic_native: false,
+      }, uncached),
+      "检查该供应商是否开启 Anthropic 原生模式",
+    );
+    assert.equal(L.providerCacheHint({
+      base_url: "https://open.bigmodel.cn/api/anthropic",
+      anthropic_native: true,
+    }, uncached), "");
+    assert.equal(L.providerCacheHint({
       base_url: "https://open.bigmodel.cn/api/anthropic",
       anthropic_native: false,
-    }, uncached),
-    "检查该供应商是否开启 Anthropic 原生模式",
-  );
-  assert.equal(L.providerCacheHint({
-    base_url: "https://open.bigmodel.cn/api/anthropic",
-    anthropic_native: true,
-  }, uncached), "");
-  assert.equal(L.providerCacheHint({
-    base_url: "https://open.bigmodel.cn/api/anthropic",
-    anthropic_native: false,
-  }, {
-    ...uncached, cache_hit_rate: null,
-  }), "");
-  assert.equal(L.providerCacheHint({
-    base_url: "https://api.deepseek.com/anthropic", anthropic_native: false,
-  }, uncached), "");
-  assert.equal(L.providerCacheHint({
-    base_url: "https://relay.example.com", anthropic_native: false,
-    models: ["deepseek-v4-pro"],
-  }, uncached), "");
+    }, {
+      ...uncached, cache_hit_rate: null,
+    }), "");
+    assert.equal(L.providerCacheHint({
+      base_url: "https://api.deepseek.com/anthropic", anthropic_native: false,
+    }, uncached), "");
+    assert.equal(L.providerCacheHint({
+      base_url: "https://relay.example.com", anthropic_native: false,
+      models: ["deepseek-v4-pro"],
+    }, uncached), "");
+  } finally {
+    resetTemplates();
+  }
 });
 
 test("supportsAnthropicPromptCaching uses endpoint capabilities, not labels", () => {
+  seedNativeTemplates();
+  try {
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://open.bigmodel.cn/api/anthropic/v1",
+    }), true);
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://api.kimi.com/coding",
+    }), true);
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://api.deepseek.com/anthropic",
+    }), false);
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://relay.example.com", models: ["glm-5.2"],
+    }), false);
+  } finally {
+    resetTemplates();
+  }
+});
+
+test("supportsAnthropicPromptCaching derives from templates, not a parallel table", () => {
+  // custom-only（模板未到/纯自定义）= 恒 false；模板声明即生效——
+  // 服务端注册表是端点知识的唯一真相，JS 不再平行硬编码
   assert.equal(L.supportsAnthropicPromptCaching({
-    base_url: "https://open.bigmodel.cn/api/anthropic/v1",
-  }), true);
-  assert.equal(L.supportsAnthropicPromptCaching({
-    base_url: "https://api.kimi.com/coding",
-  }), true);
-  assert.equal(L.supportsAnthropicPromptCaching({
-    base_url: "https://api.deepseek.com/anthropic",
+    base_url: "https://open.bigmodel.cn/api/anthropic",
   }), false);
-  assert.equal(L.supportsAnthropicPromptCaching({
-    base_url: "https://relay.example.com", models: ["glm-5.2"],
-  }), false);
+  L.setProviderTemplates([
+    {id: "glm", label: "GLM", base_url: "https://open.bigmodel.cn/api/anthropic", anthropic_native: true},
+  ]);
+  try {
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://open.bigmodel.cn/api/anthropic",
+    }), true);
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://open.bigmodel.cn/api/paas/v4",  // openai 卡路径不匹配
+    }), false);
+  } finally {
+    resetTemplates();
+  }
 });
 
 // ── ctxSuffix ─────────────────────────────────────────
@@ -1207,6 +1289,24 @@ test("nfsStateOf normalizes object/string/absent shapes", () => {
   assert.deepEqual(
     L.nfsStateOf({x:{status:"error",error:"远程路径不存在或未导出",fixable:"exports"}}, "x"),
     {status:"error",error:"远程路径不存在或未导出",fixable:"exports"});
+});
+
+test("nfsStateValue normalizes a single decoration value", () => {
+  assert.deepEqual(L.nfsStateValue(undefined), {status:"unmounted",error:"",fixable:""});
+  assert.deepEqual(L.nfsStateValue("mounted"), {status:"mounted",error:"",fixable:""});
+  assert.deepEqual(L.nfsStateValue({status:"error",error:"x",fixable:"exports"}),
+    {status:"error",error:"x",fixable:"exports"});
+});
+
+test("_nfsMountedCount counts both decoration shapes", () => {
+  // 生产形状是对象；字符串 = 旧夹具形状——计数必须两种都认
+  const objs = {nfs_states:{a:{status:"mounted"},
+    b:{status:"error",error:"x"},c:{status:"unmounted"},d:{status:"mounting"}}};
+  assert.equal(L._nfsMountedCount(objs), 1);
+  const strs = {nfs_states:{a:"mounted", b:"error"}};
+  assert.equal(L._nfsMountedCount(strs), 1);
+  assert.equal(L._nfsMountedCount({}), 0);
+  assert.equal(L._nfsMountedCount({nfs_states:null}), 0);
 });
 
 test("mergeRuntimeDecorations updates decorations but never form fields", () => {

@@ -62,26 +62,6 @@ def _add_suffix(model: str, ctx_1m: bool) -> str:
     return model + "[1M]"
 
 
-def _first_tier_rule(rules: list, tier_prefix: str):
-    """First rule (in list order) whose match_prefix relates to tier_prefix.
-
-    #42: mirrors suanpan/router.py's first-hit prefix semantics — a rule
-    routes models M where M.startswith(match_prefix).  For the tier prefix
-    T, the rules that can route some T* model are exactly those where
-    T.startswith(match_prefix) (broader/equal rule) or
-    match_prefix.startswith(T) (more specific rule, e.g. claude-sonnet-4-5
-    for tier claude-sonnet).  Returns route_to or None.
-    """
-    for r in rules:
-        if not isinstance(r, dict):
-            continue
-        mp = r.get("match_prefix")
-        if mp and r.get("route_to") and (
-                tier_prefix.startswith(mp) or mp.startswith(tier_prefix)):
-            return r["route_to"]
-    return None
-
-
 def _default_roles_from_sp(sp: dict) -> dict:
     """Derive default role mappings from Suanpan routing rules.
 
@@ -97,10 +77,14 @@ def _default_roles_from_sp(sp: dict) -> dict:
     if not isinstance(rules, list):
         rules = []
 
+    # 前缀命中语义归 router（first_tier_route，与 decide_route 同源）——
+    # 延迟导入保住「网关依赖缺失时宿主降级」路径
+    from suanpan.router import first_tier_route
+
     default_target = (sp.get("router") or {}).get("default") or ""
 
     for prefix, role_key in _PREFIX_TO_TIER.items():
-        target = _first_tier_rule(rules, prefix) or default_target
+        target = first_tier_route(rules, prefix) or default_target
         if target:
             roles[role_key] = {"model": target, "ctx_1m": True}
 
@@ -670,6 +654,48 @@ def _codex_synced() -> bool:
         return False
 
 
+# ── JSON 家族共享件（OpenCode/ZCode 同一 owned 槽位语义）──────────
+
+def _old_provider_table(cfg) -> dict | None:
+    """cfg.provider[magic-router] 旧表查询（JSON 家族同一槽位）。"""
+    provider = cfg.get("provider")
+    if not isinstance(provider, dict):
+        return None
+    return provider.get(PROVIDER_ID)
+
+
+def _json_provider_plan(agent: str, path, exists: bool, cfg: dict,
+                        target: dict, summary: str) -> dict:
+    """JSON 家族（OpenCode/ZCode）共享的 plan 半成品：owned 槽位 =
+    provider.<PROVIDER_ID> 整表；already = 旧表与新表逐字节相等；
+    first_write = 旧表不是 dict（首次接入或异形残留都先备份）。"""
+    old_tbl = _old_provider_table(cfg)
+    return {
+        "agent": agent, "path": path, "exists": exists, "cfg": cfg,
+        "target": target, "already": old_tbl == target,
+        "changes": [{
+            "key": f"provider.{PROVIDER_ID}",
+            "action": "replace" if old_tbl else "add",
+            "old": "（已配置，将更新）" if old_tbl else None,
+            "new": summary}],
+        "first_write": not isinstance(old_tbl, dict),
+    }
+
+
+def _json_provider_apply(plan: dict) -> None:
+    """JSON 家族共享 apply：只替换 provider.<PROVIDER_ID> 整表，用户其余
+    内容原样保留。"""
+    cfg = plan["cfg"]
+    provider = cfg.get("provider")
+    if not isinstance(provider, dict):
+        provider = {}
+        cfg["provider"] = provider
+    provider[PROVIDER_ID] = plan["target"]
+    config_store.atomic_write(
+        plan["path"], json.dumps(cfg, indent=2, ensure_ascii=False),
+        backup=plan["first_write"])
+
+
 # ── OpenCode（~/.config/opencode/opencode.json，协议可选）──────────
 
 def _opencode_models_block(models_opt) -> dict:
@@ -720,34 +746,14 @@ def _opencode_plan(options: dict | None) -> dict:
               "options": {"baseURL": base_url, "apiKey": token},
               "models": models}
 
-    old_tbl = ((cfg.get("provider") or {}).get(PROVIDER_ID)
-               if isinstance(cfg.get("provider"), dict) else None)
-    already = (old_tbl == target)
-
-    changes = [{
-        "key": f"provider.{PROVIDER_ID}",
-        "action": "replace" if old_tbl else "add",
-        "old": "（已配置，将更新）" if old_tbl else None,
-        "new": f"npm={npm}，baseURL={base_url}，"
-               f"{len(models)} 个模型，apiKey={_masked(token)}"}]
-
-    return {
-        "agent": "opencode", "path": path, "exists": exists, "cfg": cfg,
-        "target": target, "already": already, "changes": changes,
-        "first_write": not isinstance(old_tbl, dict),
-    }
+    return _json_provider_plan(
+        "opencode", path, exists, cfg, target,
+        f"npm={npm}，baseURL={base_url}，"
+        f"{len(models)} 个模型，apiKey={_masked(token)}")
 
 
 def _opencode_apply(plan: dict) -> None:
-    cfg = plan["cfg"]
-    provider = cfg.get("provider")
-    if not isinstance(provider, dict):
-        provider = {}
-        cfg["provider"] = provider
-    provider[PROVIDER_ID] = plan["target"]
-    config_store.atomic_write(
-        plan["path"], json.dumps(cfg, indent=2, ensure_ascii=False),
-        backup=plan["first_write"])
+    _json_provider_apply(plan)
 
 
 def _opencode_synced() -> bool:
@@ -792,34 +798,14 @@ def _zcode_plan(options: dict | None) -> dict:
         "models": {m: {"name": m} for m in models if isinstance(m, str)},
     }
 
-    old_tbl = ((cfg.get("provider") or {}).get(PROVIDER_ID)
-               if isinstance(cfg.get("provider"), dict) else None)
-    already = (old_tbl == target)
-
-    changes = [{
-        "key": f"provider.{PROVIDER_ID}",
-        "action": "replace" if old_tbl else "add",
-        "old": "（已配置，将更新）" if old_tbl else None,
-        "new": f"kind=anthropic，baseURL={_gateway_url()}，"
-               f"{len(target['models'])} 个模型，apiKey={_masked(token)}"}]
-
-    return {
-        "agent": "zcode", "path": path, "exists": exists, "cfg": cfg,
-        "target": target, "already": already, "changes": changes,
-        "first_write": not isinstance(old_tbl, dict),
-    }
+    return _json_provider_plan(
+        "zcode", path, exists, cfg, target,
+        f"kind=anthropic，baseURL={_gateway_url()}，"
+        f"{len(target['models'])} 个模型，apiKey={_masked(token)}")
 
 
 def _zcode_apply(plan: dict) -> None:
-    cfg = plan["cfg"]
-    provider = cfg.get("provider")
-    if not isinstance(provider, dict):
-        provider = {}
-        cfg["provider"] = provider
-    provider[PROVIDER_ID] = plan["target"]
-    config_store.atomic_write(
-        plan["path"], json.dumps(cfg, indent=2, ensure_ascii=False),
-        backup=plan["first_write"])
+    _json_provider_apply(plan)
 
 
 def _zcode_synced() -> bool:

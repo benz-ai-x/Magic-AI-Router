@@ -46,7 +46,8 @@ class MountState(NamedTuple):
 
     NamedTuple 保位置兼容；消费面用字段访问——形状契约从位置元组升为
     命名字段。fixable 非空 = 存在结构化修复路径（"exports" = 远端未
-    导出，重跑一键安装可修），设置窗据此渲染「修复导出并重挂」按钮。
+    导出，重跑一键安装可修），设置窗据此渲染「修复导出并重挂」按钮；
+    非 error 态恒空——挂载成功/reconcile 确认/卸载完成即清。
     """
     tunnel_id: str
     tunnel_name: str
@@ -250,6 +251,7 @@ class MountCoordinator:
             if mounted_now and connected:
                 state.status = STATUS_MOUNTED
                 state.error = ""
+                state.fixable = ""
                 continue
             if mounted_now and not connected:
                 # 隧道断开：hard 挂载立即强制卸载（防 Finder 卡死）
@@ -265,6 +267,8 @@ class MountCoordinator:
                 continue
             if not connected:
                 state.status = STATUS_UNMOUNTED
+                state.error = ""
+                state.fixable = ""
         self._sweep_stale_mounts(tunnels, table)
 
     def _sweep_stale_mounts(self, tunnels, table):
@@ -418,3 +422,5 @@ class MountCoordinator:
             state = self._states.setdefault(key, _MountState())
             state.busy = False
             state.status = STATUS_UNMOUNTED
+            state.error = ""
+            state.fixable = ""

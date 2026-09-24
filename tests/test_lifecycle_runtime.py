@@ -345,7 +345,8 @@ class TestOnMpSavedWiring(unittest.TestCase):
     """on_mp_saved（app 内存副本收敛钩子）经构造函数直达 ConfigServer。"""
 
     def test_on_mp_saved_passes_through_to_config_server(self):
-        marker = lambda: None
+        def marker():
+            pass
         svc = _make_coordinator(on_mp_saved=marker)
         self.assertIs(svc._config_server._on_mp_saved, marker)
 

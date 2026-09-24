@@ -386,6 +386,55 @@ class TestNormalizeBalance(unittest.TestCase):
         self.assertEqual(result["pct"], 90)  # 90 > 20
 
 
+class TestNormalizeBalanceNamedParser(unittest.TestCase):
+    """C3：注册表 API 卡按名路由响应语法——形状嗅探只作兜底。"""
+
+    def test_named_parser_equivalent_to_sniff(self):
+        raw = {"balance_infos": [{"total_balance": "39.98",
+                                  "topped_up_balance": "40.00",
+                                  "currency": "CNY"}]}
+        self.assertEqual(
+            balance_usage.normalize_balance(raw, "余额", "deepseek_balance"),
+            balance_usage.normalize_balance(raw, "余额"))
+
+    def test_named_parser_kimi(self):
+        raw = {"usage": {"used": 5, "limit": 10, "resetTime": None},
+                "limits": [], "user": {"membership": {"level": ""}}}
+        result = balance_usage.normalize_balance(raw, "Coding Plan",
+                                                 "kimi_usage")
+        self.assertEqual(result["primary"], "套餐")
+        self.assertEqual(result["pct"], 50)
+
+    def test_mismatched_shape_falls_back_to_sniff(self):
+        # 卡上声明的语法与实际形状不符（接口变更期）→ 嗅探兜底，
+        # 行为不比无卡名差
+        raw = {"balance_infos": [{"total_balance": "1.00",
+                                  "topped_up_balance": "1.00",
+                                  "currency": "CNY"}]}
+        result = balance_usage.normalize_balance(raw, "x", "glm_account")
+        self.assertEqual(
+            result, balance_usage.normalize_balance(raw, "x"))
+
+    def test_unknown_parser_name_sniffs(self):
+        raw = {"data": {"balance": 3.5, "totalSpendAmount": 1.0}}
+        self.assertEqual(
+            balance_usage.normalize_balance(raw, "x", "no_such_parser"),
+            balance_usage.normalize_balance(raw, "x"))
+
+    def test_registry_cards_carry_parser_names(self):
+        # 注册表承诺的机器检查：每张 balance_apis 卡（及 model_usage_url）
+        # 都带语法名——无裸 3 元组漏挂
+        from shared.provider_auth import PROVIDER_REGISTRY
+        for entry in PROVIDER_REGISTRY.values():
+            for card in entry["balance_apis"]:
+                self.assertEqual(len(card), 4, card)
+                self.assertIn(card[3], balance_usage._BALANCE_PARSERS, card)
+            mu = entry.get("model_usage_url")
+            if mu:
+                self.assertEqual(len(mu), 2, mu)
+                self.assertIn(mu[1], balance_usage._BALANCE_PARSERS, mu)
+
+
 class TestFetchBalance(unittest.TestCase):
     def test_disabled_provider_skipped(self):
         sp = {"providers": {"x": {"enabled": False}}}

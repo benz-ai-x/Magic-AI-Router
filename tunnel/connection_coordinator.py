@@ -291,8 +291,8 @@ class ConnectionCoordinator:
 
         显式重连语义：会话存在即重建——error/stopped/退避态同（评审
         Spec-A：曾按 was_alive==connected 门控，error 态点「重新连接」
-        只停不连成死按钮）。守卫路径（保存后自动应用）在 app 侧按连接
-        态拦截，不会把未运行的会话送进来；能到这的都是显式意图。
+        只停不连成死按钮）。守卫语义（未连接绝不拉起）在
+        restart_forward_async 单一归宿，不会把未运行的会话送进来。
         """
         with self._lifecycle_lock:
             session = self._forward_sessions.get(tunnel_id)
@@ -306,6 +306,39 @@ class ConnectionCoordinator:
                 return True
             session.connect()
             return True
+
+    @property
+    def proxy_connected(self) -> bool:
+        """代理会话守卫谓词：仅 connected（不含 connecting——与保存流
+        同判，review c-1）。菜单翻转/桥接自动应用共用。"""
+        return self.ssh.status == "connected"
+
+    def forward_connected(self, tunnel_id) -> bool:
+        """转发会话守卫谓词：仅该会话 status=="connected" 算在跑——
+        error/退避态的滞留会话（stop_forward 才 pop）不算，绝不因配置
+        翻转/保存后自动应用被拉起（架构评审 C1：三处手写守卫的单一
+        归宿）。"""
+        return any(s.tunnel_id == tunnel_id and s.status == "connected"
+                   for s in self.forward_sessions())
+
+    def restart_forward_async(self, tunnel_id, reload_config_fn, *,
+                              guarded=True,
+                              thread_name="ForwardRebuild") -> bool:
+        """守卫重建的单一入口：daemon 线程跑 restart_forward（阻塞最多
+        ~10s 的子进程 join 不挂菜单/桥接线程）。
+
+        guarded=True（配置翻转/保存后自动应用）：仅该会话已连接才重建
+        ——否则跳过并记日志；guarded=False 为显式重连（会话存在即重建，
+        Spec-A 语义）。返回是否派发了重建。
+        """
+        if guarded and not self.forward_connected(tunnel_id):
+            logger.info("转发会话守卫跳过重建：%s 未连接", tunnel_id)
+            return False
+        threading.Thread(
+            target=self.restart_forward,
+            args=(tunnel_id, reload_config_fn),
+            name=thread_name, daemon=True).start()
+        return True
 
     def apply_autostarts(self):
         """按 forward_autostart 收敛补启（app 启动与配置重载后调用）。"""

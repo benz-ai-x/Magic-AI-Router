@@ -121,8 +121,151 @@ def _window_duration_hours(window):
     return 0
 
 
-def normalize_balance(raw, label):
+def _parse_deepseek_balance(raw, label):
+    """DeepSeek：{"balance_infos": [{"total_balance", "topped_up_balance",
+    "currency"}]}——形状不符返回 None（交还路由方）。"""
+    if not (isinstance(raw.get("balance_infos"), list)
+            and raw["balance_infos"]):
+        return None
+    info = raw["balance_infos"][0]
+    sym = "¥" if info.get("currency") == "CNY" else ""
+    return {"label": label, "primary": sym + str(info.get("total_balance", "—")),
+            "secondary": f"充值 {sym}{info.get('topped_up_balance', '—')}"}
+
+
+def _parse_glm_quota_limits(raw, label):
+    """GLM Coding Plan：{"data": {"limits": [...], "level": "..."}}。"""
+    d = raw.get("data", {}) if isinstance(raw.get("data"), dict) else {}
+    if not isinstance(d.get("limits"), list):
+        return None
+    level = (d.get("level") or "").upper() or "套餐"
+    quotas = []
+    pcts = []
+    for lim in d["limits"]:
+        period = _UNIT_NAMES.get(lim.get("unit"), f"unit{lim.get('unit')}")
+        if lim.get("type") == "TIME_LIMIT":
+            # 工具时长配额（usageDetails: search-prime/web-reader/zread），
+            # 不是 token 用量——period 标「·工具」与 model-usage 月度行区分
+            period += "·工具"
+        p = lim.get("percentage")
+        if isinstance(p, (int, float)):
+            pcts.append(int(p))
+        quotas.append(_quota_row(
+            period,
+            int(p) if isinstance(p, (int, float)) else None,
+            lim["currentValue"] if "currentValue" in lim else None,
+            lim["usage"] if "usage" in lim else None,
+            _fmt_reset_ms(lim.get("nextResetTime")),
+            _UNIT_DURATION_HOURS.get(lim.get("unit"), 0),
+        ))
+    quotas.sort(key=lambda q: q["_sort"])
+    for q in quotas:
+        del q["_sort"]
+    return {"label": label, "primary": level,
+            "pct": max(pcts) if pcts else None,
+            "quotas": quotas}
+
+
+def _parse_glm_model_usage(raw, label):
+    """GLM model-usage（月度官方统计，本月窗口）：{"data": {"totalUsage":
+    {"totalModelCallCount", "totalTokensUsage"}}}。"""
+    d = raw.get("data", {}) if isinstance(raw.get("data"), dict) else {}
+    tu = d.get("totalUsage") if isinstance(d.get("totalUsage"), dict) else None
+    if tu is None or "totalTokensUsage" not in tu:
+        return None
+    tokens = tu.get("totalTokensUsage")
+    calls = tu.get("totalModelCallCount")
+    row = _quota_row(_MONTHLY_PERIOD, None, tokens, None, None,
+                     _MONTH_HOURS)
+    del row["_sort"]
+    row["source"] = "api"
+    row["calls"] = calls
+    return {"label": label, "primary": "本月用量",
+            "pct": None, "quotas": [row]}
+
+
+def _parse_kimi_usage(raw, label):
+    """Kimi Coding Plan：{"usage": {周额度}, "limits": [{window: 5小时窗口}],
+    "totalQuota": {月度会员池, 按套餐填充, 可能为 {}}, "user": {...}}。"""
+    if not (isinstance(raw.get("usage"), dict) and "limit" in raw["usage"]):
+        return None
+    u = raw["usage"]
+    used, lim = int(u.get("used", 0)), int(u.get("limit", 0))
+    pct_num = round(used / lim * 100) if lim > 0 else None
+    level_raw = raw.get("user", {}).get("membership", {}).get("level", "")
+    level = _LEVEL_MAP.get(level_raw, level_raw or "套餐")
+    quotas = []
+    # limits[] holds windowed quotas (e.g. 300-minute = 5小时)
+    for entry in raw.get("limits") or []:
+        w = entry.get("window") or {}
+        det = entry.get("detail") or {}
+        wlabel = _window_label(w)
+        if wlabel and det.get("limit"):
+            wused, wlim = int(det.get("used", 0)), int(det["limit"])
+            wpct = round(wused / wlim * 100) if wlim > 0 else None
+            quotas.append(_quota_row(
+                wlabel, wpct, wused, wlim,
+                _fmt_reset(det["resetTime"]) if det.get("resetTime") else None,
+                _window_duration_hours(w),
+            ))
+    quotas.append(_quota_row(
+        "每周", pct_num, used, lim,
+        _fmt_reset(u["resetTime"]) if u.get("resetTime") else None,
+        _WEEK_HOURS,
+    ))
+    # totalQuota = 月度会员池，按套餐填充（我们 Advanced 账号返回 {}）
+    tq = raw.get("totalQuota") or {}
+    if tq.get("limit"):
+        tused, tlim = int(tq.get("used", 0)), int(tq["limit"])
+        quotas.append(_quota_row(
+            _MONTHLY_PERIOD,
+            round(tused / tlim * 100) if tlim > 0 else None,
+            tused, tlim,
+            _fmt_reset(tq["resetTime"]) if tq.get("resetTime") else None,
+            _MONTH_HOURS,
+        ))
+    quotas.sort(key=lambda q: q["_sort"])
+    for q in quotas:
+        del q["_sort"]
+    all_pcts = [q["pct"] for q in quotas if q["pct"] is not None]
+    return {"label": label, "primary": level,
+            "pct": max(all_pcts) if all_pcts else None,
+            "quotas": quotas}
+
+
+def _parse_glm_account(raw, label):
+    """GLM 账户：{"data": {"balance", "totalSpendAmount"}}。"""
+    d = raw.get("data", {}) if isinstance(raw.get("data"), dict) else {}
+    if "balance" not in d:
+        return None
+    return {"label": label, "primary": f"¥{d['balance']:.2f}",
+            "secondary": f"已消费 ¥{d.get('totalSpendAmount', 0):.2f}"}
+
+
+# 响应语法名 → 解析器（注册表 API 卡按名引用；本表是名字的单一归宿）
+_BALANCE_PARSERS = {
+    "deepseek_balance": _parse_deepseek_balance,
+    "glm_quota_limits": _parse_glm_quota_limits,
+    "glm_model_usage": _parse_glm_model_usage,
+    "kimi_usage": _parse_kimi_usage,
+    "glm_account": _parse_glm_account,
+}
+
+# 嗅探兜底链（原行为保序）：卡上无 parser 名或形状不符时逐个试形状
+_SNIFF_CHAIN = (
+    _parse_deepseek_balance,
+    _parse_glm_quota_limits,
+    _parse_glm_model_usage,
+    _parse_kimi_usage,
+    _parse_glm_account,
+)
+
+
+def normalize_balance(raw, label, parser=None):
     """Shape a raw balance/usage API response into a structured dict.
+
+    路由：卡上声明 parser 名（注册表 API 卡第 4 元）→ 按名精确路由；
+    无名/未知名/形状不符 → 形状嗅探兜底（接口变更期不比旧版差）。
 
     For providers with quota windows (GLM Coding Plan, Kimi):
     ``{label, primary, pct, quotas: [{period, pct, used, limit, reset}, ...]}``
@@ -132,103 +275,15 @@ def normalize_balance(raw, label):
 
     Called only by ``fetch_balance`` in this module.
     """
-    # DeepSeek: {"balance_infos": [{"total_balance", "topped_up_balance", "currency"}]}
-    if isinstance(raw.get("balance_infos"), list) and raw["balance_infos"]:
-        info = raw["balance_infos"][0]
-        sym = "¥" if info.get("currency") == "CNY" else ""
-        return {"label": label, "primary": sym + str(info.get("total_balance", "—")),
-                "secondary": f"充值 {sym}{info.get('topped_up_balance', '—')}"}
-    d = raw.get("data", {}) if isinstance(raw.get("data"), dict) else {}
-    # GLM Coding Plan: {"data": {"limits": [...], "level": "..."}}
-    if isinstance(d.get("limits"), list):
-        level = (d.get("level") or "").upper() or "套餐"
-        quotas = []
-        pcts = []
-        for lim in d["limits"]:
-            period = _UNIT_NAMES.get(lim.get("unit"), f"unit{lim.get('unit')}")
-            if lim.get("type") == "TIME_LIMIT":
-                # 工具时长配额（usageDetails: search-prime/web-reader/zread），
-                # 不是 token 用量——period 标「·工具」与 model-usage 月度行区分
-                period += "·工具"
-            p = lim.get("percentage")
-            if isinstance(p, (int, float)):
-                pcts.append(int(p))
-            quotas.append(_quota_row(
-                period,
-                int(p) if isinstance(p, (int, float)) else None,
-                lim["currentValue"] if "currentValue" in lim else None,
-                lim["usage"] if "usage" in lim else None,
-                _fmt_reset_ms(lim.get("nextResetTime")),
-                _UNIT_DURATION_HOURS.get(lim.get("unit"), 0),
-            ))
-        quotas.sort(key=lambda q: q["_sort"])
-        for q in quotas:
-            del q["_sort"]
-        return {"label": label, "primary": level,
-                "pct": max(pcts) if pcts else None,
-                "quotas": quotas}
-    # GLM model-usage（月度官方统计，本月窗口）：{"data": {"totalUsage":
-    # {"totalModelCallCount", "totalTokensUsage"}}——替换本地聚合行
-    tu = d.get("totalUsage") if isinstance(d.get("totalUsage"), dict) else None
-    if tu is not None and "totalTokensUsage" in tu:
-        tokens = tu.get("totalTokensUsage")
-        calls = tu.get("totalModelCallCount")
-        row = _quota_row(_MONTHLY_PERIOD, None, tokens, None, None,
-                         _MONTH_HOURS)
-        del row["_sort"]
-        row["source"] = "api"
-        row["calls"] = calls
-        return {"label": label, "primary": "本月用量",
-                "pct": None, "quotas": [row]}
-    # Kimi Coding Plan: {"usage": {周额度}, "limits": [{window: 5小时窗口}],
-    # "totalQuota": {月度会员池, 按套餐填充, 可能为 {}}, "user": {...}}
-    if isinstance(raw.get("usage"), dict) and "limit" in raw["usage"]:
-        u = raw["usage"]
-        used, lim = int(u.get("used", 0)), int(u.get("limit", 0))
-        pct_num = round(used / lim * 100) if lim > 0 else None
-        level_raw = raw.get("user", {}).get("membership", {}).get("level", "")
-        level = _LEVEL_MAP.get(level_raw, level_raw or "套餐")
-        quotas = []
-        # limits[] holds windowed quotas (e.g. 300-minute = 5小时)
-        for entry in raw.get("limits") or []:
-            w = entry.get("window") or {}
-            det = entry.get("detail") or {}
-            wlabel = _window_label(w)
-            if wlabel and det.get("limit"):
-                wused, wlim = int(det.get("used", 0)), int(det["limit"])
-                wpct = round(wused / wlim * 100) if wlim > 0 else None
-                quotas.append(_quota_row(
-                    wlabel, wpct, wused, wlim,
-                    _fmt_reset(det["resetTime"]) if det.get("resetTime") else None,
-                    _window_duration_hours(w),
-                ))
-        quotas.append(_quota_row(
-            "每周", pct_num, used, lim,
-            _fmt_reset(u["resetTime"]) if u.get("resetTime") else None,
-            _WEEK_HOURS,
-        ))
-        # totalQuota = 月度会员池，按套餐填充（我们 Advanced 账号返回 {}）
-        tq = raw.get("totalQuota") or {}
-        if tq.get("limit"):
-            tused, tlim = int(tq.get("used", 0)), int(tq["limit"])
-            quotas.append(_quota_row(
-                _MONTHLY_PERIOD,
-                round(tused / tlim * 100) if tlim > 0 else None,
-                tused, tlim,
-                _fmt_reset(tq["resetTime"]) if tq.get("resetTime") else None,
-                _MONTH_HOURS,
-            ))
-        quotas.sort(key=lambda q: q["_sort"])
-        for q in quotas:
-            del q["_sort"]
-        all_pcts = [q["pct"] for q in quotas if q["pct"] is not None]
-        return {"label": label, "primary": level,
-                "pct": max(all_pcts) if all_pcts else None,
-                "quotas": quotas}
-    # GLM account: {"data": {"balance", "totalSpendAmount"}}
-    if "balance" in d:
-        return {"label": label, "primary": f"¥{d['balance']:.2f}",
-                "secondary": f"已消费 ¥{d.get('totalSpendAmount', 0):.2f}"}
+    fn = _BALANCE_PARSERS.get(parser)
+    if fn is not None:
+        parsed = fn(raw, label)
+        if parsed is not None:
+            return parsed
+    for fallback in _SNIFF_CHAIN:
+        parsed = fallback(raw, label)
+        if parsed is not None:
+            return parsed
     # Unrecognized structure: show only top-level key names, never values —
     # a provider response could reflect the API key back and would otherwise
     # leak into the settings UI.
@@ -507,29 +562,31 @@ def fetch_balance(sp_raw):
             continue
         frag, apis = matched
         api_res = []
-        for url, style, label in apis:
+        for url, style, label, parser in apis:
             try:
                 auth = f"Bearer {key}" if style == "bearer" else key
                 data = _BALANCE_CLIENT.open_json(
                     url, headers={"Authorization": auth})
-                api_res.append(normalize_balance(data, label))
+                api_res.append(normalize_balance(data, label, parser))
             except AuthRedirectError as e:
                 api_res.append({"label": label, "error": e.msg[:120]})
             except Exception as e:
                 api_res.append({"label": label,
                                 "error": _shape_balance_error(e)})
-        # GLM 月度：model-usage 本月窗口官方统计（注册表 model_usage_url）
+        # GLM 月度：model-usage 本月窗口官方统计（注册表
+        # model_usage_url = (url, parser)）
         entry = next((e for e in _REGISTRY.values()
                       if frag in e["hosts"]), None)
-        mu_url = (entry or {}).get("model_usage_url")
-        if mu_url:
+        mu = (entry or {}).get("model_usage_url")
+        if mu:
+            mu_url, mu_parser = mu
             try:
                 start, end = _month_window()
                 url = (mu_url + "?startTime=" + urllib.parse.quote(start)
                        + "&endTime=" + urllib.parse.quote(end))
                 data = _BALANCE_CLIENT.open_json(
                     url, headers={"Authorization": key})
-                api_res.append(normalize_balance(data, "本月用量"))
+                api_res.append(normalize_balance(data, "本月用量", mu_parser))
             except AuthRedirectError as e:
                 api_res.append({"label": "本月用量", "error": e.msg[:120]})
             except Exception as e:

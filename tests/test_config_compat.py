@@ -280,3 +280,77 @@ class TestProxyRoleResolution(unittest.TestCase):
             "current_tunnel": 0, "tunnels": [{"ssh_host": "x", "ssh_port": 22}]})
         self.assertEqual(merged["current_tunnel_id"], "")
         self.assertEqual(merged["current_tunnel"], 0)
+
+
+class TestDecorateRuntimeState(unittest.TestCase):
+    """C2：/api/state 运行态装饰单一归宿（decorate_runtime_state）——
+    is_proxy 与 merge 同一解析序；装饰只写声明的键。"""
+
+    @staticmethod
+    def _mp(cid="t-b", idx=0):
+        return {"current_tunnel_id": cid, "current_tunnel": idx,
+                "tunnels": [{"id": "t-a", "ssh_host": "a"},
+                            {"id": "t-b", "ssh_host": "b"}]}
+
+    @staticmethod
+    def _proj(capture=False, forwards=(), mounts=()):
+        from shared.runtime_state import RuntimeProjection
+        return RuntimeProjection(capture_active=capture,
+                                 forwards=tuple(forwards),
+                                 mounts=tuple(mounts))
+
+    def test_decorates_all_four_declared_fields(self):
+        from types import SimpleNamespace as NS
+        proj = self._proj(
+            capture=True,
+            forwards=[NS(tunnel_id="t-a", status="connected")],
+            mounts=[NS(tunnel_id="t-b", name="data", status="mounted",
+                       error="", fixable="")])
+        mp = config.decorate_runtime_state(self._mp(), proj)
+        self.assertTrue(mp["capture_active"])
+        self.assertFalse(mp["tunnels"][0]["is_proxy"])
+        self.assertTrue(mp["tunnels"][1]["is_proxy"])
+        self.assertTrue(mp["tunnels"][0]["forward_running"])
+        self.assertFalse(mp["tunnels"][1]["forward_running"])
+        self.assertEqual(mp["tunnels"][1]["nfs_states"],
+                         {"data": {"status": "mounted", "error": "",
+                                   "fixable": ""}})
+        self.assertEqual(mp["tunnels"][0]["nfs_states"], {})
+
+    def test_absent_projection_decorates_empty(self):
+        mp = config.decorate_runtime_state(self._mp(), None)
+        self.assertFalse(mp["capture_active"])
+        for t in mp["tunnels"]:
+            self.assertFalse(t["forward_running"])
+            self.assertEqual(t["nfs_states"], {})
+        # 角色解析与 merge 同源：id 命中不缺席
+        self.assertTrue(mp["tunnels"][1]["is_proxy"])
+
+    def test_is_proxy_index_fallback_matches_merge(self):
+        # id 真相缺席/失配 → 下标 → 首条：与 merge_config 写回的解析一致
+        raw = {"current_tunnel_id": "", "current_tunnel": 1,
+               "tunnels": [{"id": "t-a"}, {"id": "t-b"}]}
+        mp = config.decorate_runtime_state(dict(raw), None)
+        self.assertTrue(mp["tunnels"][1]["is_proxy"])
+        raw2 = {"current_tunnel_id": "ghost", "current_tunnel": 9,
+                "tunnels": [{"id": "t-a"}, {"id": "t-b"}]}
+        mp2 = config.decorate_runtime_state(dict(raw2), None)
+        self.assertTrue(mp2["tunnels"][0]["is_proxy"])  # 首条兜底
+        self.assertEqual(
+            config.merge_config(dict(raw2))["current_tunnel_id"], "t-a")
+
+    def test_writes_exactly_the_declared_set(self):
+        # 装饰只写 RUNTIME_DECORATED_FIELDS；strip 名单运行态半边同源派生
+        mp = config.decorate_runtime_state(self._mp(), self._proj())
+        written = ({"capture_active"}
+                   | {k for t in mp["tunnels"]
+                      for k in t
+                      if k not in ("id", "ssh_host")})
+        self.assertEqual(written, set(config.RUNTIME_DECORATED_FIELDS))
+        from mpconf.config_state import READONLY_DECORATED_FIELDS
+        self.assertEqual(READONLY_DECORATED_FIELDS,
+                         {"has_password"} | config.RUNTIME_DECORATED_FIELDS)
+
+    def test_degraded_error_state_still_decorates(self):
+        mp = config.decorate_runtime_state({"_load_error": "装载失败"}, None)
+        self.assertFalse(mp["capture_active"])

@@ -51,14 +51,17 @@ bash scripts/notarize.sh
 单一归属原则（每域一个归宿模块；逐模块清单是防漂移守卫 `tests/test_docs_drift.py` 钉住的契约面）。分层 DAG 只向下（叶子 shared/ → 域 → services/shellui → app/docker；同层只许同域，唯一白名单见守卫内 `_ALLOWED_SAME_LAYER`）——`tests/test_arch_imports.py` 钉死：
 
 ```
-app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有）
+app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有；
+  用户流只做意图胶水——「未连接绝不拉起」守卫与守卫重建归
+  ConnectionCoordinator、:9528 启停单一路径经 lifecycle.sync_config_server）
 util.py ── resource_path（frozen 平铺 / dev 按域包子目录查找）+ 版本戳
 
 shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 迁入）
   netloc.py ── host:port 解析/格式化/loopback 校验唯一所有者
   provider_auth.py ── 供应商认证纯逻辑 + PROVIDER_REGISTRY 注册表
     （ADR-010 端点矩阵：每厂商 anthropic/openai/responses 端点卡 +
-    认证头 + 套餐变体）+ restore_masked_key（掩码 keep 语义）
+    认证头 + 套餐变体 + 余额 API 卡带响应语法名——归一按卡路由）+
+    restore_masked_key（掩码 keep 语义）
   keychain.py ── macOS Keychain 读写（Security 框架可选导入）
   stats.py ── 运行统计
   config_store.py ── PATHS 注册表 + 原子写管线（唯一安全写入口）
@@ -76,7 +79,10 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
 mpconf/ ── 配置栈
   config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串；
     代理角色双表示：current_tunnel_id 稳定 id 真相 + current_tunnel
-    下标兼容投影，解析序 id→下标→首条）
+    下标兼容投影，解析序 id→下标→首条，resolve_proxy_tunnel 单一判定）
+    + decorate_runtime_state /api/state 运行态装饰单一归宿（只写
+    RUNTIME_DECORATED_FIELDS 声明键，strip 名单同源派生）+
+    forward_row(s)/toggle_forward_row 转发行读写纯函数（翻转意图共用）
   validate.py ── mp 分域校验器（顶层数值 + 隧道级行[forwards/nfs] + 全局端口/挂载点冲突；prepare 的校验半边）
   config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
     分域校验 orchestrator / commit（journal+MP+SP+Keychain+回调次序）/
@@ -90,7 +96,9 @@ tunnel/ ── SSH 隧道核心
   ssh_session.py ── SshSession：SSH 会话 deep module（三件套编排 +
     连接序列 + 僵尸重建 + 每秒健康泵 tick；转发/NFS 会话共用，
     ADR-007 收敛）
-  connection_coordinator.py ── 连接/重试编排（持 _lifecycle_lock）
+  connection_coordinator.py ── 连接/重试编排（持 _lifecycle_lock）+
+    「未连接绝不拉起」守卫单一归宿（proxy_connected/forward_connected/
+    restart_forward_async guarded——菜单翻转/桥接自动应用共用）
   retry_scheduler.py ── SSH 重试退避调度（无限退避封顶 60s，永不放弃）
   reconnect_trigger.py ── 唤醒事件→立即重连触发器（去抖 + NSWorkspace 源）
   host_key.py ── SSH known_hosts 管理
@@ -138,7 +146,8 @@ sysctl/ ── 系统集成
 
 services/ ── 服务
   config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token +
-    agent_instructions 指令模板归宿）
+    agent_instructions 指令模板归宿 + 路由表 dispatch——一个端点一行
+    声明，do_* 只剩表遍历；index 隧道解析 _saved_tunnel_by_index 单一归宿）
   suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）+ audit()
     健康审计原语（stopped/healthy/mismatch 单一归宿，Docker watchdog 同谓词）
   sp_config.py ── suanpan 配置读取桥（sp_load*/suanpan_listen，lazy import）
@@ -146,26 +155,28 @@ services/ ── 服务
     Claude Code 角色映射（写 ~/.claude/settings.json，ADR-003 不变；「保存
     并同步」同时把角色表 upsert 成网关 tier 路由规则——规则=持久真相、
     env 是 CC 投影，两面同源于一次保存，drift 结构上消失；推导路径
-    roles=None 只对齐不新增）+ 多 Agent 注册表引擎（codex tomlkit
+    roles=None 只对齐不新增；tier 规则查询经 router.first_tier_route——
+    前缀语义单一归宿）+ 多 Agent 注册表引擎（codex tomlkit
     增量编辑 config.toml / opencode opencode.json models 块必写 /
-    zcode kind=anthropic）
+    zcode kind=anthropic；JSON 家族共享 owned 槽位 plan/apply 半成品）
   lifecycle_runtime.py ── 服务生命周期编排：start_all/quit 顺序契约 +
     capture_state 单投影 + _on_sp_saved 双形态 + tick 网关健康对账
     （watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建；用户
     停止/崩溃绝不拉起，防抖=连续失配阈值+退避）
   authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围，含来源
-    Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）
+    Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）；
+    余额响应归一 = 注册表卡名路由 + 形状嗅探兜底（_BALANCE_PARSERS）
 
 suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Messages / OpenAI Chat / Responses（Codex）→ 多家 LLM 后端，直通优先失配才转换）
   config.py ── Pydantic schema + 掩码契约 + null 节归一 + 文法消费
   validate.py ── sp 分域校验器（数值 + schema + 供应商 URL + 路由引用；经 prepare lazy import 保持无网关依赖宿主降级）
   main.py ── FastAPI app factory + 路由 handler
   middleware.py ── APIKey（常量时间比较）+ BodyLimit 中间件
-  proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread
+  proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread + 车道共用骨架（_LaneCtx/_send_upstream 幂等探针/_reject_5xx/_lane_out_headers/_stream_response——四车道发送纪律单一归宿）
   compat.py ── 协议适配唯一归宿（ADR-010）：body 归一化（anthropic_native 旗标）+ 转换 A（Anthropic⇄OpenAI Chat 请求/响应/SSE 翻译器）
   usage_extractor.py ── SSE 用量提取
-  router.py ── 路由决策 + parse_route_target 文法所有者 + fallback_from 可感知
+  router.py ── 路由决策 + parse_route_target 文法所有者 + first_tier_route tier 规则逆查询（CC 角色种子共用前缀语义）+ fallback_from 可感知
   usage_log.py ── 追加写 JSONL + 轮转
   prewarmer.py ── 启动预热 best-effort adapter
   __main__.py ── `python3 -m suanpan` 独立启动入口
@@ -175,7 +186,7 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
 
 **菜单结构（六组）：** 状态区（着色圆点 + 流量行 + 转发/挂载计数）→ 代 理 ▸（-D 会话：启停/系统代理/角色单选/经代理启动）→ 端口映射 ▸（-L 多活会话 + 逐条转发启停行）→ 远程挂载 ▸（NFS 挂载项启停/打开目录，ADR-007）→ AI 路由 ▸ → 抓 包 ▸ → 系 统 ▸（防睡眠/登录启动/配置 API 服务开关，ADR-009）→ 页脚（偏好/日志/复制 AI 助手指令/关于/退出）；菜单项图标走 SF Symbols（`menu_builder._apply_icon`，旧系统静默降级）
 
-**偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 远程挂载 / 网络设置）+ AI 路由（快速接入 / 供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。同一页面可浏览器直开（输 token 登录）——依赖原生 bridge 的操作在该场景逐项降级：重连/转发启停 toast 提示需在应用设置窗内用，「复制 AI 助手指令」经认证 `GET /api/agent-instructions`（文本取 `agent_instructions()` 单一归宿）回退 + Clipboard API 写剪贴板。配置服务端口生命周期（ADR-009）：默认**不常驻**监听 :9528——设置窗开着 / 「复制 AI 助手指令」会话闩锁 / `config_api_enabled` 常驻开关（系 统 ▸ 菜单 + UI 系统页）三持有者任一在场才监听，全离场即释放（Docker 形态不受影响，恒常驻）。
+**偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 远程挂载 / 网络设置）+ AI 路由（快速接入 / 供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。同一页面可浏览器直开（输 token 登录）——依赖原生 bridge 的操作在该场景逐项降级：重连/转发启停 toast 提示需在应用设置窗内用，「复制 AI 助手指令」经认证 `GET /api/agent-instructions`（文本取 `agent_instructions()` 单一归宿）回退 + Clipboard API 写剪贴板。配置服务端口生命周期（ADR-009）：默认**不常驻**监听 :9528——设置窗开着 / 「复制 AI 助手指令」会话闩锁 / `config_api_enabled` 常驻开关（系 统 ▸ 菜单 + UI 系统页）三持有者任一在场才监听，全离场即释放（app 经 `_set_config_holders` 唯一写口变更即收敛；Docker 形态不受影响，恒常驻）。
 
 ## 配置
 

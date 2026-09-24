@@ -353,3 +353,32 @@ class TestFixablePropagation(CoordinatorTestBase):
         states = {m.name: m for m in self.coord.mount_states()}
         self.assertEqual(states["data"].status, mc.STATUS_MOUNTED)
         self.assertEqual(states["data"].fixable, "")
+
+    def test_reconcile_confirmed_mounted_clears_fixable(self):
+        # 不经 _mount_job 的成功路径：mount 表已有目录 + 会话在连，
+        # reconcile 快路径确认 MOUNTED 时同样清 error/fixable
+        self.mounted_result = {"ok": False, "error": "远程路径不存在或未导出",
+                               "fixable": "exports"}
+        self.coord.apply_autostarts()
+        self.coord.tick()
+        self.table["/Volumes/data"] = "127.0.0.1:/data"
+        self.coord.tick()
+        states = {m.name: m for m in self.coord.mount_states()}
+        self.assertEqual(states["data"].status, mc.STATUS_MOUNTED)
+        self.assertEqual(states["data"].fixable, "")
+        self.assertEqual(states["data"].error, "")
+
+    def test_unmount_completion_clears_fixable(self):
+        # 卸载完成清 error/fixable——陈旧修复标记不得挂在非 error 态
+        # 进 /api/state
+        self.mounted_result = {"ok": False, "error": "远程路径不存在或未导出",
+                               "fixable": "exports"}
+        self.coord.apply_autostarts()
+        self.coord.tick()
+        self.table["/Volumes/data"] = "127.0.0.1:/data"
+        _FakeSession.instances[0].monitor.status = "stopped"
+        self.coord.tick()   # 断线强制卸载 → _unmount_job（同步 executor）
+        states = {m.name: m for m in self.coord.mount_states()}
+        self.assertEqual(states["data"].status, mc.STATUS_UNMOUNTED)
+        self.assertEqual(states["data"].fixable, "")
+        self.assertEqual(states["data"].error, "")

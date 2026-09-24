@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from tunnel import connection_coordinator as cc
 from tunnel.connection_coordinator import ConnectionCoordinator
 
 
@@ -657,3 +658,66 @@ class TestEnabledForwardsGuards(unittest.TestCase):
         cfg["tunnels"][1]["forwards"][0]["enabled"] = False
         conn.check_forwards()
         self.assertNotIn("t-1", conn._forward_sessions)
+
+
+class TestForwardGuards(unittest.TestCase):
+    """「未连接绝不拉起」守卫单一归宿（架构评审 C1）：forward_connected /
+    proxy_connected / restart_forward_async(guarded) 的真值表。"""
+
+    @staticmethod
+    def _session(status):
+        s = MagicMock()
+        s.monitor.status = status
+        s.monitor.current_name = "fw"
+        return s
+
+    def _conn_with(self, tid, status):
+        conn, _ = _mutable_coordinator(_multi_config())
+        conn._forward_sessions[tid] = self._session(status)
+        return conn
+
+    def test_forward_connected_truth_table(self):
+        self.assertTrue(
+            self._conn_with("t-2", "connected").forward_connected("t-2"))
+        for status in ("error", "connecting", "stopped"):
+            self.assertFalse(
+                self._conn_with("t-2", status).forward_connected("t-2"),
+                status)
+        # 只认目标会话：别的会话在连不算
+        self.assertFalse(
+            self._conn_with("t-2", "connected").forward_connected("t-other"))
+
+    def test_proxy_connected_only_when_connected(self):
+        conn, _ = _mutable_coordinator(_multi_config())
+        conn._ssh._status = "connecting"
+        self.assertFalse(conn.proxy_connected)
+        conn._ssh._status = "connected"
+        self.assertTrue(conn.proxy_connected)
+
+    def test_guarded_async_skips_disconnected(self):
+        conn = self._conn_with("t-2", "error")
+        with patch.object(cc, "threading") as thr:
+            self.assertFalse(
+                conn.restart_forward_async("t-2", lambda: None, guarded=True))
+            thr.Thread.assert_not_called()
+
+    def test_guarded_async_dispatches_connected(self):
+        conn = self._conn_with("t-2", "connected")
+        with patch.object(cc, "threading") as thr:
+            self.assertTrue(conn.restart_forward_async(
+                "t-2", lambda: None, thread_name="X"))
+            thr.Thread.assert_called_once()
+            kwargs = thr.Thread.call_args.kwargs
+            self.assertEqual(kwargs["target"], conn.restart_forward)
+            self.assertEqual(kwargs["args"][0], "t-2")
+            self.assertTrue(callable(kwargs["args"][1]))  # reload_config_fn
+            self.assertEqual(kwargs["name"], "X")
+            self.assertTrue(kwargs["daemon"])
+
+    def test_unguarded_dispatches_even_disconnected(self):
+        # 显式重连语义（Spec-A）：会话存在即重建——error 态也是死按钮修复
+        conn = self._conn_with("t-2", "error")
+        with patch.object(cc, "threading") as thr:
+            self.assertTrue(
+                conn.restart_forward_async("t-2", lambda: None, guarded=False))
+            thr.Thread.assert_called_once()

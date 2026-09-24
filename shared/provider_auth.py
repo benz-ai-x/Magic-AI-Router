@@ -38,8 +38,12 @@ HOP_HEADERS = frozenset({
 # /v1/text/chatcompletion_v2、火山方舟的 /api/v3/messages）不进内置卡，
 # 经自定义 provider 手配。
 #
-# balance_apis 的 auth-style："bearer" → `Authorization: Bearer <key>`；
-# "raw" → 裸 key 直接作 Authorization 值。
+# balance_apis 的条目：(url, auth-style, label, parser)。auth-style：
+# "bearer" → `Authorization: Bearer <key>`；"raw" → 裸 key 直接作
+# Authorization 值。parser 是响应语法名（balance_usage._BALANCE_PARSERS
+# 的键）——余额归一按卡路由，新增厂商在卡上声明自己的语法，不再往
+# normalize_balance 的形状嗅探链里加分支（嗅探仅作无卡名/形状不符的
+# 兜底）。model_usage_url 同理：(url, parser) 二元组。
 #
 # 刻意不在注册表的消费方：
 # - capture/ai_capture_addon.identify()——在 mitmdump 子进程内独立运行
@@ -60,7 +64,8 @@ PROVIDER_REGISTRY = {
             "responses": {"base_url": "https://api.deepseek.com"},
         },
         "balance_apis": [
-            ("https://api.deepseek.com/user/balance", "bearer", "余额"),
+            ("https://api.deepseek.com/user/balance", "bearer", "余额",
+             "deepseek_balance"),
         ],
     },
     "glm": {
@@ -77,14 +82,14 @@ PROVIDER_REGISTRY = {
                           "unverified": True},
         },
         # model_usage 端点：GLM 月度官方统计（本月窗口 token 用量+调用
-        # 次数）——fetch_balance 组 startTime/endTime 本月范围
+        # 次数）——fetch_balance 组 startTime/endTime 本月范围；(url, parser)
         "model_usage_url": ("https://open.bigmodel.cn/api/monitor/usage/"
-                            "model-usage"),
+                            "model-usage", "glm_model_usage"),
         "balance_apis": [
             ("https://open.bigmodel.cn/api/monitor/usage/quota/limit",
-             "raw", "Coding Plan"),
+             "raw", "Coding Plan", "glm_quota_limits"),
             ("https://www.bigmodel.cn/api/biz/account/query-customer-account-report",
-             "raw", "账户余额"),
+             "raw", "账户余额", "glm_account"),
         ],
     },
     "kimi": {
@@ -101,7 +106,8 @@ PROVIDER_REGISTRY = {
             "responses": {"base_url": "https://api.kimi.com/coding"},
         },
         "balance_apis": [
-            ("https://api.kimi.com/coding/v1/usages", "bearer", "Coding Plan"),
+            ("https://api.kimi.com/coding/v1/usages", "bearer", "Coding Plan",
+             "kimi_usage"),
         ],
     },
     # ── ADR-010 新增：openai 协议族厂商（无余额集成的先空着）──
