@@ -146,7 +146,8 @@ sysctl/ ── 系统集成
 
 services/ ── 服务
   config_server.py ── Web 配置服务 :9528（JSON CRUD + bearer token +
-    agent_instructions 指令模板归宿）
+    agent_instructions 指令模板归宿 + 路由表 dispatch——一个端点一行
+    声明，do_* 只剩表遍历；index 隧道解析 _saved_tunnel_by_index 单一归宿）
   suanpan_runtime.py ── Suanpan 网关线程化运行时（延迟导入）+ audit()
     健康审计原语（stopped/healthy/mismatch 单一归宿，Docker watchdog 同谓词）
   sp_config.py ── suanpan 配置读取桥（sp_load*/suanpan_listen，lazy import）

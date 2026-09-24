@@ -1315,3 +1315,28 @@ class TestNfsSetupRemoteEndpoint(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(data)["ok"])
         setup.assert_called_once()
+
+
+class TestDispatchTables(unittest.TestCase):
+    """路由表自洽（架构评审 R2-2）：一个端点一行声明——表项必可调、
+    GET/PUT 不越 method、覆盖数与端点清单一致。"""
+
+    def test_tables_map_to_callable_handlers(self):
+        from services import config_server as cs
+        for table in (cs._API_GET, cs._API_POST, cs._API_PUT):
+            for path, handler in table.items():
+                self.assertTrue(path.startswith("/api/"), path)
+                self.assertTrue(callable(handler), path)
+
+    def test_post_and_put_paths_disjoint(self):
+        # GET+PUT 同路径（/api/state 读写对）是正常 REST；带 body 的
+        # POST 与 PUT 不得共享路径——共享即语义混淆
+        from services import config_server as cs
+        self.assertFalse(set(cs._API_POST) & set(cs._API_PUT))
+
+    def test_endpoint_count(self):
+        # 端点增减须显式改这里的数字——防表项被误删
+        from services import config_server as cs
+        self.assertEqual(len(cs._API_GET), 7)
+        self.assertEqual(len(cs._API_POST), 12)
+        self.assertEqual(len(cs._API_PUT), 1)

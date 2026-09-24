@@ -308,11 +308,7 @@ class _Handler(BaseHTTPRequestHandler):
         # agent.md is public (loopback-only, no token) so AI agents can read
         # product context without the user's bearer token.
         if path == "/agent.md":
-            try:
-                txt = open(_resource_path("agent.md"), encoding="utf-8").read()
-                self._send(200, txt, "text/markdown; charset=utf-8")
-            except OSError:
-                self._json(404, {"error": "agent.md not found"})
+            self._serve_agent_md()
             return
         if not self._valid_token():
             # GET / 的 401 返回登录页（浏览器直接打开可用）；API 路径仍 JSON
@@ -322,211 +318,223 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(401, {"error": "unauthorized"})
             return
         if path in ("/", "/index.html"):
-            try:
-                html = open(_resource_path("config_ui.html"), encoding="utf-8").read()
-                extra = []
-                auth = self.headers.get("Authorization", "")
-                if auth.startswith("Bearer "):
-                    # 桥接构造的首导航（header 呈现）→ 种 HttpOnly 会话
-                    # cookie，刷新与后续 fetch 不再依赖 header
-                    extra.append((
-                        "Set-Cookie",
-                        f"cfgsess={self.server.expected_token}; Path=/; "
-                        "HttpOnly; SameSite=Strict"))
-                self._send(200, html, "text/html; charset=utf-8", extra_headers=extra)
-            except OSError:
-                self._json(404, {"error": "config_ui.html not found"})
-        elif path == "/api/state":
-            mp = _read_mp()
-            sp = sp_config.sp_load_masked()
-            # Read-only runtime status injected for the config UI;
-            # READONLY_DECORATED_FIELDS（config_state 单点声明，运行态
-            # 半边派生自 mpconf.config.RUNTIME_DECORATED_FIELDS）的剥除
-            # 保证它永不回写文件。装饰形状单一归宿
-            # mpconf.config.decorate_runtime_state（架构评审 C2）；
-            # 运行态经 RuntimeProjection 单一 seam 读取（缺席/异常 →
-            # 空投影：capture_active=False、装饰全空）
-            try:
-                fn = self.server.runtime_state_fn
-                proj = fn() if fn else None
-            except Exception:
-                logger.exception("runtime_state_fn failed")
-                proj = None
-            mp = decorate_runtime_state(mp, proj)
-            self._json(200, {"mp": mp, "sp": sp})
-        elif path == "/api/balance":
-            self._json(200, fetch_balance(sp_config.sp_load_raw()))
-        elif path == "/api/usage":
-            usage_range = parse_qs(
-                parsed_url.query, keep_blank_values=True
-            ).get("range", ["all"])[0]
-            if usage_range not in USAGE_RANGES:
-                self._json(400, {"error": "invalid range"})
-                return
-            self._json(200, fetch_usage(
-                sp_config.sp_load_raw(), usage_range))
-        elif path == "/api/cc-default-roles":
-            # ?seed=rules：UI「按路由规则重置」——跳过实值回读，强制规则推导种子
-            seed = parse_qs(
-                parsed_url.query, keep_blank_values=True
-            ).get("seed", [""])[0]
-            if seed not in ("", "rules"):
-                self._json(400, {"error": "invalid seed"})
-                return
-            self._json(200, claude_code_setup.default_roles(
-                force_rules=seed == "rules"))
-        elif path == "/api/agents":
-            # ADR-010 M4：Agent 检测 + 同步态（向导的 Agent 矩阵数据面）
-            self._json(200, claude_code_setup.agents_status())
-        elif path == "/api/provider-templates":
-            # #51：UI 供应商模板单一真源 = PROVIDER_REGISTRY（Python 侧）
-            # ADR-010：载荷附端点矩阵（快速接入向导消费）；顶层
-            # base_url/anthropic_native 保持兼容投影（无 anthropic 卡的
-            # 厂商为 None/False）
-            from shared.provider_auth import PROVIDER_REGISTRY
-            templates = [
-                {"id": name, "label": entry["label"],
-                 "base_url": entry.get("base_url"),
-                 "anthropic_native": entry["anthropic_native"],
-                 "endpoints": {proto: dict(card)
-                               for proto, card in entry["endpoints"].items()}}
-                for name, entry in PROVIDER_REGISTRY.items()]
-            templates.append({"id": "custom", "label": "自定义"})
-            self._json(200, templates)
-        elif path == "/api/agent-instructions":
-            # 浏览器直开设置页的「复制 AI 助手指令」回退通道——WKWebView
-            # 走 bridge 由 app 拼装上剪贴板，不经此路由。文案含 Bearer
-            # token，必须过认证；文本经 instructions_fn 取自
-            # agent_instructions() 单一归宿，永不另抄一份。
-            fn = self.server.instructions_fn
-            if fn is None:
-                self._json(500, {"error": "instructions unavailable"})
-                return
-            self._json(200, {"text": fn()})
-        else:
+            self._serve_config_html()
+            return
+        handler = _API_GET.get(path)
+        if handler is None:
             self._json(404, {"error": "not found"})
+            return
+        handler(self, parsed_url)
 
     def do_POST(self):
         if not self._valid_host() or not self._valid_token():
             self._json(401, {"error": "unauthorized"})
             return
-        path = urlparse(self.path).path
-        if path not in ("/api/fetch-models", "/api/test-provider", "/api/setup-claude-code",
-                        "/api/cc-sync-preview", "/api/test-tunnel", "/api/test-forward",
-                        "/api/nfs-check-remote", "/api/nfs-setup-remote",
-                        "/api/capture-clean", "/api/probe-provider",
-                        "/api/agent-setup-preview", "/api/setup-agent"):
+        handler = _API_POST.get(urlparse(self.path).path)
+        if handler is None:
             self._json(404, {"error": "not found"})
             return
         data = self._read_json_body()
         if data is None:
             return
-        if path == "/api/fetch-models":
-            self._json(200, fetch_models(sp_config.sp_load_raw(), str(data.get("provider", ""))))
-        elif path == "/api/agent-setup-preview":
-            # ADR-010 M4：body {"agent": id, "options": {...}|null}
-            opts = data.get("options")
-            self._json(200, claude_code_setup.agent_preview(
-                str(data.get("agent", "")),
-                opts if isinstance(opts, dict) else None))
-        elif path == "/api/setup-agent":
-            opts = data.get("options")
-            self._json(200, claude_code_setup.agent_setup(
-                str(data.get("agent", "")),
-                opts if isinstance(opts, dict) else None))
-        elif path == "/api/probe-provider":
-            # ADR-010 三级端点探测（免费 GET 语义）：body = provider 形态
-            # dict（base_url 必填，凭证可选——无 Key 只探存在性）
-            base_url = data.get("base_url")
-            if not isinstance(base_url, str) or not base_url.strip():
-                self._json(400, {"error": "需要 base_url"})
-                return
-            self._json(200, probe_provider(data))
-        elif path == "/api/cc-sync-preview":
-            roles = data.get("roles")  # {key: {model, ctx_1m}} or None
-            self._json(200, claude_code_setup.preview(roles=roles))
-        elif path == "/api/setup-claude-code":
-            roles = data.get("roles")  # {key: {model, ctx_1m}} or None
-            result = claude_code_setup.setup(roles=roles)
-            # 角色表会 upsert 网关 tier 路由规则（规则=持久真相方案）——
-            # 写过规则即触发 SP 段回调（网关热重载），与 PUT /api/state
-            # 同一收敛口径
-            if result.get("rules_written") and \
-                    getattr(self.server, "on_sp_saved", None):
-                try:
-                    self.server.on_sp_saved()
-                except Exception:
-                    logger.exception("on_sp_saved after cc setup failed")
-            self._json(200, result)
-        elif path == "/api/test-tunnel":
-            code, payload = self._test_tunnel(data)
-            self._json(code, payload)
-        elif path == "/api/test-forward":
-            code, payload = self._test_forward(data)
-            self._json(code, payload)
-        elif path == "/api/nfs-check-remote":
-            code, payload = self._nfs_check_remote(data)
-            self._json(code, payload)
-        elif path == "/api/nfs-setup-remote":
-            code, payload = self._nfs_setup_remote(data)
-            self._json(code, payload)
-        elif path == "/api/capture-clean":
-            self._json(200, self._capture_clean())
-        else:
-            self._json(200, test_provider(
-                sp_config.sp_load_raw(), str(data.get("provider", "")),
-                data.get("model")))
+        handler(self, data)
 
-    def _test_tunnel(self, data):
+    def do_PUT(self):
+        if not self._valid_host() or not self._valid_token():
+            self._json(401, {"error": "unauthorized"})
+            return
+        handler = _API_PUT.get(urlparse(self.path).path)
+        if handler is None:
+            self._json(404, {"error": "not found"})
+            return
+        data = self._read_json_body()
+        if data is None:
+            return
+        handler(self, data)
+
+    # ── 静态页（GET 非路由表面）────────────────────────────
+
+    def _serve_agent_md(self):
+        try:
+            txt = open(_resource_path("agent.md"), encoding="utf-8").read()
+            self._send(200, txt, "text/markdown; charset=utf-8")
+        except OSError:
+            self._json(404, {"error": "agent.md not found"})
+
+    def _serve_config_html(self):
+        try:
+            html = open(_resource_path("config_ui.html"), encoding="utf-8").read()
+            extra = []
+            auth = self.headers.get("Authorization", "")
+            if auth.startswith("Bearer "):
+                # 桥接构造的首导航（header 呈现）→ 种 HttpOnly 会话
+                # cookie，刷新与后续 fetch 不再依赖 header
+                extra.append((
+                    "Set-Cookie",
+                    f"cfgsess={self.server.expected_token}; Path=/; "
+                    "HttpOnly; SameSite=Strict"))
+            self._send(200, html, "text/html; charset=utf-8", extra_headers=extra)
+        except OSError:
+            self._json(404, {"error": "config_ui.html not found"})
+
+    # ── GET 端点（路由表声明，签名 (self, parsed_url)）──────
+
+    def _api_state(self, parsed_url):
+        mp = _read_mp()
+        sp = sp_config.sp_load_masked()
+        # Read-only runtime status injected for the config UI;
+        # READONLY_DECORATED_FIELDS（config_state 单点声明，运行态
+        # 半边派生自 mpconf.config.RUNTIME_DECORATED_FIELDS）的剥除
+        # 保证它永不回写文件。装饰形状单一归宿
+        # mpconf.config.decorate_runtime_state（架构评审 C2）；
+        # 运行态经 RuntimeProjection 单一 seam 读取（缺席/异常 →
+        # 空投影：capture_active=False、装饰全空）
+        try:
+            fn = self.server.runtime_state_fn
+            proj = fn() if fn else None
+        except Exception:
+            logger.exception("runtime_state_fn failed")
+            proj = None
+        mp = decorate_runtime_state(mp, proj)
+        self._json(200, {"mp": mp, "sp": sp})
+
+    def _api_balance(self, parsed_url):
+        self._json(200, fetch_balance(sp_config.sp_load_raw()))
+
+    def _api_usage(self, parsed_url):
+        usage_range = parse_qs(
+            parsed_url.query, keep_blank_values=True
+        ).get("range", ["all"])[0]
+        if usage_range not in USAGE_RANGES:
+            self._json(400, {"error": "invalid range"})
+            return
+        self._json(200, fetch_usage(sp_config.sp_load_raw(), usage_range))
+
+    def _api_cc_default_roles(self, parsed_url):
+        # ?seed=rules：UI「按路由规则重置」——跳过实值回读，强制规则推导种子
+        seed = parse_qs(
+            parsed_url.query, keep_blank_values=True
+        ).get("seed", [""])[0]
+        if seed not in ("", "rules"):
+            self._json(400, {"error": "invalid seed"})
+            return
+        self._json(200, claude_code_setup.default_roles(
+            force_rules=seed == "rules"))
+
+    def _api_agents(self, parsed_url):
+        # ADR-010 M4：Agent 检测 + 同步态（向导的 Agent 矩阵数据面）
+        self._json(200, claude_code_setup.agents_status())
+
+    def _api_provider_templates(self, parsed_url):
+        # #51：UI 供应商模板单一真源 = PROVIDER_REGISTRY（Python 侧）
+        # ADR-010：载荷附端点矩阵（快速接入向导消费）；顶层
+        # base_url/anthropic_native 保持兼容投影（无 anthropic 卡的
+        # 厂商为 None/False）
+        from shared.provider_auth import PROVIDER_REGISTRY
+        templates = [
+            {"id": name, "label": entry["label"],
+             "base_url": entry.get("base_url"),
+             "anthropic_native": entry["anthropic_native"],
+             "endpoints": {proto: dict(card)
+                           for proto, card in entry["endpoints"].items()}}
+            for name, entry in PROVIDER_REGISTRY.items()]
+        templates.append({"id": "custom", "label": "自定义"})
+        self._json(200, templates)
+
+    def _api_agent_instructions(self, parsed_url):
+        # 浏览器直开设置页的「复制 AI 助手指令」回退通道——WKWebView
+        # 走 bridge 由 app 拼装上剪贴板，不经此路由。文案含 Bearer
+        # token，必须过认证；文本经 instructions_fn 取自
+        # agent_instructions() 单一归宿，永不另抄一份。
+        fn = self.server.instructions_fn
+        if fn is None:
+            self._json(500, {"error": "instructions unavailable"})
+            return
+        self._json(200, {"text": fn()})
+
+    # ── POST 端点（路由表声明，签名 (self, data)）──────────
+
+    def _api_fetch_models(self, data):
+        self._json(200, fetch_models(sp_config.sp_load_raw(), str(data.get("provider", ""))))
+
+    def _api_test_provider(self, data):
+        self._json(200, test_provider(
+            sp_config.sp_load_raw(), str(data.get("provider", "")),
+            data.get("model")))
+
+    def _api_probe_provider(self, data):
+        # ADR-010 三级端点探测（免费 GET 语义）：body = provider 形态
+        # dict（base_url 必填，凭证可选——无 Key 只探存在性）
+        base_url = data.get("base_url")
+        if not isinstance(base_url, str) or not base_url.strip():
+            self._json(400, {"error": "需要 base_url"})
+            return
+        self._json(200, probe_provider(data))
+
+    def _api_cc_sync_preview(self, data):
+        roles = data.get("roles")  # {key: {model, ctx_1m}} or None
+        self._json(200, claude_code_setup.preview(roles=roles))
+
+    def _api_setup_claude_code(self, data):
+        roles = data.get("roles")  # {key: {model, ctx_1m}} or None
+        result = claude_code_setup.setup(roles=roles)
+        # 角色表会 upsert 网关 tier 路由规则（规则=持久真相方案）——
+        # 写过规则即触发 SP 段回调（网关热重载），与 PUT /api/state
+        # 同一收敛口径
+        if result.get("rules_written") and \
+                getattr(self.server, "on_sp_saved", None):
+            try:
+                self.server.on_sp_saved()
+            except Exception:
+                logger.exception("on_sp_saved after cc setup failed")
+        self._json(200, result)
+
+    def _api_agent_setup_preview(self, data):
+        # ADR-010 M4：body {"agent": id, "options": {...}|null}
+        opts = data.get("options")
+        self._json(200, claude_code_setup.agent_preview(
+            str(data.get("agent", "")),
+            opts if isinstance(opts, dict) else None))
+
+    def _api_setup_agent(self, data):
+        opts = data.get("options")
+        self._json(200, claude_code_setup.agent_setup(
+            str(data.get("agent", "")),
+            opts if isinstance(opts, dict) else None))
+
+    def _api_test_tunnel(self, data):
         """POST /api/test-tunnel {index} → probe saved tunnels[index].
 
-        Returns (http_code, payload): 400 for bad index / no tunnels, 200
-        with {"ok": bool, "error"?: str} once the probe actually runs.
-        """
-        if not isinstance(data, dict):
-            return 400, {"ok": False, "error": "无效的请求体"}
-        idx = data.get("index")
-        if isinstance(idx, bool) or not isinstance(idx, int):
-            return 400, {"ok": False, "error": "无效的隧道索引"}
-        cfg = _read_mp()
-        tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
-        if not tunnels:
-            return 400, {"ok": False, "error": "尚未配置隧道"}
-        if not 0 <= idx < len(tunnels):
-            return 400, {"ok": False, "error": "隧道索引越界"}
-        return 200, test_tunnel(tunnels[idx])
+        400 for bad index / no tunnels, 200 with {"ok", "error"?} once the
+        probe actually runs（隧道解析与 test-forward/NFS 端点共用
+        _saved_tunnel_by_index）。"""
+        tunnel, error = self._saved_tunnel_by_index(data.get("index"))
+        if error:
+            self._json(400, {"ok": False, "error": error})
+            return
+        self._json(200, test_tunnel(tunnel))
 
-    def _test_forward(self, data):
+    def _api_test_forward(self, data):
         """POST /api/test-forward {tunnel, forward} → probe_forward once.
 
-        Returns (http_code, payload): 400 for bad body/shape, 200 with
-        {"ok": bool, "latency_ms"?: int, "error"?: str} once the probe
-        actually runs. tunnel/forward 都取表单当前值——未保存的新隧道、
-        新行同样可测（设置窗 UI 总是发送表单值）。兼容旧载荷 {index,
-        forward}：按已保存隧道解析。
-        """
-        if not isinstance(data, dict):
-            return 400, {"ok": False, "error": "无效的请求体"}
+        tunnel/forward 都取表单当前值——未保存的新隧道、新行同样可测。
+        兼容旧载荷 {index, forward}：按已保存隧道解析。"""
         forward = data.get("forward")
         if not isinstance(forward, dict):
-            return 400, {"ok": False, "error": "无效的转发行"}
+            self._json(400, {"ok": False, "error": "无效的转发行"})
+            return
         tunnel = data.get("tunnel")
         if tunnel is None:
-            idx = data.get("index")
-            if isinstance(idx, bool) or not isinstance(idx, int):
-                return 400, {"ok": False, "error": "无效的隧道"}
-            cfg = _read_mp()
-            tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
-            if not tunnels:
-                return 400, {"ok": False, "error": "尚未配置隧道"}
-            if not 0 <= idx < len(tunnels):
-                return 400, {"ok": False, "error": "隧道索引越界"}
-            tunnel = tunnels[idx]
+            tunnel, error = self._saved_tunnel_by_index(data.get("index"))
+            if error:
+                self._json(400, {"ok": False, "error": error})
+                return
         if not isinstance(tunnel, dict):
-            return 400, {"ok": False, "error": "无效的隧道"}
-        return 200, test_forward(tunnel, forward)
+            self._json(400, {"ok": False, "error": "无效的隧道"})
+            return
+        self._json(200, test_forward(tunnel, forward))
 
-    def _capture_clean(self):
+    def _api_capture_clean(self, data):
         """POST /api/capture-clean → empty the capture dir (keep the dir)."""
         cfg = _read_mp()
         capture_dir = cfg.get("capture_dir") if isinstance(cfg, dict) else None
@@ -534,71 +542,46 @@ class _Handler(BaseHTTPRequestHandler):
             removed = capture_store.clean(capture_dir)
         except OSError as exc:
             logger.warning("capture clean failed: %s", exc)
-            return {"ok": False, "error": str(exc)}
-        return {"ok": True, "removed": removed}
+            self._json(200, {"ok": False, "error": str(exc)})
+            return
+        self._json(200, {"ok": True, "removed": removed})
 
-    # ── NFS 远程端点（ADR-007）─────────────────────────────
-
-    @staticmethod
-    def _resolve_tunnel(data):
-        """body 里解析隧道：显式 tunnel 优先，index 回退到已保存隧道。
-        返回 (tunnel, error_已发送时为 None 之外的场景统一返回错误串)。"""
-        tunnel = data.get("tunnel")
-        if tunnel is not None:
-            if isinstance(tunnel, dict):
-                return tunnel, ""
-            return None, "无效的隧道"
-        idx = data.get("index")
-        if isinstance(idx, bool) or not isinstance(idx, int):
-            return None, "无效的隧道索引"
-        cfg = _read_mp()
-        tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
-        if not tunnels:
-            return None, "尚未配置隧道"
-        if not 0 <= idx < len(tunnels):
-            return None, "隧道索引越界"
-        return tunnels[idx], ""
-
-    def _nfs_check_remote(self, data):
+    def _api_nfs_check_remote(self, data):
         """POST /api/nfs-check-remote {tunnel|index} → 只读探测远程 NFS。"""
         tunnel, error = self._resolve_tunnel(data)
         if error:
-            return 400, {"ok": False, "error": error}
-        return 200, nfs_check_remote(tunnel)
+            self._json(400, {"ok": False, "error": error})
+            return
+        self._json(200, nfs_check_remote(tunnel))
 
-    def _nfs_setup_remote(self, data):
+    def _api_nfs_setup_remote(self, data):
         """POST /api/nfs-setup-remote {tunnel|index, mounts, squash,
         sudo_password?} → 一键安装 + 配置导出（幂等）。"""
         tunnel, error = self._resolve_tunnel(data)
         if error:
-            return 400, {"ok": False, "error": error, "stage": "detect"}
+            self._json(400, {"ok": False, "error": error, "stage": "detect"})
+            return
         mounts = data.get("mounts")
         # None 条目不豁免——[null] 曾穿透 all() 生成器短路（空序列恒
         # True），下游 shlex.quote(None) 会在 handler 线程抛 TypeError
         if not isinstance(mounts, list) or not mounts or \
                 not all(isinstance(p, str) and p.startswith("/")
                         for p in mounts):
-            return 400, {"ok": False,
-                         "error": "mounts 须为非空的绝对路径列表",
-                         "stage": "detect"}
+            self._json(400, {"ok": False,
+                             "error": "mounts 须为非空的绝对路径列表",
+                             "stage": "detect"})
+            return
         sudo_pw = data.get("sudo_password")
         if sudo_pw is not None and not isinstance(sudo_pw, str):
             sudo_pw = ""
-        return 200, nfs_setup_remote(
+        self._json(200, nfs_setup_remote(
             tunnel, mounts,
             squash_to_ssh_user=data.get("squash") is True,
-            sudo_password_override=sudo_pw or "")
+            sudo_password_override=sudo_pw or ""))
 
-    def do_PUT(self):
-        if not self._valid_host() or not self._valid_token():
-            self._json(401, {"error": "unauthorized"})
-            return
-        if urlparse(self.path).path != "/api/state":
-            self._json(404, {"error": "not found"})
-            return
-        data = self._read_json_body()
-        if data is None:
-            return
+    # ── PUT 端点（路由表声明，签名 (self, data)）──────────
+
+    def _api_put_state(self, data):
         mp_in = data.get("mp")
         sp_in = data.get("sp")
         if not isinstance(mp_in, dict):
@@ -632,6 +615,65 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(422, {"ok": False, "errors": result.errors})
         else:
             self._json(200, {"ok": True})
+
+    # ── 隧道解析（index 路径单一归宿，test/test-forward/NFS 共用）──
+
+    @staticmethod
+    def _saved_tunnel_by_index(idx):
+        """index → 已保存隧道：bool/int 守卫 + 空表/越界中文错误。
+        test-tunnel / test-forward（旧载荷）/ NFS 端点的 index 解析
+        共用（架构评审 R2-2：此前三处手抄同款守卫）。"""
+        if isinstance(idx, bool) or not isinstance(idx, int):
+            return None, "无效的隧道索引"
+        cfg = _read_mp()
+        tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
+        if not tunnels:
+            return None, "尚未配置隧道"
+        if not 0 <= idx < len(tunnels):
+            return None, "隧道索引越界"
+        return tunnels[idx], ""
+
+    @staticmethod
+    def _resolve_tunnel(data):
+        """body 里解析隧道：显式 tunnel 优先，index 回退到已保存隧道。"""
+        tunnel = data.get("tunnel")
+        if tunnel is not None:
+            if isinstance(tunnel, dict):
+                return tunnel, ""
+            return None, "无效的隧道"
+        return _Handler._saved_tunnel_by_index(data.get("index"))
+
+
+# ── 路由表（架构评审 R2-2）：一个端点一行声明，do_* 只剩表遍历 ──
+# 认证策略统一由 walker 持有（favicon/agent.md/登录页三例外在 do_GET
+# 内先行）；新增端点 = 表里加一行 + 一个 handler 方法，不再有
+# 白名单 tuple ↔ elif 链双份声明。
+_API_GET = {
+    "/api/state": _Handler._api_state,
+    "/api/balance": _Handler._api_balance,
+    "/api/usage": _Handler._api_usage,
+    "/api/cc-default-roles": _Handler._api_cc_default_roles,
+    "/api/agents": _Handler._api_agents,
+    "/api/provider-templates": _Handler._api_provider_templates,
+    "/api/agent-instructions": _Handler._api_agent_instructions,
+}
+_API_POST = {
+    "/api/fetch-models": _Handler._api_fetch_models,
+    "/api/test-provider": _Handler._api_test_provider,
+    "/api/setup-claude-code": _Handler._api_setup_claude_code,
+    "/api/cc-sync-preview": _Handler._api_cc_sync_preview,
+    "/api/test-tunnel": _Handler._api_test_tunnel,
+    "/api/test-forward": _Handler._api_test_forward,
+    "/api/nfs-check-remote": _Handler._api_nfs_check_remote,
+    "/api/nfs-setup-remote": _Handler._api_nfs_setup_remote,
+    "/api/capture-clean": _Handler._api_capture_clean,
+    "/api/probe-provider": _Handler._api_probe_provider,
+    "/api/agent-setup-preview": _Handler._api_agent_setup_preview,
+    "/api/setup-agent": _Handler._api_setup_agent,
+}
+_API_PUT = {
+    "/api/state": _Handler._api_put_state,
+}
 
 
 class ConfigServer:
