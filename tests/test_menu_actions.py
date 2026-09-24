@@ -701,3 +701,45 @@ class TestToggleForward(unittest.TestCase):
             a._conn.proxy_connected = True
             a.make_toggle_forward(tid, 0)(None)
             rc.assert_called_once()
+
+
+class TestConfigHoldersAtomicity(unittest.TestCase):
+    """ADR-009 持有者唯一写口（架构评审 R2-4）：变更即收敛——
+    except 路径曾重置持有者不收敛，零持有者时 :9528 常驻。"""
+
+    def test_open_window_failure_leaves_holder_reset_without_converge(self):
+        a = _make_app()
+        a._lifecycle.sync_config_server.return_value = False
+        with patch.object(app.rumps, "alert"):
+            a._open_config_window("")
+        self.assertFalse(a._config_window_open)
+        self.assertEqual(a._lifecycle.sync_config_server.call_count, 1)
+
+    def test_open_window_exception_converges_down(self):
+        """R2-4 修复点：show_config_window 抛异常（服务可能已在听）→
+        清位必须收敛——孤儿监听结构性不可能。"""
+        a = _make_app()
+        a._lifecycle.sync_config_server.return_value = True
+        with patch.object(app, "show_config_window",
+                          side_effect=RuntimeError("boom")), \
+             patch.object(app.rumps, "alert"):
+            a._open_config_window("#quickstart")
+        self.assertFalse(a._config_window_open)
+        # 置位收敛 + 异常清位收敛 = 2 次
+        self.assertEqual(a._lifecycle.sync_config_server.call_count, 2)
+
+    def test_window_close_releases_via_write_port(self):
+        a = _make_app()
+        a._on_config_window_closed()
+        self.assertFalse(a._config_window_open)
+        a._lifecycle.sync_config_server.assert_called_once_with(False)
+
+    def test_copy_instructions_latches_via_write_port(self):
+        a = _make_app()
+        a._config_server = MagicMock()
+        a._config_server.agent_instructions.return_value = "curl ..."
+        with patch.object(app.subprocess, "Popen"), \
+             patch.object(a, "_notify"):
+            a._copy_agent_instructions()
+        self.assertTrue(a._copy_api_latch)
+        a._lifecycle.sync_config_server.assert_called_once_with(True)

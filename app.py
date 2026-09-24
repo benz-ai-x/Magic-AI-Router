@@ -827,11 +827,11 @@ class MagicProxyApp(rumps.App):
             # ADR-009：设置窗本身是配置服务持有者——先置位再开窗
             # （show_config_window 关旧窗的回调在调用内触发，晚置位会让
             # 旧窗关闭误判"无持有者"而停掉刚要用的服务）。
-            self._config_window_open = True
             # 启停全经 lifecycle 单一归宿（架构评审 C1：删直调
-            # config_server.start() 的第二条启动路径——两路径曾是两份
-            # 启动语义）
-            if not self._sync_config_server():
+            # config_server.start() 的第二条启动路径）。
+            if not self._set_config_holders(window_open=True):
+                # 启动失败：服务未在听——刻意只清位不收敛（收敛无益，
+                # 常驻开关持有者的收敛交给下一个自然事件）
                 self._config_window_open = False
                 rumps.alert(title="Magic AI Router", message="配置服务端口被占用，无法打开设置。")
                 return
@@ -842,18 +842,34 @@ class MagicProxyApp(rumps.App):
                 on_close=self._on_config_window_closed)
         except Exception as e:
             logger.exception("show_preferences failed")
-            self._config_window_open = False
+            # 服务可能已在听——清位必须收敛（R2-4 修复点：曾漏收敛，
+            # 零持有者时 :9528 常驻到下一个偶然事件）
+            self._set_config_holders(window_open=False)
             rumps.alert(title="Magic AI Router", message=f"打开设置失败:\n\n{e!r}")
 
     def _on_config_window_closed(self):
         """设置窗真关闭（webview_window windowWillClose）→ 释放持有者。"""
-        self._config_window_open = False
-        self._sync_config_server()
+        self._set_config_holders(window_open=False)
+
+    def _set_config_holders(self, *, window_open=None, copy_latch=None):
+        """ADR-009 持有者唯一写口：置位/清位与 :9528 收敛是一个动作
+        （架构评审 R2-4：变更位与收敛位曾靠各调用点配对记性——except
+        路径漏收敛，零持有者时服务常驻到下一个偶然事件）。返回收敛
+        结果。
+
+        唯一刻意不收敛的路径是开窗启动失败分支（服务未在听，收敛无
+        益——常驻开关持有者的收敛交给下一个自然事件）。"""
+        if window_open is not None:
+            self._config_window_open = window_open
+        if copy_latch is not None:
+            self._copy_api_latch = copy_latch
+        return self._sync_config_server()
 
     def _sync_config_server(self):
         """ADR-009 持有状态机收敛：三持有者任一在场即监听 :9528，否则
         释放。返回收敛结果（False = 想起但端口被占用）——开窗路径据此
-        提示，不再有第二条直启路径。"""
+        提示；无变更的收敛（如 UI 保存翻转 config_api_enabled）直接调
+        用本方法。"""
         return self._lifecycle.sync_config_server(config_server_wanted(
             self._config_window_open,
             bool(self._config.get("config_api_enabled")),
@@ -882,8 +898,7 @@ class MagicProxyApp(rumps.App):
         （#70 S13：token 不出原生进程，持 expected_token 直接拼装）。
         ADR-009：指令里的 curl 要能被 agent 立即使用——复制即闩锁持有
         配置服务（本次会话保持监听），通知里说明。"""
-        self._copy_api_latch = True
-        self._sync_config_server()
+        self._set_config_holders(copy_latch=True)
         text = self._config_server.agent_instructions()
         proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
         proc.communicate(text.encode())
