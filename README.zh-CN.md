@@ -9,7 +9,7 @@
 [![Stars](https://img.shields.io/github/stars/benz-ai-x/Magic-AI-Router?style=social)](../../stargazers)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%28Apple%20Silicon%29-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-[![Tests](https://img.shields.io/badge/tests-1700%2B%20%C2%B7%20ADRs%20%C2%B7%20zero%20telemetry-brightgreen)](CONTEXT.md)
+[![Tests](https://img.shields.io/badge/tests-2000%2B%20%C2%B7%20ADRs%20%C2%B7%20zero%20telemetry-brightgreen)](CONTEXT.md)
 
 ![菜单栏](assets/docs/menu-bar-v091.png)
 
@@ -120,7 +120,7 @@ macOS 首次运行：偏好设置 → **代理 → 隧道** 填 SSH 信息 → �
 - SSH 密码住 macOS **钥匙串**、管道交给 `ssh`（绝不进 `argv`/`ps`/文件）；`StrictHostKeyChecking=yes` + 专用 `known_hosts`
 - 常量时间密钥比较；带凭证出站拒绝跨 origin 重定向与 HTTPS→HTTP 降级；响应上限 1MB
 - 配置原子写入（`0600`）+ 崩溃恢复日志；掩码 Key 明文绝不出 UI
-- **1700+ 测试**、架构决策记录（[`docs/adr/`](docs/adr/)）、防漂移领域词汇表（[`CONTEXT.md`](CONTEXT.md)）——纪律在仓库里，不在嘴上
+- **2000+ 测试**、架构决策记录（[`docs/adr/`](docs/adr/)）、防漂移领域词汇表（[`CONTEXT.md`](CONTEXT.md)）——纪律在仓库里，不在嘴上
 
 ## 🤖 Agent 可自主操作
 

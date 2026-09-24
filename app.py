@@ -740,7 +740,7 @@ class MagicProxyApp(rumps.App):
                 "【抓 包】TLS 解密 AI API（6 家）落 JSONL，其余放行（:8080）\n"
                 "\n"
                 "【信 任】零遥测，全回环（配置 :9528 按需监听），原子写入，\n"
-                "　　　　 1700+ 测试钉住行为契约\n"
+                "　　　　 2000+ 测试钉住行为契约\n"
                 "\n"
                 "设置窗（⌘,）配置一切；「复制 AI 助手指令」可让 AI 代配置。\n"
                 "开源（MIT）：github.com/benz-ai-x/Magic-AI-Router"))

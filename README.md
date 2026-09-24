@@ -9,7 +9,7 @@
 [![Stars](https://img.shields.io/github/stars/benz-ai-x/Magic-AI-Router?style=social)](../../stargazers)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%28Apple%20Silicon%29-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-[![Tests](https://img.shields.io/badge/tests-1700%2B%20%C2%B7%20ADRs%20%C2%B7%20zero%20telemetry-brightgreen)](CONTEXT.md)
+[![Tests](https://img.shields.io/badge/tests-2000%2B%20%C2%B7%20ADRs%20%C2%B7%20zero%20telemetry-brightgreen)](CONTEXT.md)
 
 ![Menu bar](assets/docs/menu-bar-v091.png)
 
@@ -120,7 +120,7 @@ Security-sensitive tooling earns trust in the open:
 - SSH passwords in the macOS **Keychain**, piped to `ssh` (never in `argv`/`ps`/files); `StrictHostKeyChecking=yes` with a dedicated `known_hosts`
 - Constant-time key comparison; credential-bearing outbound calls refuse cross-origin redirects and HTTPS→HTTP downgrades; 1MB response cap
 - Config writes atomic (`0600`) with a crash-recovery journal; masked keys never leave the UI
-- **1700+ tests**, architecture decision records ([`docs/adr/`](docs/adr/)), a drift-guarded domain glossary ([`CONTEXT.md`](CONTEXT.md)) — the discipline is in the repo, not just the claim
+- **2000+ tests**, architecture decision records ([`docs/adr/`](docs/adr/)), a drift-guarded domain glossary ([`CONTEXT.md`](CONTEXT.md)) — the discipline is in the repo, not just the claim
 
 ## 🤖 Agent-operable
 

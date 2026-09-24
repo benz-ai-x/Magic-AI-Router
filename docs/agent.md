@@ -47,7 +47,7 @@
 - `current_tunnel_id`: **代理隧道**的稳定 id（`t-` 前缀，角色唯一真相）。隧道删除/调序不漂移；空串或指向已删隧道时回退 `current_tunnel` 下标解析（回落首条）。**改代理角色优先写此字段**（配套 `current_tunnel` 下标可选，merge 会按 id 回写投影）
 - `current_tunnel`: 代理隧道下标（兼容投影，merge 按 id 派生回写；旧版本 app 读它）
 - `tunnels[].id`: 隧道稳定 id（读路径自动赋，无需手写；同身份 `user@host:port` 恒同 id）
-- `forwards`: per-tunnel 本地端口转发（`ssh -L`，绑定恒 127.0.0.1）——远程 `remote_host:remote_port` 映射到本机 `local_port`；`remote_host` 缺省 `"127.0.0.1"`（服务器侧）。`local_port` **全局唯一**（多活：任意隧道可并行运行——同端口会让两条 ssh 互顶）且不得撞保留端口（8888/8080/9527/9528/socks5）。保存时已连接的隧道自动守卫重连应用
+- `forwards`: per-tunnel 本地端口转发（`ssh -L`，绑定恒 127.0.0.1）——远程 `remote_host:remote_port` 映射到本机 `local_port`；`remote_host` 缺省 `"127.0.0.1"`（服务器侧）。`local_port` **全局唯一**（多活：任意隧道可并行运行——同端口会让两条 ssh 互顶）且不得撞保留端口（8888/8080/9527/9528/socks5 + NFS 本地端口，缺省 12049）。保存时已连接的隧道自动守卫重连应用
 - `forward_autostart`: 该隧道的转发会话随应用启动自动恢复（默认 false）。多活模型：代理隧道（`current_tunnel_id` 指定）是唯一携带 SOCKS5（-D）的会话；其余隧道可各自「启动端口转发」并行运行（纯 -L 无 -D）。设置窗切换代理角色经显式「设为代理隧道」按钮（保存后需「重新连接」应用）
 
 ### ~/.suanpan.yaml — AI 路由配置
