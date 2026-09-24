@@ -55,13 +55,27 @@ class TestMultiActiveTunnels(unittest.TestCase):
                            "remote_port": 81}]},
         ]}
 
-    def test_forward_state_change_rebuilds_menu(self):
+    def test_status_flip_does_not_rebuild_menu(self):
+        """UX 批次：后台状态翻转就地刷新，不整树重建——此前任何会话
+        connecting→connected 都会 clear+rebuild，用户展开子菜单时塌掉。"""
+        cfg = self._cfg()
         key_idle = MenuBuilder(MagicMock(), lambda: _state(
-            config=self._cfg(), forward_states=())).struct_key()
-        key_fwd = MenuBuilder(MagicMock(), lambda: _state(
-            config=self._cfg(),
+            config=cfg, forward_states=())).struct_key()
+        key_up = MenuBuilder(MagicMock(), lambda: _state(
+            config=cfg,
             forward_states=(ForwardState("t-2", "AWS-ap", "connected"),))).struct_key()
-        self.assertNotEqual(key_idle, key_fwd)
+        self.assertEqual(key_idle, key_up)
+
+    def test_identity_change_rebuilds_menu(self):
+        """行集合变化（配置增删转发规则）仍然重建。"""
+        cfg = self._cfg()
+        cfg_more = self._cfg()
+        cfg_more["tunnels"][1]["forwards"].append(
+            {"local_port": 9002, "remote_host": "h", "remote_port": 82})
+        key_a = MenuBuilder(MagicMock(), lambda: _state(config=cfg)).struct_key()
+        key_b = MenuBuilder(
+            MagicMock(), lambda: _state(config=cfg_more)).struct_key()
+        self.assertNotEqual(key_a, key_b)
 
     def _submenu(self, title, cfg=None, forward_states=(), ssh_status="connected"):
         """直接构建子菜单（真实 rumps.MenuItem 树——MockApp 的 menu 不会
@@ -74,7 +88,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
                 forward_states=forward_states))
             builder = {"代 理": mb._build_proxy_submenu,
                        "端口映射": mb._build_forward_submenu,
-                       "系 统": mb._build_system_submenu}[title]
+                       "选 项": mb._build_system_submenu}[title]
             parent = builder()
         rows = list(parent.values())
         self._titles = [r.title for r in rows if hasattr(r, "title")]
@@ -85,8 +99,8 @@ class TestMultiActiveTunnels(unittest.TestCase):
         titles = self._titles
         self.assertIn("暂停代理", titles)          # connected 语境
         self.assertIn("重新连接", titles)
-        self.assertIn("系统代理：关", titles)
-        self.assertIn("代理隧道（SOCKS5 上游）", titles)
+        self.assertIn("开启系统代理", titles)       # 动词式开关
+        self.assertIn("代理隧道（本地代理的上游）", titles)
         self.assertIn("✓ Aws-eu", titles)          # 角色单选：当前打 ✓
         self.assertIn("AWS-ap", titles)
         launch = [t for t in titles if t == "经代理启动 App"]
@@ -98,14 +112,16 @@ class TestMultiActiveTunnels(unittest.TestCase):
         parent, subs = self._submenu(
             "端口映射", forward_states=(ForwardState("t-2", "AWS-ap", "connected"),))
         titles = self._titles
-        self.assertIn("Aws-eu — 随代理运行", titles)   # 代理隧道信息行
+        self.assertTrue(any("随代理运行" in t for t in titles),
+                        titles)  # 代理隧道信息行（带重启警示尾）
+        self.assertTrue(any("启停将重启代理" in t for t in titles), titles)
         running = [s for s in subs if s.title.startswith("AWS-ap")]
         self.assertTrue(running, titles)
         self.assertIn("— 转发中", running[0].title)
         self.assertNotIn("9001→81", running[0].title)  # 端口串移出隧道行标题
         items = [i.title for i in list(running[0].values())
                  if hasattr(i, "title")]
-        # 逐条转发子行（点击即启停）在前，会话动作在后
+        # 逐条转发子行（点击即启停）在前，会话动作在后（标签随状态刷新）
         self.assertIn("9001 → 81 · 已映射", items)
         self.assertIn("停止端口转发", items)
         self.assertIn("重新连接", items)
@@ -119,9 +135,10 @@ class TestMultiActiveTunnels(unittest.TestCase):
         self.assertIn("— 未启动", idle[0].title)
         items = [i.title for i in list(idle[0].values())
                  if hasattr(i, "title")]
-        self.assertIn("启动端口转发（需先配置转发规则）", items)
+        # 无规则：深链直达偏好设置（不再是死文本行）
+        self.assertIn("添加转发规则…", items)
         # t-1 有规则 → 不出现全局空态提示
-        self.assertNotIn("在偏好设置 → 隧道里添加转发规则", titles)
+        self.assertNotIn("添加转发规则…", titles)
 
     def test_forward_submenu_empty_state_hint(self):
         cfg = self._cfg()
@@ -129,20 +146,48 @@ class TestMultiActiveTunnels(unittest.TestCase):
             t["forwards"] = []
         parent, _ = self._submenu("端口映射", cfg=cfg)
         titles = self._titles
-        self.assertIn("在偏好设置 → 隧道里添加转发规则", titles)
+        self.assertIn("添加转发规则…", titles)
+
+    def test_forward_empty_state_deep_links_to_prefs(self):
+        cfg = self._cfg()
+        for t in cfg["tunnels"]:
+            t["forwards"] = []
+        app = MagicMock()
+        mb = MenuBuilder(app, lambda: _state(config=cfg))
+        parent = mb._build_forward_submenu()
+        row = [r for r in parent.values()
+               if hasattr(r, "title") and r.title == "添加转发规则…"][0]
+        self.assertIs(row.callback, app.show_prefs_forwards)
 
     def test_forward_submenu_proxy_row_reflects_disconnected(self):
         parent, _ = self._submenu("端口映射", ssh_status="stopped")
         titles = self._titles
         self.assertIn("Aws-eu — 未随代理运行", titles)
 
+    def test_forward_submenu_single_tunnel_flattens(self):
+        """单隧道拍平：转发行一级直达（免隧道包装行的嵌套）。"""
+        cfg = {"current_tunnel": 0, "tunnels": [
+            {"id": "t-1", "name": "Aws-eu", "ssh_host": "a",
+             "forwards": [{"local_port": 7001, "remote_host": "h",
+                           "remote_port": 71}]}]}
+        app = MagicMock()
+        with unittest.mock.patch("shellui.menu_builder.chromium_proxy.installed_apps",
+                                 return_value=[]):
+            mb = MenuBuilder(app, lambda: _state(
+                ssh_status="connected", config=cfg))
+            parent = mb._build_forward_submenu()
+        titles = [r.title for r in parent.values() if hasattr(r, "title")]
+        # 上下文行 + 转发行都在顶层（一级），上下文行带重启警示
+        self.assertIn("Aws-eu — 随代理运行 · 启停将重启代理", titles)
+        self.assertIn("7001 → 71 · 已映射", titles)
+
     def test_system_submenu_and_refs(self):
-        _, _subs = self._submenu("系 统")
+        _, _subs = self._submenu("选 项")
         titles = self._titles
         self.assertIn("阻止睡眠", titles)   # fixture 文案（=防睡眠开关）
         self.assertIn("开机启动", titles)   # fixture 文案（=登录启动开关）
-        # ADR-009：配置 API 服务开关（MenuState 字段缺省 = 关）
-        self.assertIn("配置 API 服务：关", titles)
+        # ADR-009：配置 API 服务开关（MenuState 字段缺省 = 待开启）
+        self.assertIn("开启配置 API 服务", titles)
 
     def test_status_line_appends_forward_count(self):
         mb = MenuBuilder(MagicMock(), lambda: _state(
@@ -154,6 +199,86 @@ class TestMultiActiveTunnels(unittest.TestCase):
         title = mb.refs["proxy_status"].title
         self.assertIn("1 条转发", title)
         self.assertNotIn("🟢", title, "状态行 emoji 已退役（颜色由图标承载）")
+
+    def test_status_line_counts_failures(self):
+        """UX 批次：转发/挂载 error 态在顶部状态行立即可见（此前静默）。"""
+        mb = MenuBuilder(MagicMock(), lambda: _state(
+            ssh_status="connected", config=self._cfg(),
+            forward_states=(ForwardState("t-2", "AWS-ap", "error"),),
+            mount_states=(MountState("t-1", "Aws-eu", "data", "error", "x"),)))
+        mb.build()
+        mb.refresh_titles()
+        title = mb.refs["proxy_status"].title
+        self.assertIn("⚠ 1 转发异常", title)
+        self.assertIn("⚠ 1 挂载异常", title)
+
+    def test_status_line_keeps_tunnel_name_when_disconnected(self):
+        """断开也保留隧道名——此刻更需要知道当前配的是谁。"""
+        cfg = self._cfg()
+        mb = MenuBuilder(MagicMock(), lambda: _state(
+            ssh_status="stopped", config=cfg, current_tunnel=cfg["tunnels"][0]))
+        mb.build()
+        mb.refresh_titles()
+        self.assertIn("未连接", mb.refs["proxy_status"].title)
+        self.assertIn("Aws-eu", mb.refs["proxy_status"].title)
+
+    def test_router_error_line_is_short(self):
+        """原始错误串不进菜单（截断读不完也无法复制）。"""
+        mb = MenuBuilder(MagicMock(), lambda: _state(
+            suanpan_error="缺少依赖 'fastapi'，请安装：pip3 install -r requirements-dev.txt"))
+        mb.build()
+        mb.refresh_titles()
+        self.assertEqual(mb.refs["router_status"].title, "AI Router · 启动失败")
+
+
+class TestDynamicRefreshInPlace(unittest.TestCase):
+    """状态翻转的就地刷新（UX 批次）：行对象不变、标题/标签更新。"""
+
+    @staticmethod
+    def _cfg():
+        return {"current_tunnel": 0, "tunnels": [
+            {"id": "t-1", "name": "Aws-eu", "ssh_host": "a",
+             "forwards": [{"local_port": 9000, "remote_host": "h",
+                           "remote_port": 80}]},
+            {"id": "t-2", "name": "AWS-ap", "ssh_host": "b",
+             "forwards": [{"local_port": 9001, "remote_host": "h",
+                           "remote_port": 81}]},
+        ]}
+
+    def test_forward_rows_refresh_without_rebuild(self):
+        state = {"forward_states": (ForwardState("t-2", "AWS-ap", "connected"),),
+                 "ssh_status": "connected"}
+        mb = MenuBuilder(MagicMock(), lambda: _state(
+            config=self._cfg(), **state))
+        parent = mb._build_forward_submenu()
+        row = mb.refs[("fw_row", "t-2", 0)]
+        action = mb.refs[("fw_action", "t-2")]
+        self.assertEqual(row.title, "9001 → 81 · 已映射")
+        self.assertEqual(action.title, "停止端口转发")
+
+        state["forward_states"] = ()   # 会话掉线（状态翻转）
+        mb.refresh_titles()
+        self.assertIs(mb.refs[("fw_row", "t-2", 0)], row)  # 同一行对象
+        self.assertEqual(row.title, "9001 → 81 · 未连接")
+        self.assertEqual(action.title, "启动端口转发")
+
+    def test_mount_rows_refresh_without_rebuild(self):
+        state = {"mount_states": (MountState("t-1", "Aws-eu", "data",
+                                             "mounted", ""),)}
+        mb = MenuBuilder(MagicMock(), lambda: _state(
+            config={"tunnels": []}, **state))
+        mb._build_mount_submenu()
+        row = mb.refs[("mount_row", "t-1", "data")]
+        action = mb.refs[("mount_action", "t-1", "data")]
+        self.assertIn("· 已挂载", row.title)
+        self.assertEqual(action.title, "卸载")
+
+        state["mount_states"] = (MountState("t-1", "Aws-eu", "data",
+                                            "error", "远程无导出"),)
+        mb.refresh_titles()
+        self.assertIs(mb.refs[("mount_row", "t-1", "data")], row)
+        self.assertIn("异常：远程无导出", row.title)
+        self.assertEqual(action.title, "挂载")
 
 
 class TestIconInfrastructure(unittest.TestCase):
@@ -217,41 +342,75 @@ class TestMountSubmenu(unittest.TestCase):
         titles = [r.title for r in parent.values() if hasattr(r, "title")]
         return parent, rows, titles
 
-    def test_mount_state_change_rebuilds_menu(self):
+    def test_status_flip_does_not_rebuild_menu(self):
+        """挂载态翻转就地刷新（unmounted→mounting 不再重建整树）。"""
+        key_mounted = MenuBuilder(MagicMock(), lambda: _state(
+            mount_states=self._mounts())).struct_key()
+        key_shift = MenuBuilder(MagicMock(), lambda: _state(
+            mount_states=(MountState("t-1", "Aws-eu", "data", "mounting", ""),
+                          MountState("t-1", "Aws-eu", "ws", "unmounted", "")))).struct_key()
+        self.assertEqual(key_mounted, key_shift)
+
+    def test_identity_change_rebuilds_menu(self):
         key_idle = MenuBuilder(MagicMock(), lambda: _state(
             mount_states=())).struct_key()
         key_mounted = MenuBuilder(MagicMock(), lambda: _state(
             mount_states=self._mounts())).struct_key()
         self.assertNotEqual(key_idle, key_mounted)
-        # 状态迁移（unmounted→mounting）同样触发重建
-        key_shift = MenuBuilder(MagicMock(), lambda: _state(
-            mount_states=(MountState("t-1", "Aws-eu", "ws", "mounting", ""),))).struct_key()
-        self.assertNotEqual(key_mounted, key_shift)
 
     def test_mount_rows_and_actions(self):
         _, rows, titles = self._submenu(self._mounts())
-        mounted = [r for r in rows if r.title.startswith("Aws-eu · data")]
-        unmounted = [r for r in rows if r.title.startswith("Aws-eu · ws")]
+        mounted = [r for r in rows if "Aws-eu · data" in r.title]
+        unmounted = [r for r in rows if "Aws-eu · ws" in r.title]
         self.assertTrue(mounted and unmounted, titles)
-        self.assertIn("— 已挂载", mounted[0].title)
-        self.assertIn("— 未挂载", unmounted[0].title)
+        self.assertIn("· 已挂载", mounted[0].title)
+        self.assertIn("· 未挂载", unmounted[0].title)
         items = [i.title for i in list(mounted[0].values())]
         self.assertIn("卸载", items)
         self.assertIn("打开挂载目录", items)
         items = [i.title for i in list(unmounted[0].values())]
         self.assertIn("挂载", items)
 
-    def test_error_row_shows_message(self):
+    def test_transient_mount_tails_keep_ellipsis(self):
+        """进行态尾标保留省略号（挂载中…/卸载中…——用户能看出未完）。"""
+        _, rows, _ = self._submenu(
+            (MountState("t-1", "a", "data", "mounting", ""),))
+        self.assertIn("挂载中…", rows[0].title)
+
+    def test_all_empty_multi_tunnel_no_duplicate_rows(self):
+        """rumps 以标题为键去重——多隧道全空态时各包装行内的
+        「添加转发规则…」分属不同子菜单，顶层仅全局一行（不塌行）。"""
+        cfg = {"current_tunnel": 0, "tunnels": [
+            {"id": "t-1", "name": "a", "ssh_host": "h",
+             "ssh_user": "u", "auth_type": "key", "forwards": []},
+            {"id": "t-2", "name": "b", "ssh_host": "h",
+             "ssh_user": "u", "auth_type": "key", "forwards": []},
+        ]}
+        app = MagicMock()
+        mb = MenuBuilder(app, lambda: _state(config=cfg))
+        parent = mb._build_forward_submenu()
+        top = [r.title for r in parent.values() if hasattr(r, "title")]
+        self.assertEqual(top.count("添加转发规则…"), 1)
+        for wrapper in [r for r in parent.values() if hasattr(r, "values")]:
+            inner = [i.title for i in wrapper.values()
+                     if hasattr(i, "title")]
+            self.assertLessEqual(inner.count("添加转发规则…"), 1)
+
+    def test_error_detail_folded_into_row_title(self):
         states = (MountState("t-1", "srv", "data", "error", "挂载失败：权限不足"),)
         _, rows, titles = self._submenu(states)
-        err = [r for r in rows if r.title.startswith("srv · data")]
-        self.assertIn("— 异常", err[0].title)
-        items = [i.title for i in list(err[0].values())]
-        self.assertIn("  挂载失败：权限不足", items)
+        err = [r for r in rows if "srv · data" in r.title]
+        self.assertIn("异常：挂载失败：权限不足", err[0].title)
 
-    def test_empty_state_hint(self):
-        _, _, titles = self._submenu()
-        self.assertIn("在偏好设置 → 远程挂载里配置", titles)
+    def test_empty_state_hint_deep_links(self):
+        app = MagicMock()
+        mb = MenuBuilder(app, lambda: _state(config={"tunnels": []}))
+        parent = mb._build_mount_submenu()
+        titles = [r.title for r in parent.values() if hasattr(r, "title")]
+        self.assertIn("配置挂载…", titles)
+        row = [r for r in parent.values()
+               if hasattr(r, "title") and r.title == "配置挂载…"][0]
+        self.assertIs(row.callback, app.show_prefs_mounts)
 
     def test_status_line_appends_mount_count(self):
         mb = MenuBuilder(MagicMock(), lambda: _state(
@@ -259,7 +418,7 @@ class TestMountSubmenu(unittest.TestCase):
         mb.build()
         mb.refresh_titles()
         title = mb.refs["proxy_status"].title
-        self.assertIn("1 挂载", title)
+        self.assertIn("1 个挂载", title)
 
 
 class TestForwardRowPerItemToggle(unittest.TestCase):
@@ -324,5 +483,6 @@ class TestForwardRowPerItemToggle(unittest.TestCase):
     def test_forward_row_pending_when_session_down(self):
         parent = self._fw_menu(ssh_status="stopped", forward_states=())
         titles = self._flat_titles(parent)
-        # 会话未跑：启用行"待会话"（守卫语义——未运行绝不拉起）
-        self.assertIn("9001 → 81 · 待会话", titles)
+        # 会话未跑：启用行"未连接"（守卫语义——未运行绝不拉起；UX 批次
+        # 弃内部术语"待会话"）
+        self.assertIn("9001 → 81 · 未连接", titles)

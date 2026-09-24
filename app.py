@@ -278,9 +278,15 @@ class MagicProxyApp(rumps.App):
             suanpan_error=sp.error,
             suanpan_listen_address=sp.listen_address() if sp.running else "",
             current_tunnel=self._conn.current_tunnel,
-            prevent_sleep_title="防睡眠：开" if self._config.get("prevent_sleep") else "防睡眠：关",
-            launch_login_title="登录启动：开" if self._config.get("launch_at_login") else "登录启动：关",
-            config_api_title="配置 API 服务：开" if self._config.get("config_api_enabled") else "配置 API 服务：关",
+            prevent_sleep_title=("关闭防睡眠"
+                                 if self._config.get("prevent_sleep")
+                                 else "开启防睡眠"),
+            launch_login_title=("关闭登录启动"
+                                if self._config.get("launch_at_login")
+                                else "开启登录启动"),
+            config_api_title=("关闭配置 API 服务"
+                              if self._config.get("config_api_enabled")
+                              else "开启配置 API 服务"),
             forward_states=tuple(self._conn.forward_sessions()),
             mount_states=tuple(self._mounts.mount_states()),
         )
@@ -762,8 +768,15 @@ class MagicProxyApp(rumps.App):
     # ── preferences / quit ───────────────────────────────
 
     def show_preferences(self, _):
-        """Open the web-based config panel in a webview window."""
         self._open_config_window("")
+
+    def show_prefs_forwards(self, _):
+        """端口映射空态深链：偏好设置 → 隧道（转发表）。"""
+        self._open_config_window("#tunnel")
+
+    def show_prefs_mounts(self, _):
+        """远程挂载空态深链：偏好设置 → 远程挂载。"""
+        self._open_config_window("#nfs")
 
     def show_agent_setup(self, _):
         """ADR-010 M5：菜单「配置 Agent…」深链——设置窗直达快速接入向导。"""

@@ -1180,8 +1180,10 @@ async function load(){
     })
     .catch(()=>{});
   try{const lv=localStorage.getItem('mar.lastView');if(lv&&VIEWS[lv])activeView=lv;}catch(e){}
-  // 菜单「配置 Agent…」深链：#quickstart 直达快速接入向导（优先于 lastView）
-  if(location.hash==='#quickstart'&&VIEWS.quickstart)activeView='quickstart';
+  // 菜单深链：#<viewId> 直达对应视图（优先于 lastView）——「配置 Agent…」
+  // 与端口映射/远程挂载空态「添加转发规则…/配置挂载…」共用（UX 批次）
+  var _deepLink=location.hash.slice(1);
+  if(_deepLink&&VIEWS[_deepLink])activeView=_deepLink;
   activeTunnel=proxyIndexOf(S);
   activeProvider=Object.keys(S.sp.providers)[0]||'';credModeOverride='';
   lastSavedAt='';captureBaseline(false);renderNav();renderView();
