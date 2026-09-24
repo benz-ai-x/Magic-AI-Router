@@ -10,6 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 - **网关僵尸态自动检出与重建（watchdog）**：`SuanpanRuntime.audit()` 健康审计原语（running 旗标 vs 端口真相的 TCP 探测，stopped/healthy/mismatch 单一归宿）+ `LifecycleRuntime.tick` 对账（挂载协调器同款纪律：主线程轻检查、自愈动作丢 worker；5s 审计节奏 × 连续 3 次失配 ≈15s 检出，合法 reload 空窗不误触；失败退避 30s）。谓词只认"running 但端口无人听"——用户显式停止与崩溃态绝不拉起。Docker 形态同谓词进程内 watchdog（30s 循环，补上 compose 无 healthcheck 的缺口）。与 v0.11.0 的停机有界修复构成纵深防御
 
 ### Changed
+- **运行态装饰单一归宿（架构评审 C2）**：`/api/state` 的内联装饰（capture_active/is_proxy/forward_running/nfs_states 约 30 行）上收为 `mpconf.config.decorate_runtime_state` 纯函数——装饰写入的键 = `RUNTIME_DECORATED_FIELDS` 单点声明，`READONLY_DECORATED_FIELDS` 的运行态半边由它派生（两份手维护名单合一）；is_proxy 的角色解析（id→下标→首条）与 merge 收敛为 `resolve_proxy_tunnel` 单一判定（装饰处原为手写第三种变体）。新增一条运行态事实 = 投影加字段 + 装饰处加一个键，config_server 的 `/api/state` handler 不再持有装饰知识
 - **供应商卡片 additive（架构评审 C3）**：余额响应语法从 `normalize_balance` 的形状嗅探链移入注册表 API 卡（第 4 元 `parser` 名 + `model_usage_url` 升 `(url, parser)`）——归一按卡精确路由、形状嗅探只作兜底，新增厂商=加一张卡不再往嗅探链加分支；测试机器检查每张卡都带语法名。设置窗 Anthropic 原生端点提示删 JS 平行硬编码表（漂移源），改派生自 `/api/provider-templates` 的 `anthropic_native` 位（单一真源注册表）。刻意的例外：compat 的 `_NEEDS_COMPLETION_TOKENS` 是模型族知识（按模型名前缀、跨厂商适用）不进厂商卡；capture identify() 维持资源契约独立
 - **claude_code_setup 收敛（架构评审 C4）**：①tier 规则前缀命中语义归还 `suanpan/router.first_tier_route`（原 `_first_tier_rule` 镜像 router 语义——前缀知识不落第二处，CC 角色种子与 decide_route 同源）；②OpenCode/ZCode 两条 JSON 车道的 owned 槽位 plan/apply 半成品合 `_json_provider_plan/_json_provider_apply`（两份 apply 原为逐字节镜像）——行为零变化，router 侧新增测试钉住逆查询语义
 

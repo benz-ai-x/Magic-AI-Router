@@ -23,7 +23,7 @@ from tunnel import ssh_launch
 from mount import remote_setup
 from services import claude_code_setup
 from capture import capture_store
-from mpconf.config import load_config, merge_config
+from mpconf.config import load_config, merge_config, decorate_runtime_state
 from services.balance_usage import (
     USAGE_RANGES,
     fetch_balance,
@@ -340,35 +340,19 @@ class _Handler(BaseHTTPRequestHandler):
             mp = _read_mp()
             sp = sp_config.sp_load_masked()
             # Read-only runtime status injected for the config UI;
-            # READONLY_DECORATED_FIELDS（config_state 单点声明）的剥除
-            # 保证它永不回写文件。运行态经 RuntimeProjection 单一 seam
-            # 读取（缺席/失败 → 空投影：capture_active=False、装饰全空）
+            # READONLY_DECORATED_FIELDS（config_state 单点声明，运行态
+            # 半边派生自 mpconf.config.RUNTIME_DECORATED_FIELDS）的剥除
+            # 保证它永不回写文件。装饰形状单一归宿
+            # mpconf.config.decorate_runtime_state（架构评审 C2）；
+            # 运行态经 RuntimeProjection 单一 seam 读取（缺席/异常 →
+            # 空投影：capture_active=False、装饰全空）
             try:
                 fn = self.server.runtime_state_fn
                 proj = fn() if fn else None
-                capture_active = bool(proj and proj.capture_active)
-                states = {s.tunnel_id: s.status
-                          for s in (proj.forwards if proj else ())}
-                mount_states = {}
-                for entry in (proj.mounts if proj else ()):
-                    mount_states.setdefault(entry.tunnel_id, {})[entry.name] \
-                        = {"status": entry.status, "error": entry.error,
-                           "fixable": entry.fixable}
             except Exception:
                 logger.exception("runtime_state_fn failed")
-                capture_active = False
-                states = {}
-                mount_states = {}
-            mp["capture_active"] = capture_active
-            cid = mp.get("current_tunnel_id") or ""
-            current_idx = mp.get("current_tunnel", 0)
-            for i, t in enumerate(mp.get("tunnels", [])):
-                # 多活（v0.9）is_proxy 按代理角色（id 真相 + 旧下标回退，
-                # 与 merge 同一解析序）；forward_running/nfs_states 按投影
-                is_role = (t.get("id") == cid) if cid else i == current_idx
-                t["is_proxy"] = is_role
-                t["forward_running"] = t.get("id") in states
-                t["nfs_states"] = mount_states.get(t.get("id")) or {}
+                proj = None
+            mp = decorate_runtime_state(mp, proj)
             self._json(200, {"mp": mp, "sp": sp})
         elif path == "/api/balance":
             self._json(200, fetch_balance(sp_config.sp_load_raw()))

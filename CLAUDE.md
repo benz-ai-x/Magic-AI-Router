@@ -77,7 +77,9 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
 mpconf/ ── 配置栈
   config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串；
     代理角色双表示：current_tunnel_id 稳定 id 真相 + current_tunnel
-    下标兼容投影，解析序 id→下标→首条）
+    下标兼容投影，解析序 id→下标→首条，resolve_proxy_tunnel 单一判定）
+    + decorate_runtime_state /api/state 运行态装饰单一归宿（只写
+    RUNTIME_DECORATED_FIELDS 声明键，strip 名单同源派生）
   validate.py ── mp 分域校验器（顶层数值 + 隧道级行[forwards/nfs] + 全局端口/挂载点冲突；prepare 的校验半边）
   config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
     分域校验 orchestrator / commit（journal+MP+SP+Keychain+回调次序）/

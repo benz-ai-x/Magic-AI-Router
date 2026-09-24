@@ -283,6 +283,24 @@ def save_config(config, path=None):
 EXTRA_CONFIG_FIELDS: set = set()
 
 
+def resolve_proxy_tunnel(tunnels, current_tunnel_id, current_tunnel):
+    """代理角色单一解析：有效 id（真相）→ 旧下标（兼容无 id 旧档/手编
+    配置）→ 首条。merge 双写回与 /api/state 装饰（is_proxy）共用的唯一
+    判定（架构评审 C2：装饰处原为手写第三种变体）。返回隧道 dict 或
+    None（无隧道/全部异形）。"""
+    if isinstance(current_tunnel_id, str) and current_tunnel_id:
+        for t in tunnels:
+            if isinstance(t, dict) and t.get("id") == current_tunnel_id:
+                return t
+    try:
+        idx = int(current_tunnel or 0)
+    except (TypeError, ValueError):
+        idx = 0
+    if 0 <= idx < len(tunnels):
+        return tunnels[idx]
+    return tunnels[0] if tunnels else None
+
+
 def merge_config(cfg):
     """Merge raw config with defaults, coerce types, validate ranges."""
     if not isinstance(cfg, dict):
@@ -349,20 +367,9 @@ def merge_config(cfg):
         merged["retention_days"] = 7
     # 代理角色解析（单一语义，读/存路径共用）：有效 id → 旧下标（兼容
     # 无 id 旧档/手编配置）→ 首条。解析后双写回：id 是真相，下标是投影
-    resolved = None
-    cid = merged.get("current_tunnel_id")
-    if isinstance(cid, str) and cid:
-        resolved = next((t for t in merged["tunnels"]
-                         if isinstance(t, dict) and t.get("id") == cid), None)
-    if resolved is None:
-        try:
-            idx = int(merged.get("current_tunnel", 0))
-        except (TypeError, ValueError):
-            idx = 0
-        if 0 <= idx < len(merged["tunnels"]):
-            resolved = merged["tunnels"][idx]
-    if resolved is None and merged["tunnels"]:
-        resolved = merged["tunnels"][0]
+    resolved = resolve_proxy_tunnel(merged["tunnels"],
+                                    merged.get("current_tunnel_id"),
+                                    merged.get("current_tunnel", 0))
     merged["current_tunnel_id"] = \
         (resolved.get("id") or "") if isinstance(resolved, dict) else ""
     merged["current_tunnel"] = next(
@@ -375,3 +382,46 @@ def merge_config(cfg):
         capture_dir = DEFAULT_CAPTURE_DIR
     merged["capture_dir"] = os.path.abspath(os.path.expanduser(capture_dir))
     return merged
+
+
+# /api/state 运行态装饰字段的单一归宿（架构评审 C2）：装饰只写这四个
+# 键；config_state.READONLY_DECORATED_FIELDS 的运行态半边由此派生——
+# 「新增一条运行态事实 = 此处加一个键」替代两份手维护名单
+RUNTIME_DECORATED_FIELDS = frozenset(
+    {"capture_active", "is_proxy", "forward_running", "nfs_states"})
+
+
+def decorate_runtime_state(mp, proj):
+    """给 merge 后的 mp 注入运行态装饰（纯函数，/api/state 唯一装饰点）。
+
+    读 RuntimeProjection（叶子层容器——按字段形状消费，不 import 生产
+    者域）：capture_active 布尔 + forwards/mounts 命名投影（ForwardState
+    /MountState）。is_proxy 经 resolve_proxy_tunnel 与 merge 同一解析序。
+    proj=None（缺席/异常）= 空投影：capture_active=False、装饰全空。
+    只写 RUNTIME_DECORATED_FIELDS 声明的键——prepare 剥除同一集合，
+    装饰永不落盘。
+    """
+    if not isinstance(mp, dict):
+        return mp
+    forward_status = {}
+    for s in tuple(getattr(proj, "forwards", ()) or ()):
+        tid = getattr(s, "tunnel_id", None)
+        if tid is not None:
+            forward_status[tid] = getattr(s, "status", "")
+    mount_states = {}
+    for entry in tuple(getattr(proj, "mounts", ()) or ()):
+        mount_states.setdefault(getattr(entry, "tunnel_id", None), {})[
+            getattr(entry, "name", "")] = {
+                "status": getattr(entry, "status", ""),
+                "error": getattr(entry, "error", ""),
+                "fixable": getattr(entry, "fixable", ""),
+            }
+    mp["capture_active"] = bool(getattr(proj, "capture_active", False))
+    role = resolve_proxy_tunnel(mp.get("tunnels") or [],
+                                mp.get("current_tunnel_id"),
+                                mp.get("current_tunnel", 0))
+    for t in mp.get("tunnels") or []:
+        t["is_proxy"] = t is role
+        t["forward_running"] = t.get("id") in forward_status
+        t["nfs_states"] = mount_states.get(t.get("id")) or {}
+    return mp
