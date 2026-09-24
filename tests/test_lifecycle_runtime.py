@@ -408,3 +408,85 @@ class TestPortReportSkipsUnbound(unittest.TestCase):
                           side_effect=lambda p: calls.append(p) or None):
             lr.report_port_occupancy(None, 9527)
         self.assertEqual(calls, [9527])
+
+
+class _FakeGwExecutor:
+    """同步执行 submit（mount 测试 _FakeExecutor 同款）——对账动作
+    在 tick 调用栈内完成，断言确定性。"""
+
+    def submit(self, fn, *a, **kw):
+        fn(*a, **kw)
+        return MagicMock()
+
+    def shutdown(self, wait=False):
+        pass
+
+
+class TestGatewayReconcile(unittest.TestCase):
+    """网关健康对账（watchdog）：谓词边界 / 阈值防抖 / 退避。"""
+
+    def _make(self, verdicts, start_ok=True, start_calls=None):
+        """verdicts: 依次返回的 audit 结果；start_calls: 收集 list。"""
+        clock = [1000.0]
+        svc = _make_coordinator()
+        svc._clock = lambda: clock[0]
+        svc._gw_workers = _FakeGwExecutor()
+        svc._suanpan = MagicMock()
+        svc._suanpan.audit.side_effect = list(verdicts)
+        if start_calls is None:
+            start_calls = []
+        svc._suanpan.start.side_effect = \
+            lambda: (start_calls.append(1), start_ok)[1]
+        svc._suanpan.error = ""
+        return svc, clock, start_calls
+
+    def _ticks(self, svc, n):
+        for _ in range(n):
+            svc.tick(8080)
+
+    def test_healthy_never_heals(self):
+        svc, _, calls = self._make(["healthy"] * 10)
+        self._ticks(svc, 50)
+        self.assertEqual(calls, [])
+
+    def test_stopped_never_heals(self):
+        # 用户停/未启/崩溃——watchdog 绝不拉起（语义边界）
+        svc, _, calls = self._make(["stopped"] * 10)
+        self._ticks(svc, 50)
+        self.assertEqual(calls, [])
+
+    def test_below_threshold_no_heal_then_threshold_heals(self):
+        # 连续 3 次失配才行动：前两次不动、第三次 start
+        svc, _, calls = self._make(["mismatch"] * 10)
+        self._ticks(svc, 5)   # 第 5 拍：misses=1
+        self.assertEqual(calls, [])
+        self._ticks(svc, 5)   # 第 10 拍：misses=2
+        self.assertEqual(calls, [])
+        self._ticks(svc, 5)   # 第 15 拍：misses=3 → heal
+        self.assertEqual(calls, [1])
+
+    def test_intermittent_mismatch_resets(self):
+        # healthy 夹在中间清零——不到阈值永不行动（合法 reload 空窗吸收）
+        svc, _, calls = self._make(["mismatch", "mismatch", "healthy"] * 6)
+        self._ticks(svc, 90)
+        self.assertEqual(calls, [])
+
+    def test_failed_heal_backs_off_then_retries_after_clock_advances(self):
+        svc, clock, calls = self._make(["mismatch"] * 20, start_ok=False)
+        self._ticks(svc, 15)              # 首次 heal（失败）
+        self.assertEqual(len(calls), 1)
+        self._ticks(svc, 60)              # 退避 30s 内：不再 heal
+        self.assertEqual(len(calls), 1)
+        clock[0] += 31.0                  # 拨过退避窗
+        self._ticks(svc, 15)              # 重新计满 3 次失配 → 重试
+        self.assertEqual(len(calls), 2)
+
+    def test_successful_heal_resets_backoff(self):
+        svc, clock, calls = self._make(["mismatch"] * 20, start_ok=True)
+        self._ticks(svc, 15)
+        self.assertEqual(len(calls), 1)
+        # 成功后无退避：再次失配满阈值立即再 heal
+        svc._suanpan.audit.side_effect = ["mismatch"] * 10
+        self._ticks(svc, 15)
+        self.assertEqual(len(calls), 2)
+

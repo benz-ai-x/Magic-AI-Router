@@ -338,3 +338,60 @@ class TestGracefulShutdownBound(unittest.TestCase):
             rt, "127.0.0.1:9527", invoke=True)
         kwargs = mock_config_cls.call_args[1]
         self.assertEqual(kwargs.get("timeout_graceful_shutdown"), 2)
+
+
+class TestAudit(unittest.TestCase):
+    """watchdog 谓词（audit）：stopped / healthy / mismatch 三分支。"""
+
+    def _rt_with_running(self, running):
+        rt = SuanpanRuntime()
+        if running:
+            # 伪造 running（既有测试同款手法）：活线程 + 未置 stop 事件
+            rt._rt._thread = MagicMock()
+            rt._rt._thread.is_alive.return_value = True
+            rt._rt._stop_event = MagicMock()
+            rt._rt._stop_event.is_set.return_value = False
+            rt._rt._state = "RUNNING"
+        return rt
+
+    def test_stopped_when_not_running(self):
+        rt = self._rt_with_running(False)
+        with patch("services.suanpan_runtime._probe_tcp") as probe:
+            probe.assert_not_called  # stopped 分支不探测
+            self.assertEqual(rt.audit(), "stopped")
+
+    def test_healthy_when_port_answers(self):
+        rt = self._rt_with_running(True)
+        rt._cached_listen = "127.0.0.1:9527"
+        with patch("services.suanpan_runtime._probe_tcp",
+                   return_value=True) as probe:
+            self.assertEqual(rt.audit(), "healthy")
+        probe.assert_called_once_with("127.0.0.1", 9527)
+
+    def test_mismatch_when_port_dead(self):
+        rt = self._rt_with_running(True)
+        rt._cached_listen = "127.0.0.1:9527"
+        with patch("services.suanpan_runtime._probe_tcp",
+                   return_value=False):
+            self.assertEqual(rt.audit(), "mismatch")
+
+    def test_unparsable_listen_counts_as_mismatch(self):
+        rt = self._rt_with_running(True)
+        rt._cached_listen = "1.2.3.4:not-a-port"  # parse_listen 拒的形态
+        with patch("services.suanpan_runtime._probe_tcp") as probe:
+            self.assertEqual(rt.audit(), "mismatch")
+        probe.assert_not_called()
+
+    def test_probe_tcp_real_socket(self):
+        # 真实 socket 半边：监听端口答真、无监听端口答假（回环即时返回）
+        import socket as _s
+        srv = _s.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        try:
+            from services.suanpan_runtime import _probe_tcp
+            self.assertTrue(_probe_tcp("127.0.0.1", port))
+        finally:
+            srv.close()
+        self.assertFalse(_probe_tcp("127.0.0.1", port))

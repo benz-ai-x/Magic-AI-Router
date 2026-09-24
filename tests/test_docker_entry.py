@@ -734,3 +734,42 @@ class TestServeGatewayStartFailure:
         captured["on_sp_saved"]()
         assert started["gw"] == 2, "on_sp_saved 须对未运行网关走 start()"
 
+
+
+class TestWatchdogLoop:
+    """_watchdog_loop：audit 失配 → start（容器进程内自愈，30s 节奏）。"""
+
+    class _Stop(Exception):
+        pass
+
+    def test_mismatch_triggers_start(self, monkeypatch):
+        entry = load_entry()
+        from unittest.mock import MagicMock
+        runner = MagicMock()
+        runner.audit.return_value = "mismatch"
+        sleeps = []
+
+        def _sleep(s):
+            sleeps.append(s)
+            if len(sleeps) >= 3:
+                raise self._Stop()
+
+        monkeypatch.setattr(entry.time, "sleep", _sleep)
+        with pytest.raises(self._Stop):
+            entry._watchdog_loop(runner, interval=30.0)
+        # 第 3 次 sleep 时抛出：两轮完整审计各重建一次
+        assert runner.start.call_count == 2 and len(sleeps) == 3
+
+    def test_healthy_never_starts(self, monkeypatch):
+        entry = load_entry()
+        from unittest.mock import MagicMock
+        runner = MagicMock()
+        runner.audit.return_value = "healthy"
+
+        def _sleep(s):
+            raise self._Stop()
+
+        monkeypatch.setattr(entry.time, "sleep", _sleep)
+        with pytest.raises(self._Stop):
+            entry._watchdog_loop(runner, interval=30.0)
+        runner.start.assert_not_called()

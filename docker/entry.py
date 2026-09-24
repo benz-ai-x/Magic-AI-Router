@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 from services.suanpan_runtime import SuanpanRuntime
 from mpconf.config_state import recover_pending_txn
@@ -140,6 +141,23 @@ def load_app(sp_path: str):
     return create_app(config, config_path=sp_path), config.listen_port
 
 
+def _watchdog_loop(runner, interval=30.0):
+    """容器内网关健康对账：audit 失配（running 但端口无人听）即重建。
+
+    与 macOS 版 LifecycleRuntime._reconcile_gateway 同一谓词
+    （SuanpanRuntime.audit 单一归宿），容器形态无需防抖参数——主线程
+    串行循环天然互斥，interval 30s 即节奏与退避。
+    """
+    while True:
+        time.sleep(interval)
+        if runner.audit() == "mismatch":
+            print("watchdog: 网关僵尸态（running 但端口无人听），重建",
+                  file=sys.stderr, flush=True)
+            if not runner.start():
+                print(f"watchdog: 重建失败：{runner.error[:200]}",
+                      file=sys.stderr, flush=True)
+
+
 def run_serve() -> int:
     """serve 模式：网关绑 0.0.0.0 + 配置页面 :9528（共用同一 token）。
 
@@ -171,11 +189,10 @@ def run_serve() -> int:
         print(f"配置页面: {cfg.url}  Bearer token: {cfg.token}", flush=True)
     else:
         print("config-ui 启动失败（9528 占用？），仅跑网关", file=sys.stderr)
-    # 主线程阻塞保活（网关在 AsyncRuntime 的 daemon 线程里跑）
+    # 主线程阻塞保活 + 30s 网关对账（watchdog：compose 无 healthcheck，
+    # 进程活着但网关线程死了时容器不会重启——进程内自愈补上这个缺口）
     try:
-        import time
-        while True:
-            time.sleep(3600)
+        _watchdog_loop(runner, interval=30.0)
     except KeyboardInterrupt:
         runner.stop()
         cfg.stop()
