@@ -235,34 +235,52 @@ class TestApplyAuth(unittest.TestCase):
 
 # ── make_502 ───────────────────────────────────────────────────────
 
+def _ctx(provider="p1", source="m1", target="m2", scenario="default"):
+    """make_502 的记账上下文桩（四车道共用塑形器的测试面）。"""
+    from types import SimpleNamespace
+    from suanpan.proxy import _LaneCtx
+    request = SimpleNamespace(headers={"user-agent": "pytest"})
+    decision = SimpleNamespace(provider=provider, target_model=target,
+                               scenario=scenario)
+    return _LaneCtx(request, decision, source, 0.0)
+
+
 class TestMake502(unittest.TestCase):
     def test_returns_502_with_provider_header(self):
-        import time
         from suanpan.proxy import make_502
         logger = MagicMock()
-        resp = make_502("deepseek", "claude-sonnet-4", "deepseek-v4-flash",
-                        "rule", "timeout", time.monotonic() - 1.0, logger)
+        resp = make_502(_ctx("deepseek", "claude-sonnet-4",
+                             "deepseek-v4-flash", "rule"),
+                        "timeout", logger)
         self.assertEqual(resp.status_code, 502)
         self.assertEqual(resp.headers["x-suanpan-provider"], "deepseek")
 
     def test_response_body_contains_error(self):
-        import time
         from suanpan.proxy import make_502
         logger = MagicMock()
-        resp = make_502("p1", "m1", "m2", "default", "conn refused",
-                        time.monotonic(), logger)
+        resp = make_502(_ctx(), "conn refused", logger)
         import json
         body = json.loads(resp.body)
         self.assertEqual(body["error"], "backend request failed")
         self.assertEqual(body["provider"], "p1")
         self.assertEqual(body["last_error"], "conn refused")
 
-    def test_logs_usage_entry(self):
-        import time
+    def test_openai_wire_error_shape(self):
+        # openai 入站（chat/responses 直通）认 error.message 对象形状
         from suanpan.proxy import make_502
         logger = MagicMock()
-        started = time.monotonic()
-        make_502("p1", "m1", "m2", "default", "err", started, logger)
+        resp = make_502(_ctx(), "conn refused", logger, wire="openai")
+        import json
+        body = json.loads(resp.body)
+        self.assertEqual(body["error"]["message"], "backend request failed")
+        self.assertEqual(body["error"]["type"], "api_error")
+        self.assertEqual(body["error"]["provider"], "p1")
+        self.assertEqual(body["error"]["last_error"], "conn refused")
+
+    def test_logs_usage_entry(self):
+        from suanpan.proxy import make_502
+        logger = MagicMock()
+        make_502(_ctx(), "err", logger)
         logger.write.assert_called_once()
         entry = logger.write.call_args[0][0]
         self.assertEqual(entry.provider, "p1")

@@ -9,6 +9,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -737,39 +738,54 @@ class TestServeGatewayStartFailure:
 
 
 class TestWatchdogLoop:
-    """_watchdog_loop：audit 失配 → start（容器进程内自愈，30s 节奏）。"""
+    """_watchdog_loop：装配共享对账策略（5s 节奏 × 3 连失配 ≈15s 检出）。"""
 
     class _Stop(Exception):
         pass
 
-    def test_mismatch_triggers_start(self, monkeypatch):
+    def _run(self, monkeypatch, audit, *, ticks):
+        """audit: 恒定 verdict 字符串，或依次返回的 list。
+        ticks: 完整跑完的喂拍数（第 ticks 拍执行完后、下一拍 sleep 前停）。"""
         entry = load_entry()
-        from unittest.mock import MagicMock
         runner = MagicMock()
-        runner.audit.return_value = "mismatch"
+        if isinstance(audit, list):
+            runner.audit.side_effect = audit
+        else:
+            runner.audit.return_value = audit
+        runner.error = ""
         sleeps = []
 
         def _sleep(s):
             sleeps.append(s)
-            if len(sleeps) >= 3:
+            if len(sleeps) > ticks:
                 raise self._Stop()
 
         monkeypatch.setattr(entry.time, "sleep", _sleep)
         with pytest.raises(self._Stop):
-            entry._watchdog_loop(runner, interval=30.0)
-        # 第 3 次 sleep 时抛出：两轮完整审计各重建一次
-        assert runner.start.call_count == 2 and len(sleeps) == 3
+            entry._watchdog_loop(runner)
+        return runner, sleeps
+
+    def test_mismatch_triggers_start(self, monkeypatch):
+        # 持续失配：1s 喂拍、每 5 拍审计、连 3 次失配 → 第 15 拍重建；
+        # 复位后 20/25/30 拍再满阈值，第 30 拍第二次重建
+        runner, _ = self._run(monkeypatch, "mismatch", ticks=15)
+        assert runner.start.call_count == 1
+        runner, _ = self._run(monkeypatch, "mismatch", ticks=30)
+        assert runner.start.call_count == 2
 
     def test_healthy_never_starts(self, monkeypatch):
-        entry = load_entry()
-        from unittest.mock import MagicMock
-        runner = MagicMock()
-        runner.audit.return_value = "healthy"
+        runner, _ = self._run(monkeypatch, "healthy", ticks=10)
+        runner.start.assert_not_called()
 
-        def _sleep(s):
-            raise self._Stop()
+    def test_transient_mismatch_never_starts(self, monkeypatch):
+        # 回归（R5 候选 3 活隐患）：合法 reload 的端口空窗只会造成
+        # 瞬时失配——健康采样夹在中间清零计数，绝不误判僵尸态触发
+        # stop/start 竞态（旧单采样版正是缺这道阈值）
+        runner, _ = self._run(
+            monkeypatch, ["mismatch", "mismatch", "healthy"] * 20, ticks=60)
+        runner.start.assert_not_called()
 
-        monkeypatch.setattr(entry.time, "sleep", _sleep)
-        with pytest.raises(self._Stop):
-            entry._watchdog_loop(runner, interval=30.0)
+    def test_stopped_never_starts(self, monkeypatch):
+        # 用户停止/崩溃绝不拉起（谓词语义边界）
+        runner, _ = self._run(monkeypatch, "stopped", ticks=10)
         runner.start.assert_not_called()

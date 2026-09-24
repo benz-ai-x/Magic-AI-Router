@@ -427,11 +427,13 @@ class TestGatewayReconcile(unittest.TestCase):
     """网关健康对账（watchdog）：谓词边界 / 阈值防抖 / 退避。"""
 
     def _make(self, verdicts, start_ok=True, start_calls=None):
-        """verdicts: 依次返回的 audit 结果；start_calls: 收集 list。"""
+        """verdicts: 依次返回的 audit 结果；start_calls: 收集 list。
+
+        注入 seam 是 GatewayWatchdog（策略单一归宿）——经 svc.tick()
+        公开入口驱动，装配即换谓词/动作/时钟/执行器。"""
+        from services.gateway_watchdog import GatewayWatchdog
         clock = [1000.0]
         svc = _make_coordinator()
-        svc._clock = lambda: clock[0]
-        svc._gw_workers = _FakeGwExecutor()
         svc._suanpan = MagicMock()
         svc._suanpan.audit.side_effect = list(verdicts)
         if start_calls is None:
@@ -439,6 +441,13 @@ class TestGatewayReconcile(unittest.TestCase):
         svc._suanpan.start.side_effect = \
             lambda: (start_calls.append(1), start_ok)[1]
         svc._suanpan.error = ""
+        svc._gw = GatewayWatchdog(
+            audit_fn=svc._suanpan.audit,
+            start_fn=svc._suanpan.start,
+            error_fn=lambda: svc._suanpan.error,
+            clock=lambda: clock[0],
+            submit=_FakeGwExecutor().submit,
+        )
         return svc, clock, start_calls
 
     def _ticks(self, svc, n):

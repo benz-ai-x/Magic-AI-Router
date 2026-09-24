@@ -182,31 +182,42 @@ def agent_from_user_agent(user_agent: str | None) -> str:
     return ""
 
 
-def make_502(
-    provider: str, source_model: str, target_model: str, scenario: str,
-    error: str, started: float, logger: "UsageLogger", *, agent: str = "",
-) -> JSONResponse:
-    """Build a standard 502 failure response + log entry."""
+def make_502(ctx: "_LaneCtx", error: str, logger: "UsageLogger", *,
+             wire: str = "anthropic") -> JSONResponse:
+    """502 失败响应 + 全零用量记账（四车道共用塑形）。
+
+    ``wire`` 决定错误体形状：anthropic 入站客户端认平铺 error；openai
+    入站（chat/responses 直通）认 ``error.message`` 对象——曾两份孪生
+    （make_502 vs make_502_openai），签名漂移使四车道发送块无法机械
+    合一，现收敛为一个塑形器。
+    """
     logger.write(
         UsageEntry(
-            provider=provider,
-            source_model=source_model,
-            target_model=target_model,
-            scenario=scenario,
-            agent=agent,
+            provider=ctx.provider,
+            source_model=ctx.source_model,
+            target_model=ctx.target_model,
+            scenario=ctx.scenario,
+            agent=ctx.agent,
             input_tokens=0,
             output_tokens=0,
             cache_read_tokens=0,
             cache_creation_tokens=0,
-            latency_ms=int((time.monotonic() - started) * 1000),
+            latency_ms=int((time.monotonic() - ctx.started) * 1000),
             status=502,
             error=error,
         )
     )
+    if wire == "openai":
+        payload = {"error": {"message": "backend request failed",
+                             "type": "api_error", "provider": ctx.provider,
+                             "last_error": error}}
+    else:
+        payload = {"error": "backend request failed",
+                   "provider": ctx.provider, "last_error": error}
     return JSONResponse(
-        {"error": "backend request failed", "provider": provider, "last_error": error},
+        payload,
         status_code=502,
-        headers={"x-suanpan-provider": provider},
+        headers={"x-suanpan-provider": ctx.provider},
     )
 
 
@@ -219,11 +230,12 @@ def _annotate_fallback(out_headers, decision, provider_name):
                      decision.fallback_from, provider_name, decision.scenario)
 
 
-# ── 车道共用骨架（架构评审 R2-1）───────────────────────────────────
+# ── 车道共用骨架（架构评审 R2-1 + R5 候选 2）─────────────────────
 # 四个 forward_* 共享同一发送纪律（build → RetryPolicy → 幂等探针 →
-# 5xx 拒绝 → 响应头三件套 → 流式尾）——曾四份手抄（幂等探针逐字 ×4、
-# 5xx 块 ×4）。骨架在此单一归宿；各车道只剩真差异：请求整备、URL、
-# 错误体形状（anthropic vs openai 客户端）、响应塑形（直通/转换）。
+# 传输错误/5xx 的 502 塑形 → 响应头三件套 → 流式尾）——曾四份手抄
+# （幂等探针逐字 ×4、发送→502→5xx 前置块 ×4、make_502 孪生双份）。
+# 骨架在此单一归宿；各车道只剩真差异：请求整备、URL、错误体形状
+# （wire=anthropic/openai）、响应塑形（直通/转换）。
 
 _IDEMPOTENCY_HEADERS = ("idempotency-key", "x-idempotency-key")
 
@@ -241,6 +253,11 @@ class _LaneCtx:
         self.scenario = decision.scenario
         self.started = started
         self.agent = agent_from_user_agent(request.headers.get("user-agent"))
+
+    @classmethod
+    def from_body(cls, request, body, decision):
+        """source_model 取请求体原 model（须在改写 target_model 之前）。"""
+        return cls(request, decision, body.get("model", ""), time.monotonic())
 
 
 async def _send_upstream(http_client, request, url, out_body, headers):
@@ -262,6 +279,28 @@ async def _reject_5xx(upstream_resp, provider_name):
     error = f"HTTP {status}"
     _log.error("upstream_5xx provider=%s status=%s", provider_name, status)
     return error
+
+
+async def _send_lane(http_client, request, url, out_body, headers, ctx,
+                     logger, *, wire: str = "anthropic"):
+    """车道发送前置块（R5 候选 2）：发送 → 传输错误/5xx 的 502 塑形。
+
+    曾四份手抄（只差 502 塑形器形状）——步骤骨架之外，编排也归一处。
+    返回上游响应（调用方继续响应塑形），或已成形的 502 JSONResponse
+    （调用方 isinstance 判别即返）。``wire`` 透传 make_502 决定错误体
+    形状（anthropic 平铺 / openai error.message 对象）。
+    """
+    try:
+        upstream_resp = await _send_upstream(
+            http_client, request, url, out_body, headers)
+    except httpx.HTTPError as e:
+        error = f"{type(e).__name__}: {e}"
+        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
+        return make_502(ctx, error, logger, wire=wire)
+    if upstream_resp.status_code >= 500:
+        error = await _reject_5xx(upstream_resp, ctx.provider)
+        return make_502(ctx, error, logger, wire=wire)
+    return upstream_resp
 
 
 def _lane_out_headers(upstream_headers, ctx, decision):
@@ -299,8 +338,7 @@ async def forward_request(
     if decision.strip_marker:
         strip_marker(body)
 
-    source_model = body.get("model", "")
-    ctx = _LaneCtx(request, decision, source_model, time.monotonic())
+    ctx = _LaneCtx.from_body(request, body, decision)
 
     provider_cfg = config.providers[ctx.provider]
     api_key = provider_cfg.resolve_api_key()
@@ -318,20 +356,10 @@ async def forward_request(
         dict(request.headers), api_key)
     url = f"{provider_cfg.base_url.rstrip('/')}/v1/messages"
 
-    try:
-        upstream_resp = await _send_upstream(
-            http_client, request, url, body, headers)
-    except httpx.HTTPError as e:
-        error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
-        return make_502(ctx.provider, ctx.source_model, ctx.target_model,
-                        ctx.scenario, error, ctx.started, logger,
-                        agent=ctx.agent)
-    if upstream_resp.status_code >= 500:
-        error = await _reject_5xx(upstream_resp, ctx.provider)
-        return make_502(ctx.provider, ctx.source_model, ctx.target_model,
-                        ctx.scenario, error, ctx.started, logger,
-                        agent=ctx.agent)
+    upstream_resp = await _send_lane(
+        http_client, request, url, body, headers, ctx, logger)
+    if isinstance(upstream_resp, JSONResponse):
+        return upstream_resp
 
     out_headers = _lane_out_headers(upstream_resp.headers, ctx, decision)
 
@@ -369,20 +397,10 @@ async def _forward_request_openai(
     headers = _build_headers_openai(dict(request.headers), api_key)
     url = f"{provider_cfg.base_url.rstrip('/')}/chat/completions"
 
-    try:
-        upstream_resp = await _send_upstream(
-            http_client, request, url, out_body, headers)
-    except httpx.HTTPError as e:
-        error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
-        return make_502(ctx.provider, ctx.source_model, ctx.target_model,
-                        ctx.scenario, error, ctx.started, logger,
-                        agent=ctx.agent)
-    if upstream_resp.status_code >= 500:
-        error = await _reject_5xx(upstream_resp, ctx.provider)
-        return make_502(ctx.provider, ctx.source_model, ctx.target_model,
-                        ctx.scenario, error, ctx.started, logger,
-                        agent=ctx.agent)
+    upstream_resp = await _send_lane(
+        http_client, request, url, out_body, headers, ctx, logger)
+    if isinstance(upstream_resp, JSONResponse):
+        return upstream_resp
 
     content_type = upstream_resp.headers.get("content-type", "")
     streaming = ("event-stream" in content_type.lower()
@@ -399,9 +417,7 @@ async def _forward_request_openai(
             error = f"{type(e).__name__}: {e}"
             _log.error("upstream_error provider=%s error=%s",
                        ctx.provider, error)
-            return make_502(ctx.provider, ctx.source_model, ctx.target_model,
-                            ctx.scenario, error, ctx.started, logger,
-                            agent=ctx.agent)
+            return make_502(ctx, error, logger)
         try:
             payload = upstream_resp.json()
         except ValueError:
@@ -436,30 +452,6 @@ async def _forward_request_openai(
         translator=translator, media_type="text/event-stream")
 
 
-def make_502_openai(
-    provider: str, error: str, started: float, logger: "UsageLogger",
-    *, source_model: str = "", target_model: str = "", scenario: str = "",
-    agent: str = "",
-) -> JSONResponse:
-    """openai 入站车道的 502 塑形（错误体用 OpenAI 客户端认得的形状）。"""
-    logger.write(
-        UsageEntry(
-            provider=provider, source_model=source_model,
-            target_model=target_model, scenario=scenario, agent=agent,
-            input_tokens=0, output_tokens=0, cache_read_tokens=0,
-            cache_creation_tokens=0,
-            latency_ms=int((time.monotonic() - started) * 1000),
-            status=502, error=error,
-        )
-    )
-    return JSONResponse(
-        {"error": {"message": "backend request failed", "type": "api_error",
-                   "provider": provider, "last_error": error}},
-        status_code=502,
-        headers={"x-suanpan-provider": provider},
-    )
-
-
 async def forward_chat_passthrough(
     request: Request,
     body: dict,
@@ -475,8 +467,7 @@ async def forward_chat_passthrough(
     用量经 wire=openai_chat 的 UsageExtractor tee 提取。
     """
     provider_cfg = config.providers[decision.provider]
-    source_model = body.get("model", "")
-    ctx = _LaneCtx(request, decision, source_model, time.monotonic())
+    ctx = _LaneCtx.from_body(request, body, decision)
 
     if decision.strip_marker:
         openai_strip_subagent_marker(body)
@@ -492,22 +483,10 @@ async def forward_chat_passthrough(
     headers = _build_headers_openai(dict(request.headers), api_key)
     url = f"{provider_cfg.base_url.rstrip('/')}/chat/completions"
 
-    try:
-        upstream_resp = await _send_upstream(
-            http_client, request, url, body, headers)
-    except httpx.HTTPError as e:
-        error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
-        return make_502_openai(ctx.provider, error, ctx.started, logger,
-                               source_model=ctx.source_model,
-                               target_model=ctx.target_model,
-                               scenario=ctx.scenario, agent=ctx.agent)
-    if upstream_resp.status_code >= 500:
-        error = await _reject_5xx(upstream_resp, ctx.provider)
-        return make_502_openai(ctx.provider, error, ctx.started, logger,
-                               source_model=ctx.source_model,
-                               target_model=ctx.target_model,
-                               scenario=ctx.scenario, agent=ctx.agent)
+    upstream_resp = await _send_lane(
+        http_client, request, url, body, headers, ctx, logger, wire="openai")
+    if isinstance(upstream_resp, JSONResponse):
+        return upstream_resp
 
     out_headers = _lane_out_headers(upstream_resp.headers, ctx, decision)
 
@@ -537,8 +516,7 @@ async def forward_responses_passthrough(
     from suanpan.compat import responses_strip_subagent_marker
 
     provider_cfg = config.providers[decision.provider]
-    source_model = body.get("model", "")
-    ctx = _LaneCtx(request, decision, source_model, time.monotonic())
+    ctx = _LaneCtx.from_body(request, body, decision)
 
     if decision.strip_marker:
         responses_strip_subagent_marker(body)
@@ -548,22 +526,10 @@ async def forward_responses_passthrough(
     headers = _build_headers_openai(dict(request.headers), api_key)
     url = f"{provider_cfg.responses_base_url.rstrip('/')}/responses"
 
-    try:
-        upstream_resp = await _send_upstream(
-            http_client, request, url, body, headers)
-    except httpx.HTTPError as e:
-        error = f"{type(e).__name__}: {e}"
-        _log.error("upstream_error provider=%s error=%s", ctx.provider, error)
-        return make_502_openai(ctx.provider, error, ctx.started, logger,
-                               source_model=ctx.source_model,
-                               target_model=ctx.target_model,
-                               scenario=ctx.scenario, agent=ctx.agent)
-    if upstream_resp.status_code >= 500:
-        error = await _reject_5xx(upstream_resp, ctx.provider)
-        return make_502_openai(ctx.provider, error, ctx.started, logger,
-                               source_model=ctx.source_model,
-                               target_model=ctx.target_model,
-                               scenario=ctx.scenario, agent=ctx.agent)
+    upstream_resp = await _send_lane(
+        http_client, request, url, body, headers, ctx, logger, wire="openai")
+    if isinstance(upstream_resp, JSONResponse):
+        return upstream_resp
 
     out_headers = _lane_out_headers(upstream_resp.headers, ctx, decision)
 
@@ -600,6 +566,7 @@ async def forward_count_tokens(
     api_key = provider_cfg.resolve_api_key()
     if decision.strip_marker:
         strip_marker(body)
+    ctx = _LaneCtx.from_body(request, body, decision)
     body["model"] = target_model
     normalize_body(body, provider_name,
                    anthropic_native=provider_cfg.anthropic_native)
@@ -633,9 +600,7 @@ async def forward_count_tokens(
             headers={"x-suanpan-provider": provider_name},
         )
 
-    out_headers = filter_response_headers(r.headers)
-    out_headers["x-suanpan-provider"] = provider_name
-    _annotate_fallback(out_headers, decision, provider_name)
+    out_headers = _lane_out_headers(r.headers, ctx, decision)
     return JSONResponse(
         content=r.json() if r.headers.get("content-type", "").startswith("application/json") else {"raw": r.text},
         status_code=r.status_code,

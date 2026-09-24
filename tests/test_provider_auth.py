@@ -147,8 +147,7 @@ class TestProviderRegistry(unittest.TestCase):
                 f"{name}: hosts 片段未命中任何端点 base_url")
 
     def test_endpoint_matrix_shape(self):
-        """ADR-010：每厂商至少一张端点卡；anthropic 卡带 anthropic_native；
-        unverified 标记（若有）为 bool。"""
+        """ADR-010：每厂商至少一张端点卡；anthropic 卡带 anthropic_native。"""
         from shared.provider_auth import PROVIDER_REGISTRY
         for name, entry in PROVIDER_REGISTRY.items():
             endpoints = entry["endpoints"]
@@ -160,8 +159,6 @@ class TestProviderRegistry(unittest.TestCase):
                 self.assertTrue(card["base_url"].startswith("https://"))
                 if proto == "anthropic":
                     self.assertIsInstance(card["anthropic_native"], bool)
-                if "unverified" in card:
-                    self.assertIsInstance(card["unverified"], bool)
             # 顶层兼容投影与 anthropic 卡一致（无卡时为 None）
             top = entry.get("base_url")
             self.assertEqual(
