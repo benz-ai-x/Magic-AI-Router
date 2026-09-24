@@ -121,7 +121,7 @@ class TestProviderRegistry(unittest.TestCase):
             entry = PROVIDER_REGISTRY[name]
             self.assertTrue(entry["hosts"], f"{name} 缺 host 片段")
             self.assertTrue(entry["balance_apis"], f"{name} 缺余额端点")
-            for url, style, label in entry["balance_apis"]:
+            for url, style, label, _parser in entry["balance_apis"]:
                 self.assertIn(style, ("bearer", "raw"))
                 self.assertTrue(url.startswith("https://"))
 

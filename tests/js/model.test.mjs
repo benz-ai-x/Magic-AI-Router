@@ -230,50 +230,95 @@ test("balanceRowModel splits apis into quota and money zones", () => {
   assert.deepEqual(L.balanceRowModel({ provider: "a", supported: true }).quotaApis, []);
 });
 
+// C3：原生端点集合派生自 PROVIDER_TEMPLATES（服务端注册表单一真源）——
+// 测试先种子模板（镜像真实 boot 载荷），结束恢复 custom-only 默认
+function seedNativeTemplates() {
+  L.setProviderTemplates([
+    {id: "anthropic", label: "Anthropic", base_url: "https://api.anthropic.com", anthropic_native: true},
+    {id: "glm", label: "GLM", base_url: "https://open.bigmodel.cn/api/anthropic", anthropic_native: true},
+    {id: "kimi", label: "KIMI", base_url: "https://api.kimi.com/coding", anthropic_native: true},
+    {id: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com", anthropic_native: false},
+  ]);
+}
+function resetTemplates() {
+  L.setProviderTemplates([{id: "custom", label: "自定义"}]);
+}
+
 test("providerCacheHint only flags uncached traffic without native mode", () => {
-  const uncached = {
-    calls: 2, input_tokens: 100, cache_read_tokens: 0,
-    cache_creation_tokens: 0, cache_hit_rate: 0,
-  };
-  assert.equal(
-    L.providerCacheHint({
+  seedNativeTemplates();
+  try {
+    const uncached = {
+      calls: 2, input_tokens: 100, cache_read_tokens: 0,
+      cache_creation_tokens: 0, cache_hit_rate: 0,
+    };
+    assert.equal(
+      L.providerCacheHint({
+        base_url: "https://open.bigmodel.cn/api/anthropic",
+        anthropic_native: false,
+      }, uncached),
+      "检查该供应商是否开启 Anthropic 原生模式",
+    );
+    assert.equal(L.providerCacheHint({
+      base_url: "https://open.bigmodel.cn/api/anthropic",
+      anthropic_native: true,
+    }, uncached), "");
+    assert.equal(L.providerCacheHint({
       base_url: "https://open.bigmodel.cn/api/anthropic",
       anthropic_native: false,
-    }, uncached),
-    "检查该供应商是否开启 Anthropic 原生模式",
-  );
-  assert.equal(L.providerCacheHint({
-    base_url: "https://open.bigmodel.cn/api/anthropic",
-    anthropic_native: true,
-  }, uncached), "");
-  assert.equal(L.providerCacheHint({
-    base_url: "https://open.bigmodel.cn/api/anthropic",
-    anthropic_native: false,
-  }, {
-    ...uncached, cache_hit_rate: null,
-  }), "");
-  assert.equal(L.providerCacheHint({
-    base_url: "https://api.deepseek.com/anthropic", anthropic_native: false,
-  }, uncached), "");
-  assert.equal(L.providerCacheHint({
-    base_url: "https://relay.example.com", anthropic_native: false,
-    models: ["deepseek-v4-pro"],
-  }, uncached), "");
+    }, {
+      ...uncached, cache_hit_rate: null,
+    }), "");
+    assert.equal(L.providerCacheHint({
+      base_url: "https://api.deepseek.com/anthropic", anthropic_native: false,
+    }, uncached), "");
+    assert.equal(L.providerCacheHint({
+      base_url: "https://relay.example.com", anthropic_native: false,
+      models: ["deepseek-v4-pro"],
+    }, uncached), "");
+  } finally {
+    resetTemplates();
+  }
 });
 
 test("supportsAnthropicPromptCaching uses endpoint capabilities, not labels", () => {
+  seedNativeTemplates();
+  try {
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://open.bigmodel.cn/api/anthropic/v1",
+    }), true);
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://api.kimi.com/coding",
+    }), true);
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://api.deepseek.com/anthropic",
+    }), false);
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://relay.example.com", models: ["glm-5.2"],
+    }), false);
+  } finally {
+    resetTemplates();
+  }
+});
+
+test("supportsAnthropicPromptCaching derives from templates, not a parallel table", () => {
+  // custom-only（模板未到/纯自定义）= 恒 false；模板声明即生效——
+  // 服务端注册表是端点知识的唯一真相，JS 不再平行硬编码
   assert.equal(L.supportsAnthropicPromptCaching({
-    base_url: "https://open.bigmodel.cn/api/anthropic/v1",
-  }), true);
-  assert.equal(L.supportsAnthropicPromptCaching({
-    base_url: "https://api.kimi.com/coding",
-  }), true);
-  assert.equal(L.supportsAnthropicPromptCaching({
-    base_url: "https://api.deepseek.com/anthropic",
+    base_url: "https://open.bigmodel.cn/api/anthropic",
   }), false);
-  assert.equal(L.supportsAnthropicPromptCaching({
-    base_url: "https://relay.example.com", models: ["glm-5.2"],
-  }), false);
+  L.setProviderTemplates([
+    {id: "glm", label: "GLM", base_url: "https://open.bigmodel.cn/api/anthropic", anthropic_native: true},
+  ]);
+  try {
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://open.bigmodel.cn/api/anthropic",
+    }), true);
+    assert.equal(L.supportsAnthropicPromptCaching({
+      base_url: "https://open.bigmodel.cn/api/paas/v4",  // openai 卡路径不匹配
+    }), false);
+  } finally {
+    resetTemplates();
+  }
 });
 
 // ── ctxSuffix ─────────────────────────────────────────

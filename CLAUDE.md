@@ -58,7 +58,8 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
   netloc.py ── host:port 解析/格式化/loopback 校验唯一所有者
   provider_auth.py ── 供应商认证纯逻辑 + PROVIDER_REGISTRY 注册表
     （ADR-010 端点矩阵：每厂商 anthropic/openai/responses 端点卡 +
-    认证头 + 套餐变体）+ restore_masked_key（掩码 keep 语义）
+    认证头 + 套餐变体 + 余额 API 卡带响应语法名——归一按卡路由）+
+    restore_masked_key（掩码 keep 语义）
   keychain.py ── macOS Keychain 读写（Security 框架可选导入）
   stats.py ── 运行统计
   config_store.py ── PATHS 注册表 + 原子写管线（唯一安全写入口）
@@ -156,7 +157,8 @@ services/ ── 服务
     停止/崩溃绝不拉起，防抖=连续失配阈值+退避）
   authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围，含来源
-    Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）
+    Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）；
+    余额响应归一 = 注册表卡名路由 + 形状嗅探兜底（_BALANCE_PARSERS）
 
 suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Messages / OpenAI Chat / Responses（Codex）→ 多家 LLM 后端，直通优先失配才转换）
   config.py ── Pydantic schema + 掩码契约 + null 节归一 + 文法消费

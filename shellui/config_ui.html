@@ -642,17 +642,24 @@ const ROUTE_SOURCE_LABELS={
   default:'默认路由',
 };
 function routeSourceLabel(source){return ROUTE_SOURCE_LABELS[source]||source;}
-const ANTHROPIC_CACHE_ENDPOINTS=[
-  {host:'api.anthropic.com',path:'/'},
-  {host:'open.bigmodel.cn',path:'/api/anthropic'},
-  {host:'api.kimi.com',path:'/coding'},
-];
+// C3：Anthropic 原生端点集合派生自 /api/provider-templates 的
+// anthropic_native 位（单一真源 PROVIDER_REGISTRY）——原平行硬编码
+// host/path 表是漂移源（模板未到时 custom-only 兜底 = 恒 false，
+// 模板到达后 load() 的竞态收口会重渲染 providers 视图）
+function anthropicNativeEndpoints(){
+  return PROVIDER_TEMPLATES
+    .filter(t=>t&&t.anthropic_native===true&&t.base_url)
+    .map(t=>{try{const u=new URL(t.base_url);
+      return{host:u.hostname.toLowerCase(),
+        path:u.pathname.replace(/\/+$/,'')||'/'};}catch(e){return null;}})
+    .filter(Boolean);
+}
 function supportsAnthropicPromptCaching(provider){
   let endpoint;
   try{endpoint=new URL(provider?.base_url||'');}catch(e){return false;}
   const host=endpoint.hostname.toLowerCase();
   const path=endpoint.pathname.replace(/\/+$/,'')||'/';
-  return ANTHROPIC_CACHE_ENDPOINTS.some(x=>x.host===host&&(
+  return anthropicNativeEndpoints().some(x=>x.host===host&&(
     x.path==='/'||path===x.path||path.startsWith(x.path+'/')
   ));
 }
