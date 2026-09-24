@@ -530,16 +530,32 @@ class MagicProxyApp(rumps.App):
                 return
             note = ""
             if tunnel_id == self._conn.proxy_tunnel_id:
-                if self._conn.ssh.status in ("connected", "connecting"):
+                # 守卫与保存流同判（status=="connected"，不含 connecting）
+                # ——未运行的代理绝不因翻转转发被拉起（review c-1）
+                if self._conn.ssh.status == "connected":
                     self.reconnect(None)
                     note = "；代理会话重启中"
-            elif tunnel_id in {s.tunnel_id for s
-                               in self._conn.forward_sessions()}:
-                threading.Thread(
-                    target=self._conn.restart_forward,
-                    args=(tunnel_id, self._reload_config_or_alert),
-                    name="ToggleForwardRebuild", daemon=True).start()
-                note = "；转发会话重建中"
+            else:
+                # 守卫与保存流同判：仅 status=="connected" 才重建——
+                # error/退避态的滞留会话（stop_forward 才 pop）绝不因
+                # 翻转被 restart_forward→connect() 拉起（review c-1）
+                states = {s.tunnel_id: s.status
+                          for s in self._conn.forward_sessions()}
+                if states.get(tunnel_id) == "connected":
+                    # 全停用后 restart 实为收敛停止——文案如实（c-3）
+                    t_now = next(
+                        (t for t in (self._config.get("tunnels") or [])
+                         if isinstance(t, dict) and t.get("id") == tunnel_id),
+                        None)
+                    any_enabled = any(
+                        isinstance(f, dict) and f.get("enabled") is not False
+                        for f in ((t_now or {}).get("forwards") or []))
+                    threading.Thread(
+                        target=self._conn.restart_forward,
+                        args=(tunnel_id, self._reload_config_or_alert),
+                        name="ToggleForwardRebuild", daemon=True).start()
+                    note = ("；转发会话已停止（无启用中的转发）"
+                            if not any_enabled else "；转发会话重建中")
             self._notify(
                 "端口映射已启用" if not enabled else "端口映射已停用",
                 f"{lp} → {rp}{note}")
