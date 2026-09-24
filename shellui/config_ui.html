@@ -544,6 +544,14 @@ function validateConfig(S){
       if(!Number.isInteger(rp)||rp<1||rp>65535)errors.push(`${tn}: 转发远程端口无效（须 1..65535）`);
       if(/\s/.test(rh)||rh.includes(':'))errors.push(`${tn}: 转发远程地址无效（暂不支持 IPv6）`);
     });
+    // NFS 本地端口行级形状（镜像 prepare 的 _nfs_errors；无效值不再
+    // 进冲突命名空间——两个错误不得叠加报）
+    const n=t.nfs;
+    if(n&&typeof n==='object'){
+      const np=n.local_port;
+      if(np!=null&&np!==''&&(!Number.isInteger(np)||np<1||np>65535))
+        errors.push(`${tn}: NFS 本地端口无效（须 1..65535）`);
+    }
   });
   if(S.mp.socks5_port&&(S.mp.socks5_port<1||S.mp.socks5_port>65535))errors.push('SOCKS5 端口无效');
   if(S.mp.http_listen_port&&(S.mp.http_listen_port<1||S.mp.http_listen_port>65535))errors.push('HTTP 监听端口无效');
@@ -573,6 +581,20 @@ function validateConfig(S){
         else seen[lp]=ref;
       }
     });
+  });
+  // NFS 本地端口进同一命名空间（镜像 prepare 的「实际在用才占端口」：
+  // enabled 或配置了挂载；merge 填的纯默认节点不占——两条隧道不得互报
+  // 假冲突）。曾漏：NFS×转发/全局端口撞车过第一道闸、只在 422 现形
+  (S.mp.tunnels||[]).forEach(t=>{
+    const n=t.nfs;
+    if(!n||typeof n!=='object')return;
+    if(!(n.enabled===true||(n.mounts&&n.mounts.length)))return;
+    const np=n.local_port;
+    if(!Number.isInteger(np)||np<1||np>65535)return;  // 形状归行级校验
+    const tn=t.name||t.ssh_host||'隧道';
+    const ref=`${tn} NFS 本地端口`;
+    if(seen[np])errors.push(`端口冲突：${seen[np]} 与 ${ref} 同为 ${np}`);
+    else seen[np]=ref;
   });
   Object.entries(S.sp.providers||{}).forEach(([k,p])=>{
     if(!k||!k.trim())errors.push('供应商名称不能为空');

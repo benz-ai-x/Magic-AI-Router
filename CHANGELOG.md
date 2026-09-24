@@ -11,6 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 
 ### Fixed
 - **远程挂载服务器清单「N 挂载中」徽标恒为 0**：v0.10.1 把 `/api/state` 的 `nfs_states` 值升为对象 `{status,error,fixable}` 后，清单徽标计数仍按旧字符串比较——对象形状全部漏计。计数移入设置窗 LAYER 1，与状态单元格共用同一形状归一助手 `nfsStateValue`，node 测试钉住两种形状的计数。同批修复：挂载 reconcile 确认已挂载/卸载完成两条路径此前不清 `fixable`（陈旧「修复导出」标记可能附着在非异常态进 `/api/state`，现随 error 同步清除）；`/api/nfs-setup-remote` 对 `mounts:[null]` 直接 400 拒绝（此前穿透校验，`shlex.quote(None)` 在 handler 线程抛 TypeError）
+- **设置窗端口冲突预检漏 NFS 本地端口（架构评审 C5）**：JS `validateConfig` 手抄镜像 prepare 校验器时漏了 NFS 端口——NFS×转发/全局端口撞车过第一道闸、只在提交时 422 现形。现补齐同一命名空间与同口径「实际在用才占端口」（enabled 或配置了挂载；纯默认节点不占），并补 NFS 端口行级范围校验；node 测试钉住冲突双向 + 默认节点不误报 + 越界行级报
 
 ## [v0.11.0] — 2026-09-22 — ADR-010 协议矩阵：三协议入站 + 一个 Key 配好全部 Agent
 

@@ -76,6 +76,43 @@ test("validateConfig skips port conflict check when ports absent", () => {
   assert.deepEqual(L.validateConfig(S), []);
 });
 
+// ── NFS 端口进冲突命名空间（镜像 prepare 的「实际在用才占端口」）──
+test("validateConfig flags NFS port conflicting with a forward port", () => {
+  // 曾漏：NFS×转发撞端口过第一道闸、只在 422 现形
+  const S = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "a", nfs: { enabled: true, local_port: 9000, mounts: [{ name: "d", remote_path: "/d" }] } },
+    { ssh_host: "b", forwards: [{ local_port: 9000, remote_host: "127.0.0.1", remote_port: 80 }] },
+  ] } });
+  const errs = L.validateConfig(S);
+  assert.ok(errs.some((e) => e.includes("端口冲突") && e.includes("NFS 本地端口") && e.includes("9000")));
+});
+
+test("validateConfig flags NFS port conflicting with a global service port", () => {
+  const S = L.normalizeState({ mp: {
+    socks5_port: 12049,
+    tunnels: [{ ssh_host: "a", nfs: { enabled: false, local_port: 12049, mounts: [{ name: "d", remote_path: "/d" }] } }],
+  } });
+  const errs = L.validateConfig(S);
+  assert.ok(errs.some((e) => e === "端口冲突：SOCKS5 与 a NFS 本地端口 同为 12049"));
+});
+
+test("validateConfig NFS occupies only when enabled or has mounts", () => {
+  // merge 会给每条隧道填纯默认 nfs 节（enabled=False、无挂载、12049）——
+  // 两条隧道的默认节点不得互报假冲突
+  const S = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "a", nfs: { enabled: false, local_port: 12049, mounts: [] } },
+    { ssh_host: "b", nfs: { enabled: false, local_port: 12049, mounts: [] } },
+  ] } });
+  assert.deepEqual(L.validateConfig(S), []);
+});
+
+test("validateConfig flags out-of-range NFS local port at row level", () => {
+  const S = L.normalizeState({ mp: { tunnels: [
+    { ssh_host: "a", nfs: { enabled: true, local_port: 70000, mounts: [{ name: "d", remote_path: "/d" }] } },
+  ] } });
+  assert.ok(L.validateConfig(S).some((e) => e === "a: NFS 本地端口无效（须 1..65535）"));
+});
+
 // ── parseAddr ─────────────────────────────────────────
 test("parseAddr handles user@host", () => {
   assert.deepEqual(L.parseAddr("ubuntu@example.com"), { user: "ubuntu", host: "example.com" });
