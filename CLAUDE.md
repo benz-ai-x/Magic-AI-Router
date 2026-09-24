@@ -52,8 +52,9 @@ bash scripts/notarize.sh
 
 ```
 app.py ── 编排器：__init__ + _on_tick + 菜单回调（子模块由 app.py 直接持有；
-  用户流只做意图胶水——「未连接绝不拉起」守卫与守卫重建归
-  ConnectionCoordinator、:9528 启停单一路径经 lifecycle.sync_config_server）
+  用户流只做翻译——菜单回调从状态推导、_bridge_action 从 action 字符串
+  映射，意图执行纪律归 services/intents；「未连接绝不拉起」守卫与守卫
+  重建归 ConnectionCoordinator、:9528 启停单一路径经 lifecycle.sync_config_server）
 util.py ── resource_path（frozen 平铺 / dev 按域包子目录查找）+ 版本戳
 
 shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 迁入）
@@ -168,6 +169,10 @@ services/ ── 服务
     失败退避/忙位参数化——LifecycleRuntime 1s tick 喂拍（worker 提交）
     与 docker 主循环（内联执行）两 adapter 共用；谓词仍是
     suanpan_runtime.audit
+  intents.py ── 用户意图单一归宿（R5）：菜单回调与设置窗桥接两套
+    adapter 共用的意图面——guard 分派/线程纪律（慢操作 daemon 后台）/
+    通知文案/dirty 标记独占；依赖全注入纯 Python 可构造，测试直打
+    公开意图面（tests/test_intents.py 真值表）
   authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围，含来源
     Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）；

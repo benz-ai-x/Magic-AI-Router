@@ -5,7 +5,6 @@ import logging.handlers
 import os
 import subprocess
 import sys
-import threading
 import time
 
 from AppKit import NSApplication, NSMenu, NSMenuItem, NSApplicationWillTerminateNotification
@@ -24,8 +23,7 @@ from shellui.bridge_protocol import (ACTION_COPY_AGENT_INSTRUCTIONS,
     ACTION_RECONNECT_PROXY)
 from shared.defaults import DEFAULT_CAPTURE_DIR, DEFAULT_CAPTURE_PORT
 from mpconf.config import (  # noqa: F401 — DEFAULT_CONFIG 是模块导出符号
-    DEFAULT_CONFIG, forward_row, forward_rows, load_config, merge_config,
-    resolve_mount_dir, toggle_forward_row)
+    DEFAULT_CONFIG, load_config, merge_config, resolve_mount_dir)
 from mount.coordinator import MountCoordinator
 from shared.runtime_state import RuntimeProjection
 from shellui.log_window import LogBuffer, show_log_window
@@ -35,6 +33,7 @@ from mpconf.config_state import ConfigStateStore
 from shared.stats import Stats
 from tunnel.connection_coordinator import ConnectionCoordinator
 from tunnel.reconnect_trigger import ReconnectTrigger, WakeEventSource
+from services.intents import UserIntents
 from services.lifecycle_runtime import LifecycleRuntime, config_server_wanted
 from util import build_stamp, version_display, resource_path
 
@@ -160,6 +159,25 @@ class MagicProxyApp(rumps.App):
         self._sys_proxy = self._lifecycle.sys_proxy
         self._capture = self._lifecycle.capture
         self._config_server = self._lifecycle.config_server
+        # 用户意图单一归宿（架构评审 R5 候选 1）：菜单回调与设置窗桥接
+        # 两套 adapter 共用——guard 分派/线程纪律/通知/dirty 在 intents
+        # 独占，app 只做翻译（菜单从状态推导、桥接从 action 字符串映射）
+        self._intents = UserIntents(
+            conn=self._conn,
+            mounts=self._mounts,
+            notify=self._notify,
+            mark_dirty=self._dirty,
+            update_mp=self._update_mp_config,
+            reload_config=self._reload_config_or_alert,
+            capture_ctrl=self._capture_ctrl,
+            get_capture_dir=lambda: self._config.get(
+                "capture_dir", DEFAULT_CAPTURE_DIR),
+            alert=lambda message: rumps.alert(
+                title="Magic AI Router", message=message),
+            hold_copy_latch=lambda: self._set_config_holders(
+                copy_latch=True),
+            get_agent_instructions=self._config_server.agent_instructions,
+        )
         # ADR-009 配置服务持有者：设置窗开着 / 复制指令会话闩锁。
         # config_api_enabled 是第三持有者（磁盘真相，经 self._config 读）。
         self._config_window_open = False
@@ -433,8 +451,7 @@ class MagicProxyApp(rumps.App):
             self._config = merge_config(cfg)
 
     def reconnect(self, _):
-        self._conn.restart(self._reload_config_or_alert)
-        self._dirty()
+        self._intents.reconnect_proxy_or_forward()
 
     def toggle_pause(self, _):
         self._conn.toggle_pause()
@@ -472,68 +489,21 @@ class MagicProxyApp(rumps.App):
     def toggle_forward_session(self, tunnel_id):
         """菜单「启动/停止端口转发」：无会话则启，有则停。"""
         def act(_):
-            running = {s.tunnel_id for s in self._conn.forward_sessions()}
-            if tunnel_id in running:
-                self._conn.stop_forward(tunnel_id)
-            else:
-                ok, reason = self._conn.start_forward(tunnel_id)
-                if not ok:
-                    self._notify("无法启动端口转发", reason)
-            self._dirty()
+            self._intents.toggle_forward_session(tunnel_id)
         return act
 
     def make_reconnect_tunnel(self, tunnel_id):
         """重连指定隧道：代理隧道走整体 restart（含降级逻辑），转发会话
         单会话重建（显式意图——会话存在即重建，Spec-A 语义）。"""
         def act(_):
-            if tunnel_id == self._conn.proxy_tunnel_id:
-                self.reconnect(None)
-                return
-            self._conn.restart_forward_async(
-                tunnel_id, self._reload_config_or_alert, guarded=False,
-                thread_name="BridgeReconnectForward")
-            self._dirty()
+            self._intents.reconnect_proxy_or_forward(tunnel_id)
         return act
 
     def make_toggle_forward(self, tunnel_id, index):
-        """菜单「端口映射逐条启停」：翻转该行磁盘 enabled + 守卫重建。
-
-        -L 集合只在会话启动时生效——「未连接绝不拉起」守卫在
-        ConnectionCoordinator（proxy_connected / restart_forward_async
-        guarded）单一归宿；mutate 构造归 mpconf.toggle_forward_row；
-        写径经 _update_mp_config（#46 事务写 + 磁盘真相推导目标态）。"""
+        """菜单「端口映射逐条启停」：意图体在 UserIntents.toggle_forward_row
+        （写径 + 守卫重建 + 如实文案——R5 候选 1 收敛）。"""
         def act(_):
-            row = forward_row(load_config(), tunnel_id, index)
-            if row is None:
-                return
-            enabled = row.get("enabled") is not False
-            lp, rp = row.get("local_port"), row.get("remote_port")
-            if not self._update_mp_config(
-                    lambda c: toggle_forward_row(
-                        c, tunnel_id, index, not enabled)):
-                return
-            note = ""
-            if tunnel_id == self._conn.proxy_tunnel_id:
-                # 守卫与保存流同判（proxy_connected=仅 connected，不含
-                # connecting）——未运行的代理绝不因翻转转发被拉起（c-1）
-                if self._conn.proxy_connected:
-                    self.reconnect(None)
-                    note = "；代理会话重启中"
-            else:
-                # 守卫重建；放行后按新配置推导如实文案（c-3：全停用后
-                # restart 实为收敛停止）
-                if self._conn.restart_forward_async(
-                        tunnel_id, self._reload_config_or_alert,
-                        thread_name="ToggleForwardRebuild"):
-                    any_enabled = any(
-                        isinstance(f, dict) and f.get("enabled") is not False
-                        for f in forward_rows(self._config, tunnel_id))
-                    note = ("；转发会话已停止（无启用中的转发）"
-                            if not any_enabled else "；转发会话重建中")
-            self._notify(
-                "端口映射已启用" if not enabled else "端口映射已停用",
-                f"{lp} → {rp}{note}")
-            self._dirty()
+            self._intents.toggle_forward_row(tunnel_id, index)
         return act
 
     # ── NFS 挂载（ADR-007）───────────────────────────────
@@ -542,14 +512,7 @@ class MagicProxyApp(rumps.App):
         """菜单「挂载/卸载」：在挂（mounted/mounting/unmounting）则卸，
         其余（unmounted/error）则挂。"""
         def act(_):
-            states = {(m.tunnel_id, m.name): m.status
-                      for m in self._mounts.mount_states()}
-            if states.get((tunnel_id, name)) in (
-                    "mounted", "mounting", "unmounting"):
-                self._mounts.stop_mount(tunnel_id, name)
-            else:
-                self._mounts.start_mount(tunnel_id, name)
-            self._dirty()
+            self._intents.toggle_mount(tunnel_id, name)
         return act
 
     def make_open_mount_dir(self, tunnel_id, name):
@@ -653,41 +616,25 @@ class MagicProxyApp(rumps.App):
     def toggle_capture(self, _):
         """Toggle capture mode. Off is immediate; on gates through port + CA trust."""
         if self._capture_ctrl.enabled:
-            self._capture_ctrl.disable()
-            self._dirty()
+            self._intents.set_capture(False)
             return
         capture_port = self._config.get("capture_port", DEFAULT_CAPTURE_PORT)
         if not self._check_port(capture_port, "抓包"):
             return
         if ca_trust.is_trusted():
-            self._enable_capture_or_alert()
+            self._intents.set_capture(True)
             return
 
         def on_result(trusted):
             if trusted:
-                self._enable_capture_or_alert()
+                self._intents.set_capture(True)
             else:
                 self._dirty()
 
         ca_trust.show_ca_trust_guide(on_result=on_result)
 
-    def _enable_capture_or_alert(self):
-        if not self._capture_ctrl.enable():
-            rumps.alert(title="Magic AI Router",
-                        message="找不到 mitmdump 可执行文件，无法开启抓包模式。")
-        self._dirty()
-
     def open_capture_dir(self, _):
-        from capture import capture_store
-        try:
-            # #70 W13：经 prepare 带标记建目录——裸 makedirs（无标记、
-            # 0755）曾让 prepare 拒「非本应用创建的现有目录」，抓包模式
-            # 永远无法启动（菜单动作打败自家安全契约）
-            d = capture_store.prepare(
-                self._config.get("capture_dir", DEFAULT_CAPTURE_DIR))
-            subprocess.Popen(["open", d])
-        except OSError:
-            actions_log.exception("Failed to open capture dir")
+        self._intents.open_capture_dir()
 
     def open_today_jsonl(self, _):
         from capture import capture_store
@@ -890,84 +837,40 @@ class MagicProxyApp(rumps.App):
             else "端口已释放；打开设置窗或复制指令时会按需开启。")
 
     def copy_agent_instructions(self, _):
-        """菜单栏页脚「复制 AI 助手指令」（v0.9.1）——免开设置窗直通。"""
-        self._copy_agent_instructions()
-
-    def _copy_agent_instructions(self):
-        """复制 AI 助手指令上剪贴板——文案归 config_server.agent_instructions
-        （#70 S13：token 不出原生进程，持 expected_token 直接拼装）。
-        ADR-009：指令里的 curl 要能被 agent 立即使用——复制即闩锁持有
-        配置服务（本次会话保持监听），通知里说明。"""
-        self._set_config_holders(copy_latch=True)
-        text = self._config_server.agent_instructions()
-        proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-        proc.communicate(text.encode())
-        self._notify("已复制 AI 助手指令", "含 token 的 curl 已就绪；配置 API 已开启供助手访问")
+        """菜单栏页脚「复制 AI 助手指令」（v0.9.1）——免开设置窗直通。
+        意图体在 UserIntents（ADR-009 闩锁 + pbcopy + 通知）。"""
+        self._intents.copy_agent_instructions()
 
     def _bridge_action(self, action):
         """App-level bridge actions from the settings window.
 
-        Arrives on the main thread via WKScriptMessageHandler. The reconnect
-        path blocks up to ~10 s (subprocess joins) — dispatch to a daemon
-        thread so the window and menu stay responsive; the cross-thread call
-        is safe（#68：ConnectionCoordinator 的 _lifecycle_lock 已归状态机
-        所有者——注释从民俗变机制；on_sp_saved 同样跨线程）。
+        纯翻译层（架构评审 R5 候选 1）：action 字符串 → intents 意图
+        调用；guard 分派/线程纪律/通知/dirty 全在 services/intents 的
+        单一归宿（此前此处与菜单回调是两套手写 adapter）。消息经
+        WKScriptMessageHandler 到主线程；慢操作由 intents 派 daemon
+        线程，窗口与菜单保持响应（#68：跨线程调用安全——
+        ConnectionCoordinator 的 _lifecycle_lock 已归状态机所有者）。
         """
         kind = action.get("type")
         if kind == ACTION_RECONNECT_PROXY:
-            # if_connected 守卫（端口转发保存后的自动应用）：未连接的
-            # 隧道绝不能因保存配置被拉起。守卫谓词与守卫重建都归
-            # ConnectionCoordinator 单一归宿（架构评审 C1：此处与菜单
-            # 翻转流原为两份手写守卫）；tunnel_id 指定转发会话时按该
-            # 会话自身的连接态守卫（多活）。
-            tunnel_id = action.get("tunnel_id")
-            if tunnel_id and tunnel_id != self._conn.proxy_tunnel_id:
-                self._conn.restart_forward_async(
-                    tunnel_id, self._reload_config_or_alert,
-                    guarded=bool(action.get("if_connected")),
-                    thread_name="BridgeReconnectForward")
-            elif action.get("if_connected") and not self._conn.proxy_connected:
-                logger.info(
-                    "端口转发自动重连跳过：隧道未连接（status=%s）",
-                    self._conn.ssh.status)
-            else:
-                threading.Thread(target=self.reconnect, args=(None,),
-                                 name="BridgeReconnect", daemon=True).start()
+            self._intents.reconnect_proxy_or_forward(
+                action.get("tunnel_id"),
+                guarded=bool(action.get("if_connected")))
         elif kind == ACTION_FORWARD_SESSION:
-            # 多活：设置窗「启动/停止端口转发」。start 走 host-key 首连
-            # 流程（内含 AppKit alert——host_key_flow 自带 callAfter 回主
-            # 线程，daemon 线程安全；与桥接重连同款线程纪律）。
             tid = action.get("tunnel_id")
             if not tid:
                 return
-            if action.get("action") == "start":
-                def _start_forward():
-                    ok, reason = self._conn.start_forward(tid)
-                    if not ok:
-                        self._notify("无法启动端口转发", reason)
-                threading.Thread(target=_start_forward,
-                                 name="BridgeForwardStart",
-                                 daemon=True).start()
-            else:
-                self._conn.stop_forward(tid)
-            self._dirty()
+            self._intents.forward_session(tid, action.get("action"))
         elif kind == ACTION_NFS_MOUNT_TOGGLE:
-            # ADR-007：设置窗「挂载/卸载」。start_mount 起专用会话（host-key
-            # 首连走 AppHelper 回主线程弹信任框）+ 派发 mount job 到 worker
-            # ——都在协调器内，这里只分派意图。
             tid = action.get("tunnel_id")
             name = action.get("name")
             if not tid or not name:
                 return
-            if action.get("action") == "unmount":
-                self._mounts.stop_mount(tid, name)
-            else:
-                self._mounts.start_mount(tid, name)
-            self._dirty()
+            self._intents.mount(tid, name, action.get("action"))
         elif kind == ACTION_OPEN_PATH and action.get("kind") == "captureDir":
             self.open_capture_dir(None)
         elif kind == ACTION_COPY_AGENT_INSTRUCTIONS:
-            self._copy_agent_instructions()
+            self.copy_agent_instructions(None)
 
     def _shutdown(self):
         """退出清理唯一归宿（幂等）。

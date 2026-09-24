@@ -66,6 +66,20 @@ def _new_app(**attrs):
     defaults.update(attrs)
     for k, v in defaults.items():
         setattr(inst, k, v)
+    # 用户意图单一归宿（R5）：open_capture_dir 等经 intents；同步执行器
+    from services.intents import UserIntents
+    inst._intents = UserIntents(
+        conn=conn,
+        mounts=inst._mounts,
+        notify=lambda s, m="": None,
+        mark_dirty=lambda: None,
+        update_mp=lambda mut: True,
+        reload_config=lambda: None,
+        spawn=lambda target, name=None: target(),
+        capture_ctrl=capture_ctrl,
+        get_capture_dir=lambda: inst._config.get(
+            "capture_dir", capture.DEFAULT_CAPTURE_DIR),
+        alert=lambda message: None)
     return inst
 
 

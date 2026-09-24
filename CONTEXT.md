@@ -59,6 +59,10 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 当前支持 6 家 AI 的识别与抽取，未来可扩展更多模型。首次使用需在 macOS 钥匙串信任本地根 CA。
 
+### 用户意图（UserIntents）
+
+菜单栏与设置窗共用的用户意图执行纪律单一归宿（`services/intents.py`，架构评审 R5）：重连分派（转发会话按 id 守卫重建 / 代理隧道整体重连，guarded=保存流「未连接绝不拉起」、显式=Spec-A 会话存在即重建）、转发会话启停、端口映射行启停写径（事务写 + 守卫重建 + 如实文案）、挂载启停、抓包开关动作半边（端口占用对话与 CA 信任引导等 UI 门控留在 adapter）、打开抓包目录、复制 AI 助手指令（ADR-009 闩锁）。线程纪律独占：慢操作（重连子进程 join ~10s、host-key 首连）daemon 线程后台跑，菜单点击即返回；通知与 dirty 经注入回调。菜单回调（从菜单状态推导意图）与 `_bridge_action`（从显式 action 字符串映射意图）是同一 seam 的两个薄 adapter——一个意图一个家，改一处两边生效。
+
 ### 设置窗桥接（Settings Window Bridge）
 
 偏好设置窗（WKWebView）内 JS 与原生 Python 之间的消息协议。单一 `bridge` 通道，消息为 `{type, payload}` JSON。协议核心在 `shellui/bridge_protocol.py`（纯 Python，可单测）；`shellui/webview_window.py` 仅为 ObjC 薄 adapter。
