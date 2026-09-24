@@ -553,11 +553,16 @@ function validateConfig(S){
         errors.push(`${tn}: NFS 本地端口无效（须 1..65535）`);
     }
   });
-  if(S.mp.socks5_port&&(S.mp.socks5_port<1||S.mp.socks5_port>65535))errors.push('SOCKS5 端口无效');
-  if(S.mp.http_listen_port&&(S.mp.http_listen_port<1||S.mp.http_listen_port>65535))errors.push('HTTP 监听端口无效');
-  if(S.mp.capture_port&&(S.mp.capture_port<1||S.mp.capture_port>65535))errors.push('抓包端口无效');
-  if(S.mp.config_port&&(S.mp.config_port<1||S.mp.config_port>65535))errors.push('配置服务端口无效');
-  if(S.sp.listen_port&&(S.sp.listen_port<1||S.sp.listen_port>65535))errors.push('路由网关端口无效');
+  // 端口行级校验共享跳过语义：null/''/undefined = 未填跳过；显式 0
+  // 等非法值必报（曾因 falsy 短路漏 0——listen_port=0 过第一道闸
+  // 只在 422 现形，与 R1-C5 的 NFS 端口同类洞；跨语言报警
+  // test_validation_mirror 钉住与 prepare 的同错同净）
+  const portInvalid=v=>v!=null&&v!==''&&(v<1||v>65535);
+  if(portInvalid(S.mp.socks5_port))errors.push('SOCKS5 端口无效');
+  if(portInvalid(S.mp.http_listen_port))errors.push('HTTP 监听端口无效');
+  if(portInvalid(S.mp.capture_port))errors.push('抓包端口无效');
+  if(portInvalid(S.mp.config_port))errors.push('配置服务端口无效');
+  if(portInvalid(S.sp.listen_port))errors.push('路由网关端口无效');
   // Port uniqueness across services — a duplicate only fails at bind time
   // otherwise, long after the user left the form. Absent values are skipped
   // (collect() fills defaults once the view has been visited).
