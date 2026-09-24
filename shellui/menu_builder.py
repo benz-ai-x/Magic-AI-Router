@@ -116,7 +116,7 @@ def _apply_icon(item, key, point_size=None, color=None, description=None):
     动作图标的语义即标题，无需逐处手传。"""
     if item is None:
         return
-    if description is None and item is not None:
+    if description is None:
         title = getattr(item, "title", "")
         if title and not title.startswith("__"):
             description = title
@@ -205,18 +205,16 @@ class MenuState:
 
 # ── builder ──────────────────────────────────────────────────────
 
-# 转发会话行尾状态（随各自 monitor）；值即 VoiceOver 描述
+# 转发会话行尾状态（随各自 monitor）
 _FW_TAIL = {"connected": " — 转发中", "connecting": " — 转发启动中",
             "error": " — 转发异常"}
-_FW_TAIL_DESC = {"connected": "转发中", "connecting": "转发启动中",
-                 "error": "转发异常"}
 
 # 挂载行尾状态与着色档（ADR-007）；单一「·」分隔（与转发行同款），
-# 异常详情折进行标题（结构恒定——状态细节不触发重建）
-_MOUNT_TAIL = {"mounted": "已挂载", "mounting": "挂载中",
-               "unmounting": "卸载中", "unmounted": "未挂载",
+# 异常详情折进行标题（结构恒定——状态细节不触发重建）。值兼作
+# VoiceOver 描述
+_MOUNT_TAIL = {"mounted": "已挂载", "mounting": "挂载中…",
+               "unmounting": "卸载中…", "unmounted": "未挂载",
                "error": "异常"}
-_MOUNT_TAIL_DESC = _MOUNT_TAIL
 
 
 def _mount_status_kind(status):
@@ -255,9 +253,9 @@ class MenuBuilder:
         #
         # 转发/挂载只进**身份**签名（哪些行存在——隧道/端口对/挂载名）：
         # 行内状态（连接态、挂载态、error 文本、enabled 翻转）由
-        # _refresh_dynamic_rows 就地刷新。后台状态翻转不再整树重建——
-        # 此前任何一条会话 connecting→connected 都会 clear+rebuild 全部
-        # 七组，用户正展开子菜单时整棵塌掉（UX 缺陷，R5 F4）。
+        # _refresh_forward_rows/_refresh_mount_rows 就地刷新。后台状态
+        # 翻转不再整树重建——此前任何一条会话 connecting→connected 都会
+        # clear+rebuild 全部七组，用户正展开子菜单时整棵塌掉。
         fw_identity = tuple(
             (t.get("id") or f"#{i}",
              tuple((f.get("local_port"), f.get("remote_port"))
@@ -541,10 +539,11 @@ class MenuBuilder:
                 action = self.refs.get(("fw_action", tid))
                 if action is not None:
                     running = tid in fw_running
-                    self._set_title_ref(
-                        action, "停止端口转发" if running else "启动端口转发")
-                    _apply_icon(action,
-                                "fw_stop" if running else "fw_start")
+                    new_title = "停止端口转发" if running else "启动端口转发"
+                    if action.title != new_title:  # 图标随标题变化才重挂
+                        action.title = new_title
+                        _apply_icon(action,
+                                    "fw_stop" if running else "fw_start")
             session_up = (st.ssh_status == "connected" if is_proxy
                           else fw_running.get(tid) == "connected")
             for fi, f in enumerate(t.get("forwards") or []):
@@ -624,8 +623,9 @@ class MenuBuilder:
             if status == "error" and error:
                 title = f"{base} · 异常：{_truncate(error, 40)}"
             else:
-                title = f"{base} · {_MOUNT_TAIL.get(status, '')}"
-            desc = _MOUNT_TAIL_DESC.get(status, "挂载")
+                tail = _MOUNT_TAIL.get(status)
+                title = f"{base} · {tail}" if tail else base
+            desc = _MOUNT_TAIL.get(status, "挂载")
             if row.title != title:
                 row.title = title
                 _apply_icon(row, "circle", point_size=9,
@@ -634,8 +634,10 @@ class MenuBuilder:
                 ("mount_action", entry.tunnel_id, entry.name))
             if action is not None:
                 active = status in ("mounted", "mounting", "unmounting")
-                self._set_title_ref(action, "卸载" if active else "挂载")
-                _apply_icon(action, "fw_stop" if active else "fw_start")
+                new_title = "卸载" if active else "挂载"
+                if action.title != new_title:  # 图标随标题变化才重挂
+                    action.title = new_title
+                    _apply_icon(action, "fw_stop" if active else "fw_start")
 
     def _build_capture_submenu(self):
         a = self._app

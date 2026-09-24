@@ -371,6 +371,31 @@ class TestMountSubmenu(unittest.TestCase):
         items = [i.title for i in list(unmounted[0].values())]
         self.assertIn("挂载", items)
 
+    def test_transient_mount_tails_keep_ellipsis(self):
+        """进行态尾标保留省略号（挂载中…/卸载中…——用户能看出未完）。"""
+        _, rows, _ = self._submenu(
+            (MountState("t-1", "a", "data", "mounting", ""),))
+        self.assertIn("挂载中…", rows[0].title)
+
+    def test_all_empty_multi_tunnel_no_duplicate_rows(self):
+        """rumps 以标题为键去重——多隧道全空态时各包装行内的
+        「添加转发规则…」分属不同子菜单，顶层仅全局一行（不塌行）。"""
+        cfg = {"current_tunnel": 0, "tunnels": [
+            {"id": "t-1", "name": "a", "ssh_host": "h",
+             "ssh_user": "u", "auth_type": "key", "forwards": []},
+            {"id": "t-2", "name": "b", "ssh_host": "h",
+             "ssh_user": "u", "auth_type": "key", "forwards": []},
+        ]}
+        app = MagicMock()
+        mb = MenuBuilder(app, lambda: _state(config=cfg))
+        parent = mb._build_forward_submenu()
+        top = [r.title for r in parent.values() if hasattr(r, "title")]
+        self.assertEqual(top.count("添加转发规则…"), 1)
+        for wrapper in [r for r in parent.values() if hasattr(r, "values")]:
+            inner = [i.title for i in wrapper.values()
+                     if hasattr(i, "title")]
+            self.assertLessEqual(inner.count("添加转发规则…"), 1)
+
     def test_error_detail_folded_into_row_title(self):
         states = (MountState("t-1", "srv", "data", "error", "挂载失败：权限不足"),)
         _, rows, titles = self._submenu(states)
