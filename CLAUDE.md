@@ -173,7 +173,7 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
   validate.py ── sp 分域校验器（数值 + schema + 供应商 URL + 路由引用；经 prepare lazy import 保持无网关依赖宿主降级）
   main.py ── FastAPI app factory + 路由 handler
   middleware.py ── APIKey（常量时间比较）+ BodyLimit 中间件
-  proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread
+  proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread + 车道共用骨架（_LaneCtx/_send_upstream 幂等探针/_reject_5xx/_lane_out_headers/_stream_response——四车道发送纪律单一归宿）
   compat.py ── 协议适配唯一归宿（ADR-010）：body 归一化（anthropic_native 旗标）+ 转换 A（Anthropic⇄OpenAI Chat 请求/响应/SSE 翻译器）
   usage_extractor.py ── SSE 用量提取
   router.py ── 路由决策 + parse_route_target 文法所有者 + first_tier_route tier 规则逆查询（CC 角色种子共用前缀语义）+ fallback_from 可感知
