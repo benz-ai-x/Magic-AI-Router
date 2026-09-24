@@ -3,7 +3,7 @@
 All notable changes to Magic-AI-Router are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
-## [Unreleased] — 端口转发逐条启停 + 网关健康对账自愈
+## [v0.12.0] — 2026-09-24 — 端口转发逐条启停 + 网关自愈 + 架构评审两轮落地
 
 ### Added
 - **端口映射逐条启停（像远程挂载一样 per-item）**：forwards 行新增 `enabled`（缺省 true，旧配置零迁移）——停用行不进会话 `-L` 集合、不占本地端口（端口冲突检查退出，与挂载「只在用才占端口」同口径；行级形状校验保持全量）。菜单「端口映射 ▸」重排：端口摘要从隧道行标题移出（治一行塞 N 组端口的拥挤），每条转发独立成行 `8030 → 3080 · 已映射/已停用/待会话`，**点击即启停**（圆点随会话状态着色，停用灰点）；代理隧道的转发行同样可停用（守卫重建代理会话，仅连接/连接中时）。设置窗转发表加启用开关列（保存流生效——`enabled` 纳入 changedForwardTunnels 签名，翻转保存即触发守卫重连）。启停在架构上与"编辑转发行保存"同构：`-L` 集合只在会话启动时生效，全部复用既有守卫重连机器，未运行的会话绝不拉起
