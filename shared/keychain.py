@@ -56,7 +56,7 @@ def _base_query(server: dict, account: str | None = None) -> dict:
 
 
 def set_password(tunnel: dict, password: str) -> bool:
-    if not tunnel.get("ssh_host"):
+    if not _ssh_host(tunnel):
         return False
     try:
         # Replace any existing entry so -U semantics (update-in-place) hold.

@@ -138,6 +138,12 @@ class ConfigStateStore:
                 return CommitPlan(False, [
                     f"配置装载失败，已阻止保存以防覆盖：{mp_c['_load_error']}"])
             from mpconf.config import merge_config
+            # 密码是 UI 提交的瞬态字段：merge 的白名单归一会剥掉它——
+            # 必须先按下标摘出，merge 后再按同位对齐喂给 Keychain 扫描
+            # （merge 逐行归一保位不丢行，下标对齐安全）
+            _pre_passwords = [
+                (t.pop("password", None) if isinstance(t, dict) else None)
+                for t in (mp_c.get("servers") or [])]
             mp_c = merge_config(mp_c)
         if sp_c is not None:
             if sp_c.get("_load_error"):
@@ -165,10 +171,11 @@ class ConfigStateStore:
             for t in old_mp.get("servers") or []:
                 if isinstance(t, dict) and t.get("id") and t["id"] not in new_ids:
                     kc_dels.append(("all", t))
-            for t in mp_c.get("servers") or []:
+            for i, t in enumerate(mp_c.get("servers") or []):
                 for deco in READONLY_DECORATED_FIELDS:
                     t.pop(deco, None)
-                pw = t.pop("password", None)
+                pw = (_pre_passwords[i]
+                      if i < len(_pre_passwords) else None)
                 _ssh = t.get("ssh") if isinstance(t.get("ssh"), dict) else {}
                 _auth = _ssh.get("auth_type")
                 if pw:

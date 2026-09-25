@@ -1402,7 +1402,7 @@ function collectTunnel(){
   // 空输入恢复 null：密码是掩码字段，清空 = 不改（服务器只在非空时写钥匙串），
   // 残留旧值会让 dirty 卡住并把幽灵密码静默写入。
   const pw=v('pw');t.password=pw||null;
-  const cb=d.querySelector('[data-tf="compress"]');c.compression=cb&&cb.getAttribute('aria-checked')==='true';
+  const cb=d.querySelector('[data-tf="compress"]');sshOf(t).compression=cb&&cb.getAttribute('aria-checked')==='true';
   const fab=d.querySelector('[data-tf="fw_autostart"]');sshSvc(t).autostart=fab&&fab.getAttribute('aria-checked')==='true';
   // 端口转发行按 DOM 顺序读回（行序即数组序）；缺省口径与 viewSnapshot
   // 同一语义：空端口=0、空地址=127.0.0.1

@@ -23,7 +23,7 @@ Interface:
   toggle_pause()    — pause/resume; returns new paused state（仅代理会话）
   stop_all()        — stop everything for quit
 
-Properties: ssh, paused, proxy_running, current_tunnel, socks5_port,
+Properties: ssh, paused, proxy_running, current_server, socks5_port,
             any_connected, forward_sessions
 """
 from __future__ import annotations
@@ -234,7 +234,7 @@ class ConnectionCoordinator:
         finally:
             self._lifecycle_lock.release()
 
-    def _tunnel_by_id(self, tunnel_id):
+    def _server_by_id(self, tunnel_id):
         for t in self._config.get("servers", []):
             if isinstance(t, dict) and t.get("id") == tunnel_id:
                 return t
@@ -386,7 +386,7 @@ class ConnectionCoordinator:
             self._start_background()
             self.start_ssh()
             # 旧代理隧道降级续跑：有 forwards 转 0-D 会话；无则清干净
-            if old_proxy_id and old_proxy_id != self.proxy_tunnel_id:
+            if old_proxy_id and old_proxy_id != self.proxy_server_id:
                 old_tunnel = self._server_by_id(old_proxy_id)
                 if old_tunnel and has_enabled_forwards(old_tunnel):
                     if old_proxy_id not in self._forward_sessions:
@@ -456,7 +456,7 @@ class ConnectionCoordinator:
     def _start_proxy_ssh(self):
         """启动代理会话的 ssh（host-key 首连与重试共用），并记录实际
         启动的隧道 id——restart 降级判定的真相源。"""
-        tunnel = self.current_tunnel
+        tunnel = self.current_server
         if tunnel:
             self._launched_proxy_id = tunnel.get("id")
             self._ssh.start(tunnel, self.socks5_port,

@@ -426,7 +426,10 @@ def _normalize_server(raw) -> dict:
             "port": _coerce_port(ssh.get("port"), 22),
             "auth_type": auth if auth in ("key", "password") else "key",
             "ssh_key": str(ssh.get("ssh_key") or "").strip(),
-            "compression": ssh.get("compression") is True,
+            # 缺省 True（v1 DEFAULT_TUNNEL 同语义）：消费方（ssh_launch /
+            # 设置窗 JS）一律按「!==False」解读，merge 落 False 会让
+            # 未显式关压缩的服务器静默丢 -C
+            "compression": ssh.get("compression") is not False,
         },
         "services": {
             "ssh": {
