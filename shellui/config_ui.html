@@ -436,6 +436,7 @@ function nfsStateOf(states,name){
 }
 // 计数与状态单元格共用同一形状归一——nfs_states 生产形状是对象，
 // 字符串比较会把对象形状全部漏计
+// 模型层形状归一参照（消费方含 model.test）；UI master 徽标用 mounts.length
 function _nfsMountedCount(t){
   return Object.values(t.nfs_states||{}).filter(v=>nfsStateValue(v).status==='mounted').length;
 }
@@ -1371,7 +1372,7 @@ function serversHTML(){
   const nfsOn=n.enabled===true;
   const mountCount=(n.mounts||[]).length;
   return `<section class="view">
-    <p class="module-intro">一台服务器一页配完：连接参数 + 其上可用的服务。隧道变更保存后需「重新连接」生效（端口转发保存后自动重连）；「测试连接」探测已保存配置，转发行的「测试」探测当前填写值；NFS「挂载 / 卸载」即时生效（无需保存）。</p>
+    <p class="module-intro">一台服务器一页配完：连接参数 + 其上可用的服务。隧道变更保存后需「重新连接」生效（端口转发保存后自动重连）；SSH 服务卡「检测服务」探测已保存配置，转发行的「测试」探测当前填写值；NFS「挂载 / 卸载」即时生效（无需保存）。</p>
     <div class="panel"><div class="md-layout">
       <div class="md-master">
         <div class="section-bar"><h2 class="section-title">服务器</h2><span class="count">${ts.length} 台</span></div>
@@ -1384,7 +1385,6 @@ function serversHTML(){
           <span class="srv-id mono" title="稳定 id（保存时生成，角色与会话引用它）">${esc(t.id||'（尚未保存）')}</span></div>
           <div class="section-actions">
             ${isCur?'<span class="fw-badge" title="该服务器是代理会话的 SSH 上游（SOCKS5 -D）">✓ 当前代理服务器</span>':(t.id?`<button class="btn btn-sm" aria-label="设为代理服务器 ${esc(tname)}" onclick="setProxyServer()">设为代理服务器</button>`:'')}
-            <button class="btn btn-sm" aria-label="测试连接 ${esc(tname)}" onclick="testTunnel(this)">测试连接</button>
             <button class="btn btn-sm" aria-label="重新连接 ${esc(tname)}" onclick="reconnectProxy(this,'${esc(t.id||'')}')">重新连接</button>
             <button class="btn btn-sm btn-danger" aria-label="删除服务器 ${esc(tname)}" onclick="cdel(this,function(){removeServer(${activeTunnel})})">删除</button>
           </div></div>
@@ -1435,7 +1435,7 @@ function serversHTML(){
                 <div class="svc-sub">NFSv4 over SSH · 挂载实例 ${nfsOn?`×${mountCount}`:'（未启用）'}</div></div>
               <div class="grow"></div>
               <span class="state-badge ${nfsOn?'on':''}">${nfsOn?`${mountCount} 个挂载`:'未启用'}</span>
-              <div class="switch-line" title="启用 NFS 服务"><span class="switch-label">启用</span>
+              <div class="switch-line" title="启用 NFS 服务"><span class="switch-label">${n.enabled===true?'已启用':'已停用'}</span>
                 <button class="switch" data-nf="enabled" role="switch" aria-checked="${nfsOn}" aria-label="启用 NFS 服务" onclick="nfsToggleEnabled(this)"></button></div>
               <button class="btn btn-sm" data-nfs-gated aria-label="检测远程 NFS ${esc(tname)}" onclick="nfsCheckRemote(this)" ${nfsOn?'':'disabled'}>检测服务</button>
               <button class="btn btn-sm" data-nfs-gated aria-label="一键安装并配置导出 ${esc(tname)}" onclick="nfsSetupRemote(this)" ${nfsOn?'':'disabled'}>一键安装 / 更新导出</button>
@@ -2019,7 +2019,7 @@ async function testProvider(btn){
   const name=activeProvider,errEl=document.getElementById('models-error');
   if(errEl)errEl.textContent='';
   btn.disabled=true;btn.textContent='测试中…';
-  const restore=()=>{btn.disabled=false;btn.textContent='测试连接';};
+  const restore=()=>{btn.disabled=false;btn.textContent='检测服务';};
   try{
     const r=await fetch('/api/test-provider',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({provider:name})});
     const d=await r.json();
