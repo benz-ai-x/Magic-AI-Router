@@ -120,7 +120,9 @@ def _apply_icon(item, key, point_size=None, color=None, description=None):
     """给 rumps.MenuItem 挂 SF Symbol 图标（菜单重建随建随挂）。
 
     description 缺省取 item.title（动态占位标题 __xxx__ 除外）——分区/
-    动作图标的语义即标题，无需逐处手传。"""
+    动作图标的语义即标题，无需逐处手传。着色状态点请用
+    _apply_status_dot（SF Symbol 的 tint 在 NSMenuItem 上两轮真机实测
+    不生效）。"""
     if item is None:
         return
     if description is None:
@@ -134,6 +136,49 @@ def _apply_icon(item, key, point_size=None, color=None, description=None):
             item._menuitem.setImage_(img)
         except Exception:
             pass  # 图标是增强，绝不阻断菜单构建
+
+
+def _status_dot_image(kind, point_size):
+    """手绘状态圆点（位图，不走 SF Symbol 渲染通道）。
+
+    SF Symbol 图像在 NSMenuItem 上的 tint 两轮真机实测不生效
+    （template 语义顽固，setTemplate_(False) 亦无效）——直接在画布上
+    填色最可靠。idle 档画黑点并保持 template：随菜单文字色自动适配
+    明暗（浅色黑/深色白）；彩色档（绿/黄/红）固定色 + 非模板——两种
+    外观下都可读。状态语义经行标题文字到达 VoiceOver（符号图像的
+    accessibilityDescription 通道随符号一并退役）。"""
+    try:
+        from AppKit import NSBezierPath, NSColor, NSImage, NSMakeRect
+        size = float(point_size)
+        img = NSImage.alloc().initWithSize_((size, size))
+        img.lockFocus()
+        fill = (NSColor.blackColor() if kind == "idle"
+                else _status_color(kind))
+        if fill is not None:
+            fill.setFill()
+            NSBezierPath.bezierPathWithOvalInRect_(
+                NSMakeRect(0, 0, size, size)).fill()
+        img.unlockFocus()
+        img.setTemplate_(kind == "idle")
+        return img
+    except Exception:
+        logger.exception("status dot draw failed")
+        return None
+
+
+def _apply_status_dot(item, kind, point_size):
+    """给行挂手绘状态圆点（着色唯一可靠通道；失败兜底回符号路径）。"""
+    if item is None:
+        return
+    img = _status_dot_image(kind, point_size)
+    if img is None:
+        _apply_icon(item, "circle", point_size=point_size,
+                    color=_status_color(kind))
+        return
+    try:
+        item._menuitem.setImage_(img)
+    except Exception:
+        pass
 
 
 def _proxy_tunnel_index(config):
@@ -230,11 +275,6 @@ def _mount_status_kind(status):
     return {"mounted": "ok", "mounting": "warn", "unmounting": "warn",
             "error": "err"}.get(status, "idle")
 
-
-# 状态区圆点的 VoiceOver 描述（颜色语义的文字通道）
-_PROXY_DOT_DESC = {"connected": "已连接", "connecting": "连接中",
-                   "error": "连接失败"}
-
 class MenuBuilder:
     """Builds and refreshes the menu bar UI from a state snapshot.
 
@@ -315,23 +355,19 @@ class MenuBuilder:
         refs = self.refs
 
         # Proxy status line —— 着色圆点承载状态色（状态字段在 struct_key
-        # 内，变化即重建换色；emoji 已退役）；描述承载 a11y 语义
+        # 内，变化即重建换色；emoji 已退役）
         refs["proxy_status"] = rumps.MenuItem("__proxy_status__", callback=None)
-        _apply_icon(refs["proxy_status"], "circle", point_size=10,
-                    color=_status_color(_line_status_kind(s, st.paused)),
-                    description=("已暂停" if st.paused else
-                                 _PROXY_DOT_DESC.get(s, "未连接")))
+        _apply_status_dot(refs["proxy_status"],
+                          _line_status_kind(s, st.paused), point_size=10)
         app.menu.add(refs["proxy_status"])
 
         # Router status line
         refs["router_status"] = rumps.MenuItem("__router_status__", callback=None)
-        _apply_icon(refs["router_status"], "circle", point_size=10,
-                    color=_status_color(
-                        "ok" if st.suanpan_running
-                        else ("err" if st.suanpan_error else "idle")),
-                    description="路由运行中" if st.suanpan_running else
-                                ("路由启动失败" if st.suanpan_error
-                                 else "路由未运行"))
+        _apply_status_dot(
+            refs["router_status"],
+            "ok" if st.suanpan_running
+            else ("err" if st.suanpan_error else "idle"),
+            point_size=10)
         app.menu.add(refs["router_status"])
 
         # Connecting log lines
@@ -534,10 +570,8 @@ class MenuBuilder:
                              if on else f"{name} — 未随代理运行")
                     if row.title != title:
                         row.title = title
-                        _apply_icon(row, "circle", point_size=9,
-                                    color=_status_color(
-                                        "ok" if on else "idle"),
-                                    description="已连接" if on else "未连接")
+                        _apply_status_dot(
+                            row, "ok" if on else "idle", point_size=9)
             else:
                 row = self.refs.get(("fw_tunnel", tid))
                 if row is not None:
@@ -566,15 +600,14 @@ class MenuBuilder:
                 # 二元着色（用户拍板）：已映射=绿；未连接/已停用都是
                 # 「没启动」=黑（idle/labelColor）
                 if enabled and session_up:
-                    title, kind, desc = f"{lp} → {rp} · 已映射", "ok", "已映射"
+                    title, kind = f"{lp} → {rp} · 已映射", "ok"
                 elif enabled:
-                    title, kind, desc = f"{lp} → {rp} · 未连接", "idle", "未连接"
+                    title, kind = f"{lp} → {rp} · 未连接", "idle"
                 else:
-                    title, kind, desc = f"{lp} → {rp} · 已停用", "idle", "已停用"
+                    title, kind = f"{lp} → {rp} · 已停用", "idle"
                 if row.title != title:
                     row.title = title
-                    _apply_icon(row, "circle", point_size=8,
-                                color=_status_color(kind), description=desc)
+                    _apply_status_dot(row, kind, point_size=8)
 
     def _set_title_ref(self, row, text):
         if row is not None and row.title != text:
@@ -636,11 +669,9 @@ class MenuBuilder:
             else:
                 tail = _MOUNT_TAIL.get(status)
                 title = f"{base} · {tail}" if tail else base
-            desc = _MOUNT_TAIL.get(status, "挂载")
             if row.title != title:
                 row.title = title
-                _apply_icon(row, "circle", point_size=9,
-                            color=_status_color(kind), description=desc)
+                _apply_status_dot(row, kind, point_size=9)
             action = self.refs.get(
                 ("mount_action", entry.tunnel_id, entry.name))
             if action is not None:
