@@ -76,6 +76,10 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
   runtime_state.py ── RuntimeProjection：跨域运行态快照的叶子层容器
     （capture_active/forwards/mounts；app 一处组装，lifecycle→config
     _server 单 seam 透传——三参穿三层塌缩为一）
+  i18n.py ── 跨语言文案单一归宿（ADR-012）：语义键 → 双语 catalog
+    （locales/*.json，dev 包内 / frozen 平铺）+ t() 取词 + auto→
+    AppleLanguages 解析；**不得 import util**（同层不同域），目录查找
+    自包含；语言键不校验（resolve 全兜底）
 
 mpconf/ ── 配置栈
   config.py ── 配置 I/O + merge/migrate（schema v2 服务器中心：servers[]
@@ -225,6 +229,7 @@ schema v2（服务器中心模型，ADR-011）：`servers[]`（Server→Service�
 - Config server（:9528）和 AI 路由网关（:9527）是两个独立端口，不可合并
 - 测试口径：`python3 -m pytest --cov`（omit 清单见 `.coveragerc`）+ `node --test tests/js/*.test.mjs`（glob 形式——node ≥26 目录模式报 MODULE_NOT_FOUND；`validate_mirror.mjs` 非 .test 文件，由 pytest 的跨语言报警驱动）；覆盖率数字以运行为准，不在此缓存
 - 校验镜像纪律：设置窗 JS `validateConfig` 手抄镜像 Python 分域校验器（双层拦既定约定）——镜像族「同错同净」与单侧族白名单由 `tests/test_validation_mirror.py` 钉住（node 桥缺席自动 skip）；**新增单侧校验规则必须去白名单挂号**
+- 文案国际化纪律（ADR-012）：用户可见新文案进 `shared/locales/*.json` 双侧补齐、调用点 `i18n.t("字面键")`（**动态键禁止**）——键位奇偶/en 全译/取词/汉字字面量四道闸由 `tests/test_i18n.py` 钉住；日志与注释中文直写不进 catalog；未迁移文件在 `_HAN_WHITELIST` 挂号（M4 清零）
 
 **形态事实（环境即真源，改代码即改）**
 - 菜单栏状态图标用 `MenubarIcon.png` 染色（绿=已连接 / 黄=连接中 / 灰=未连接）

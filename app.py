@@ -13,7 +13,7 @@ import rumps
 
 from capture import ca_trust
 from capture import chromium_proxy
-from shared import keychain
+from shared import i18n, keychain
 from sysctl import login_item
 from shared import netloc
 from shared.identity import IdentityMigrationError
@@ -98,10 +98,11 @@ class MagicProxyApp(rumps.App):
             # 处置指引后退出，原配置文件未被动过
             rumps.alert(
                 "Magic Stack",
-                f"配置包含重复的隧道 id，无法安全启动。\n\n{exc}\n\n"
-                "请打开配置文件修正重复 id 后重启应用。")
+                i18n.t("alert.dup_id.startup", exc=exc))
             raise SystemExit(1)
         self._config = merge_config(cfg)
+        # ADR-012：语言随配置收敛（首个 build 前生效）；auto 在此解析
+        self._apply_language()
         self._stats = Stats()
         # 菜单开关的唯一写径持有者（#46）：与 UI 保存同一事务管线
         self._config_store = ConfigStateStore(keychain=keychain)
@@ -185,10 +186,7 @@ class MagicProxyApp(rumps.App):
         if not self._lifecycle.start_all():
             # 单实例守卫失败（issue #3）：用户可见的清晰错误，绝不以
             # 僵尸实例形态继续起菜单。
-            rumps.alert("Magic Stack",
-                        "已有 Magic Stack 实例在运行。\n\n"
-                        "本次启动已退出——请通过菜单栏使用现有实例，"
-                        "或先退出它再重新启动。")
+            rumps.alert("Magic Stack", i18n.t("alert.instance_running"))
             raise SystemExit(0)
 
         # Menu
@@ -255,6 +253,13 @@ class MagicProxyApp(rumps.App):
             return keychain.get_password(tunnel)
         return ""
 
+    def _apply_language(self):
+        """语言随配置收敛（ADR-012）：resolve（auto→AppleLanguages）后
+        切换 i18n 全局；MenuState.language 进 struct_key，下一次 tick
+        整树重建换文案。写径三条（启动/菜单 update_mp/UI 保存回调）都
+        汇聚到本方法。"""
+        i18n.set_language(i18n.resolve(self._config.get("language")))
+
     # ── menu state ───────────────────────────────────────
 
     def _make_menu_state(self):
@@ -282,6 +287,7 @@ class MagicProxyApp(rumps.App):
             current_server=self._conn.current_server,
             forward_states=tuple(self._conn.forward_sessions()),
             mount_states=tuple(self._mounts.mount_states()),
+            language=i18n.language(),
         )
 
     # ── tick ─────────────────────────────────────────────
@@ -344,18 +350,17 @@ class MagicProxyApp(rumps.App):
         self._relaunch_waiter = None
         if action == "timeout":
             rumps.alert(title="Magic Stack",
-                        message=f"{w.name} 未能及时退出，请手动退出后重试。")
+                        message=i18n.t("alert.relaunch.timeout", name=w.name))
             return
         ok, err = chromium_proxy.launch(w.path, payload)
         if not ok:
             rumps.alert(title="Magic Stack",
-                        message=f"启动失败：\n\n{err}")
+                        message=i18n.t("alert.launch.failed", err=err))
             return
         rumps.alert(
             title="Magic Stack",
-            message=(f"已经代理启动 {w.name}（→ {payload}）。\n\n"
-                     "• 仅本次启动的实例走代理；从 Dock 直接开的不算\n"
-                     f"• Magic-Proxy 未运行时 {w.name} 将联网失败、不会直连"),
+            message=i18n.t("alert.launched_proxied", name=w.name,
+                           addr=payload),
         )
 
     # ── menu callbacks ───────────────────────────────────
@@ -376,16 +381,17 @@ class MagicProxyApp(rumps.App):
         except IdentityMigrationError as exc:
             rumps.alert(
                 "Magic Stack",
-                f"配置包含重复的隧道 id，无法保存本次更改。\n\n{exc}\n\n"
-                "请打开配置文件修正重复 id 后重试。")
+                i18n.t("alert.dup_id.save", exc=exc))
             return False
         if not result.ok:
             logger.warning("menu config update rejected: %s", result.errors)
-            self._notify("配置保存失败", "; ".join(result.errors)[:160])
+            self._notify(i18n.t("notify.mp_save_failed.title"),
+                         "; ".join(result.errors)[:160])
             return False
         cfg = load_config()
         if cfg:
             self._config = merge_config(cfg)
+        self._apply_language()
         self._dirty()
         return True
 
@@ -410,6 +416,8 @@ class MagicProxyApp(rumps.App):
         old_login = bool(self._config.get("launch_at_login", False))
         new_login = bool(new_config.get("launch_at_login", False))
         self._config = new_config
+        # 语言键可能随本次保存翻转（菜单/设置窗两写径在此汇合）
+        self._apply_language()
         self._dirty()
         # 登录启动是唯一的配置外副作用：UI 保存路径此前只写文件不注册
         # LaunchAgent（只有菜单路径注册）——两条写径在此对齐
@@ -443,11 +451,11 @@ class MagicProxyApp(rumps.App):
             AppHelper.callAfter(
                 rumps.alert,
                 "Magic Stack",
-                f"配置包含重复的隧道 id，已保持现有连接。\n\n{exc}\n\n"
-                "请打开配置文件修正重复 id 后重试。")
+                i18n.t("alert.dup_id.reload", exc=exc))
             return
         if cfg:
             self._config = merge_config(cfg)
+            self._apply_language()
 
     def reconnect(self, _):
         self._intents.reconnect_proxy_or_forward()
@@ -535,36 +543,42 @@ class MagicProxyApp(rumps.App):
         sp = self._suanpan
         if sp.running:
             sp.stop()
-            self._notify("AI 路由已停止")
+            self._notify(i18n.t("notify.router.stopped"))
         elif sp.start():
-            self._notify("AI 路由已启动", f"http://{sp.listen_address()}")
+            self._notify(i18n.t("notify.router.started"),
+                         f"http://{sp.listen_address()}")
         else:
-            self._notify("AI 路由启动失败", sp.error[:120])
+            self._notify(i18n.t("notify.router.start_failed"),
+                         sp.error[:120])
         self._menu_builder.build()
 
     def copy_suanpan_url(self, _):
         url = f"http://{self._suanpan.listen_address()}"
         proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
         proc.communicate(url.encode())
-        self._notify("已复制连接地址", url)
+        self._notify(i18n.t("notify.router.url_copied"), url)
 
     def copy_suanpan_example(self, _):
         path = resource_path("suanpan.example.yaml")
         if not os.path.exists(path):
-            self._notify("配置样例", "文件未找到")
+            self._notify(i18n.t("notify.router.example.title"),
+                         i18n.t("notify.router.example.missing"))
             return
         with open(path) as f:
             content = f.read()
         proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
         proc.communicate(content.encode())
-        self._notify("已复制配置样例", f"{len(content)} 字节")
+        self._notify(i18n.t("notify.router.example_copied"),
+                     i18n.t("notify.router.example_bytes",
+                            n=len(content)))
 
     def reload_suanpan(self, _):
         sp = self._suanpan
         if sp.reload():
-            self._notify("AI 路由配置已重载")
+            self._notify(i18n.t("notify.router.reloaded"))
         else:
-            self._notify("AI 路由重载失败", sp.error[:120])
+            self._notify(i18n.t("notify.router.reload_failed"),
+                         sp.error[:120])
         self._menu_builder.build()
 
     def restart_suanpan(self, _):
@@ -572,9 +586,11 @@ class MagicProxyApp(rumps.App):
         if sp.running:
             sp.stop()
         if sp.start():
-            self._notify("AI 路由已重启", f"http://{sp.listen_address()}")
+            self._notify(i18n.t("notify.router.restarted"),
+                         f"http://{sp.listen_address()}")
         else:
-            self._notify("AI 路由重启失败", sp.error[:120])
+            self._notify(i18n.t("notify.router.restart_failed"),
+                         sp.error[:120])
         self._menu_builder.build()
 
     # ── sleep / login ────────────────────────────────────
@@ -594,15 +610,18 @@ class MagicProxyApp(rumps.App):
         enabled = not (cfg or {}).get("launch_at_login", False)
         ok, err = login_item.set_launch_at_login(enabled)
         if not ok:
-            rumps.alert(title="Magic Stack", message=f"无法设置登录启动：\n\n{err}")
+            rumps.alert(title="Magic Stack",
+                        message=i18n.t("alert.login.failed", err=err))
             self._dirty()
             return
         if not self._update_mp_config(
                 lambda c: {**c, "launch_at_login": enabled}):
             return
         self._notify(
-            "登录启动：开" if enabled else "登录启动：关",
-            "将在下次登录时自动启动。" if enabled else "下次登录不再自动启动。",
+            i18n.t("notify.login.on_title" if enabled
+                   else "notify.login.off_title"),
+            i18n.t("notify.login.on_body" if enabled
+                   else "notify.login.off_body"),
         )
 
     # ── capture ──────────────────────────────────────────
@@ -613,7 +632,8 @@ class MagicProxyApp(rumps.App):
             self._intents.set_capture(False)
             return
         capture_port = self._config.get("capture_port", DEFAULT_CAPTURE_PORT)
-        if not self._check_port(capture_port, "抓包"):
+        if not self._check_port(
+                capture_port, i18n.t("common.label.capture")):
             return
         if ca_trust.is_trusted():
             self._intents.set_capture(True)
@@ -661,30 +681,7 @@ class MagicProxyApp(rumps.App):
     def about(self, _):
         rumps.alert(
             title="Magic Stack",
-            message=(
-                f"版本 v{self.VERSION_DISPLAY}\n"
-                "住进菜单栏的本地 AI 网络栈——路由它，隧道它，看见它。\n"
-                "\n"
-                "【代 理】SSH 隧道 HTTP→SOCKS5 代理（:8888），多隧道并行\n"
-                "　　　　 + ssh -L 端口转发；密码只存钥匙串，断线自动重连，\n"
-                "　　　　 系统代理事务式管理，Chromium 应用可单独经代理启动\n"
-                "\n"
-                "【远程挂载】NFS over SSH：断线自动卸载/恢复重挂，\n"
-                "　　　　　 远程一键安装，挂载失败可见可修\n"
-                "\n"
-                "【AI 路由】三协议网关（:9527）：Anthropic / OpenAI Chat /\n"
-                "　　　　 Responses（Codex）入站，路由到 GLM/DeepSeek/Kimi/\n"
-                "　　　　 Qwen/OpenAI 等（失配自动转换）；一个 Key 配好\n"
-                "　　　　 全部 Agent（Claude Code/Codex/OpenCode/ZCode）；\n"
-                "　　　　 缓存感知；用量与余额统计；支持 Docker 部署\n"
-                "\n"
-                "【抓 包】TLS 解密 AI API（6 家）落 JSONL，其余放行（:8080）\n"
-                "\n"
-                "【信 任】零遥测，全回环（配置 :9528 按需监听），原子写入，\n"
-                "　　　　 2000+ 测试钉住行为契约\n"
-                "\n"
-                "设置窗（⌘,）配置一切；「复制 AI 助手指令」可让 AI 代配置。\n"
-                "开源（MIT）：github.com/benz-ai-x/Magic-AI-Router"))
+            message=i18n.t("app.about.body", version=self.VERSION_DISPLAY))
 
     # ── proxied app launch ───────────────────────────────
 
@@ -698,15 +695,17 @@ class MagicProxyApp(rumps.App):
         name = entry["name"]
         path = entry.get("path") or chromium_proxy.app_path(entry)
         if not path:
-            rumps.alert(title="Magic Stack", message=f"未找到 {name}.app")
+            rumps.alert(title="Magic Stack",
+                        message=i18n.t("alert.proxied.not_found",
+                                        name=name))
             return
         http_listen = netloc.format_listen("127.0.0.1", int(self._config["http_listen_port"]))
         if chromium_proxy.is_running(path):
             resp = rumps.alert(
                 title="Magic Stack",
-                message=(f"{name} 已在运行。需先退出、再经代理重新启动才生效。\n\n"
-                         "是否退出并经代理重开？"),
-                ok="退出并重开", cancel="取消",
+                message=i18n.t("alert.proxied.running", name=name),
+                ok=i18n.t("alert.proxied.quit_relaunch"),
+                cancel=i18n.t("common.cancel_action"),
             )
             if not resp:
                 return
@@ -718,13 +717,13 @@ class MagicProxyApp(rumps.App):
             return
         ok, err = chromium_proxy.launch(path, http_listen)
         if not ok:
-            rumps.alert(title="Magic Stack", message=f"启动失败：\n\n{err}")
+            rumps.alert(title="Magic Stack",
+                        message=i18n.t("alert.launch.failed", err=err))
             return
         rumps.alert(
             title="Magic Stack",
-            message=(f"已经代理启动 {name}（→ {http_listen}）。\n\n"
-                     "• 仅本次启动的实例走代理；从 Dock 直接开的不算\n"
-                     f"• Magic-Proxy 未运行时 {name} 将联网失败、不会直连"),
+            message=i18n.t("alert.launched_proxied", name=name,
+                           addr=http_listen),
         )
 
     # ── port check ───────────────────────────────────────
@@ -734,13 +733,17 @@ class MagicProxyApp(rumps.App):
         owner = port_check.who_owns(port)
         if owner is None:
             return True
-        msg = (f"{label} 端口 {port} 被占用:\n\n"
-               f"{owner.name} (PID {owner.pid})\n{owner.cmd[:120]}\n\n是否 Kill 它？")
-        if rumps.alert(title="Magic Stack", message=msg, ok="是，Kill", cancel="否") != 1:
+        msg = i18n.t("alert.port.occupied", label=label, port=port,
+                     owner_name=owner.name, pid=owner.pid,
+                     cmd=owner.cmd[:120])
+        if rumps.alert(title="Magic Stack", message=msg,
+                       ok=i18n.t("alert.port.kill_confirm"),
+                       cancel=i18n.t("common.cancel")) != 1:
             return False
         ok, err = port_check.kill(owner.pid)
         if not ok:
-            rumps.alert(title="Magic Stack", message=f"Kill 失败: {err}")
+            rumps.alert(title="Magic Stack",
+                        message=i18n.t("alert.port.kill_failed", err=err))
             return False
         return True
 
@@ -781,7 +784,8 @@ class MagicProxyApp(rumps.App):
                 # 启动失败：服务未在听——刻意只清位不收敛（收敛无益，
                 # 常驻开关持有者的收敛交给下一个自然事件）
                 self._config_window_open = False
-                rumps.alert(title="Magic Stack", message="配置服务端口被占用，无法打开设置。")
+                rumps.alert(title="Magic Stack",
+                            message=i18n.t("alert.prefs.port_busy"))
                 return
             show_config_window(
                 self._config_server.url + fragment, on_action=self._bridge_action,
@@ -793,7 +797,8 @@ class MagicProxyApp(rumps.App):
             # 服务可能已在听——清位必须收敛（R2-4 修复点：曾漏收敛，
             # 零持有者时 :9528 常驻到下一个偶然事件）
             self._set_config_holders(window_open=False)
-            rumps.alert(title="Magic Stack", message=f"打开设置失败:\n\n{e!r}")
+            rumps.alert(title="Magic Stack",
+                        message=i18n.t("alert.prefs.failed", err=repr(e)))
 
     def _on_config_window_closed(self):
         """设置窗真关闭（webview_window windowWillClose）→ 释放持有者。"""
@@ -833,9 +838,20 @@ class MagicProxyApp(rumps.App):
             return
         self._sync_config_server()
         self._notify(
-            "配置 API 服务：开" if enabled else "配置 API 服务：关",
-            "浏览器与 AI 助手可经 :9528 访问。" if enabled
-            else "端口已释放；打开设置窗或复制指令时会按需开启。")
+            i18n.t("notify.configapi.on_title" if enabled
+                   else "notify.configapi.off_title"),
+            i18n.t("notify.configapi.on_body" if enabled
+                   else "notify.configapi.off_body"))
+
+    def make_set_language(self, pref):
+        """选项 ▸「语言」单选（ADR-012）：写 mp 配置（auto/zh-CN/en）；
+        语言收敛与菜单重建经 _update_mp_config 既有机制（_apply_language
+        + struct_key 整树重建），本回调只做翻译。"""
+        def act(_):
+            if pref not in i18n.PREFERENCES:
+                return
+            self._update_mp_config(lambda c: {**c, "language": pref})
+        return act
 
     def copy_agent_instructions(self, _):
         """菜单栏页脚「复制 AI 助手指令」（v0.9.1）——免开设置窗直通。

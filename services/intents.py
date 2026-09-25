@@ -23,6 +23,7 @@ import subprocess
 import threading
 
 from mpconf import config as _mpconf
+from shared import i18n
 
 logger = logging.getLogger("magic-proxy.intents")
 
@@ -92,7 +93,7 @@ class UserIntents:
             def _start():
                 ok, reason = self._conn.start_forward(tunnel_id)
                 if not ok:
-                    self._notify("无法启动端口转发", reason)
+                    self._notify(i18n.t("notify.forward.start_failed.title"), reason)
             self._spawn(_start, "ForwardStart")
         else:
             self._conn.stop_forward(tunnel_id)
@@ -125,7 +126,7 @@ class UserIntents:
             # connecting）——未运行的代理绝不因翻转转发被拉起（c-1）
             if self._conn.proxy_connected:
                 self.reconnect()
-                note = "；代理会话重启中"
+                note = i18n.t("notify.forward.note.proxy_restart")
         else:
             # 守卫重建；放行后按新配置推导如实文案（c-3：全停用后
             # restart 实为收敛停止）
@@ -136,10 +137,12 @@ class UserIntents:
                     isinstance(f, dict) and f.get("enabled") is not False
                     for f in _mpconf.forward_rows(
                         _mpconf.load_config(), tunnel_id))
-                note = ("；转发会话已停止（无启用中的转发）"
-                        if not any_enabled else "；转发会话重建中")
+                note = i18n.t("notify.forward.note.stopped"
+                              if not any_enabled
+                              else "notify.forward.note.rebuild")
         self._notify(
-            "端口映射已启用" if not enabled else "端口映射已停用",
+            i18n.t("notify.forward.enabled.title" if not enabled
+                   else "notify.forward.disabled.title"),
             f"{lp} → {rp}{note}")
         self._mark_dirty()
 
@@ -174,7 +177,7 @@ class UserIntents:
             self._mark_dirty()
             return
         if not self._capture_ctrl.enable():
-            self._alert("找不到 mitmdump 可执行文件，无法开启抓包模式。")
+            self._alert(i18n.t("alert.capture.no_mitmdump"))
         self._mark_dirty()
 
     def open_capture_dir(self):
@@ -196,5 +199,5 @@ class UserIntents:
         text = self._get_agent_instructions()
         proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
         proc.communicate(text.encode())
-        self._notify("已复制 AI 助手指令",
-                     "含 token 的 curl 已就绪；配置 API 已开启供助手访问")
+        self._notify(i18n.t("notify.copy_instructions.title"),
+                     i18n.t("notify.copy_instructions.body"))

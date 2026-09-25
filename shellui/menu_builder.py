@@ -13,6 +13,8 @@ import logging
 import rumps
 from capture import chromium_proxy
 from mpconf.config import proxy_server, server_forwards, servers
+from shared import i18n
+from shared.i18n import DEFAULT_LANGUAGE
 from util import resource_path as _resource_path, truncate as _truncate
 
 logger = logging.getLogger("magic-proxy.menu")
@@ -75,6 +77,7 @@ _ICON = {
     # 系统区 / 页脚 / 状态区
     "sleep": "moon.zzz", "login": "arrow.up.circle",
     "network": "network",   # 配置 API 服务开关（ADR-009）
+    "globe": "globe",       # 语言子菜单（ADR-012）
     "prefs": "slider.horizontal.3", "search": "doc.text.magnifyingglass",
     "about": "info.circle", "quit": "power",
     "updown": "arrow.up.arrow.down", "circle": "circle.fill",
@@ -269,28 +272,34 @@ class MenuState:
     # 与状态行的转发计数消费；默认 () 保持既有测试构造兼容
     forward_states: tuple = ()
     # NFS 挂载快照 [(tunnel_id, tunnel_name, mount_name, status, error)]
-    # （ADR-007）——挂载子菜单与状态行挂载计数消费；默认 () 同上
+    # （ADR-007）——挂载子菜单与状态行的挂载计数消费；默认 () 同上
     mount_states: tuple = ()
+    # 界面语言（ADR-012，resolved 值非偏好值）：进 struct_key——语言
+    # 翻转走既有整树重建机制，文案在 build/refresh 时经 i18n.t 取词
+    language: str = DEFAULT_LANGUAGE
 
 
 # ── builder ──────────────────────────────────────────────────────
 
 # ── A 类运行物状态词表（状态语法矩阵单一真相）──────────────────
-# (状态点色档, 状态词)：进行中=warn / 运行=ok / 未启动=idle / 异常=err。
+# (状态点色档, 文案键)：进行中=warn / 运行=ok / 未启动=idle / 异常=err。
 # 标题=动作（动词），状态点=现状（颜色），行尾状态词=文字冗余通道
 # （glance + VoiceOver）——三者各司其职，全菜单同一语法。
+# 文案经 i18n 取词（ADR-012）；表存键名而非拼前缀——取词守卫禁止动态键。
 
 # 转发会话（隧道包装行；无会话 = 未启动）
-_FW_SESSION = {"connected": ("ok", " — 转发中"),
-               "connecting": ("warn", " — 转发启动中"),
-               "error": ("err", " — 转发异常")}
-_FW_SESSION_OFF = ("idle", " — 未启动")
+_FW_SESSION = {"connected": ("ok", "forward.session.connected"),
+               "connecting": ("warn", "forward.session.connecting"),
+               "error": ("err", "forward.session.error")}
+_FW_SESSION_RETRY = ("warn", "forward.session.retry")
+_FW_SESSION_OFF = ("idle", "forward.session.off")
 
 # 挂载行（单一「·」分隔；异常详情折进行标题保结构恒定）
-_MOUNT_TAIL = {"mounted": ("ok", "已挂载"), "mounting": ("warn", "挂载中…"),
-               "unmounting": ("warn", "卸载中…"),
-               "unmounted": ("idle", "未挂载"),
-               "error": ("err", "异常")}
+_MOUNT_TAIL = {"mounted": ("ok", "mount.tail.mounted"),
+               "mounting": ("warn", "mount.tail.mounting"),
+               "unmounting": ("warn", "mount.tail.unmounting"),
+               "unmounted": ("idle", "mount.tail.unmounted"),
+               "error": ("err", "mount.tail.error")}
 
 
 class MenuBuilder:
@@ -346,6 +355,7 @@ class MenuBuilder:
             st.capture_enabled,      # 抓包动词方向（结构恒定，标签刷新）
             st.capture_state,        # 状态点（err↔ok 随重建换点）
             st.capture_hint,
+            st.language,             # ADR-012：语言翻转 → 整树重建换文案
         )
 
     # ── full build ────────────────────────────────────────
@@ -412,33 +422,38 @@ class MenuBuilder:
         重连、系统代理、代理角色单选、经代理启动。"""
         st = self._get_state()
         a = self._app
-        parent = rumps.MenuItem("代 理", callback=None)
+        parent = rumps.MenuItem(i18n.t("menu.group.proxy"), callback=None)
         _apply_icon(parent, "proxy_menu")
 
         # Connect control
         s = st.ssh_status
         if s == "connecting":
-            item = rumps.MenuItem("取消连接", callback=a.cancel_connection, key="r")
+            item = rumps.MenuItem(i18n.t("proxy.cancel_connect"),
+                                  callback=a.cancel_connection, key="r")
             _apply_icon(item, "cancel")
             parent.add(item)
         else:
             if st.paused:
-                item = rumps.MenuItem("恢复代理", callback=a.toggle_pause, key="p")
+                item = rumps.MenuItem(i18n.t("proxy.resume"),
+                                      callback=a.toggle_pause, key="p")
                 _apply_icon(item, "connect")
                 parent.add(item)
             elif s == "connected":
-                item = rumps.MenuItem("暂停代理", callback=a.toggle_pause, key="p")
+                item = rumps.MenuItem(i18n.t("proxy.pause"),
+                                      callback=a.toggle_pause, key="p")
                 _apply_icon(item, "pause")
                 parent.add(item)
             item = rumps.MenuItem(
-                "重新连接" if s in ("connected", "error") else "连接代理",
+                i18n.t("common.reconnect")
+                if s in ("connected", "error") else i18n.t("proxy.connect"),
                 callback=a.reconnect, key="r")
             _apply_icon(item, "refresh")
             parent.add(item)
 
         # System proxy toggle（A 类运行物状态语法：标题=动作，状态点=现状）
         parent.add(None)
-        sysp_title = "关闭系统代理" if st.sys_proxy_on else "开启系统代理"
+        sysp_title = i18n.t("proxy.sysproxy_off" if st.sys_proxy_on
+                            else "proxy.sysproxy_on")
         item = rumps.MenuItem(sysp_title, callback=a.toggle_system_proxy, key="g")
         _apply_status_dot(item, "err" if st.sys_proxy_error
                           else ("ok" if st.sys_proxy_on else "idle"),
@@ -449,7 +464,7 @@ class MenuBuilder:
         rows = st.config.get("servers", [])
         if rows:
             parent.add(None)
-            parent.add(rumps.MenuItem("代理服务器（本地代理的上游）",
+            parent.add(rumps.MenuItem(i18n.t("proxy.upstream_header"),
                                       callback=None))
             for t in rows:
                 if not isinstance(t, dict):
@@ -466,7 +481,7 @@ class MenuBuilder:
         apps_list = chromium_proxy.installed_apps()
         if apps_list:
             parent.add(None)
-            sub = rumps.MenuItem("经代理启动 App", callback=None)
+            sub = rumps.MenuItem(i18n.t("proxy.launch_apps"), callback=None)
             _apply_icon(sub, "launch")
             for entry in apps_list:
                 item = rumps.MenuItem(
@@ -491,7 +506,7 @@ class MenuBuilder:
         """
         st = self._get_state()
         a = self._app
-        parent = rumps.MenuItem("端口映射", callback=None)
+        parent = rumps.MenuItem(i18n.t("menu.group.forward"), callback=None)
         _apply_icon(parent, "forward_menu")
 
         tunnels = servers(st.config)
@@ -532,12 +547,13 @@ class MenuBuilder:
                     self.refs[("fw_action", tid)] = action
                     host.add(action)
                     item = rumps.MenuItem(
-                        "重新连接", callback=a.make_reconnect_tunnel(tid))
+                        i18n.t("common.reconnect"),
+                        callback=a.make_reconnect_tunnel(tid))
                     _apply_icon(item, "refresh")
                     host.add(item)
                 else:
                     item = rumps.MenuItem(
-                        "添加转发规则…", callback=a.show_prefs_forwards)
+                        i18n.t("forward.add_rule"), callback=a.show_prefs_forwards)
                     _apply_icon(item, "forward_menu")
                     host.add(item)
             if not single:
@@ -545,7 +561,7 @@ class MenuBuilder:
                 parent.add(None)
 
         if tunnels and not any_rules:
-            parent.add(rumps.MenuItem("添加转发规则…",
+            parent.add(rumps.MenuItem(i18n.t("forward.add_rule"),
                                       callback=a.show_prefs_forwards))
         self._refresh_forward_rows(st)
         self.refs["group_forward"] = parent
@@ -584,8 +600,9 @@ class MenuBuilder:
                     on = st.ssh_status == "connected"
                     # 点击代理隧道的转发行 = 重启代理会话（全流量中断），
                     # 副作用在行标题明示——先于点击可见
-                    title = (f"{name} — 随代理运行 · 启停将重启代理"
-                             if on else f"{name} — 未随代理运行")
+                    title = i18n.t(
+                        "forward.ctx.running" if on
+                        else "forward.ctx.not_running", name=name)
                     if row.title != title:
                         row.title = title
                         _apply_status_dot(
@@ -595,18 +612,20 @@ class MenuBuilder:
                 if row is not None:
                     status = fw_running.get(tid)
                     if status is None:
-                        kind, tail = _FW_SESSION_OFF
+                        kind, key = _FW_SESSION_OFF
                     else:
-                        kind, tail = _FW_SESSION.get(
-                            status, ("warn", " — 转发重试中"))
-                    new_title = f"{name}{tail}"
+                        kind, key = _FW_SESSION.get(
+                            status, _FW_SESSION_RETRY)
+                    new_title = f"{name}{i18n.t(key)}"
                     if row.title != new_title:
                         row.title = new_title
                         _apply_status_dot(row, kind, point_size=9)
                 action = self.refs.get(("fw_action", tid))
                 if action is not None:
                     running = tid in fw_running
-                    new_title = "停止端口转发" if running else "启动端口转发"
+                    new_title = i18n.t(
+                        "forward.action.stop" if running
+                        else "forward.action.start")
                     if action.title != new_title:  # 图标随标题变化才重挂
                         action.title = new_title
                         _apply_icon(action,
@@ -624,11 +643,11 @@ class MenuBuilder:
                 # 二元着色（用户拍板）：已映射=绿；未连接/已停用都是
                 # 「没启动」=黑（idle/labelColor）
                 if enabled and session_up:
-                    title, kind = f"{lp} → {rp} · 已映射", "ok"
+                    title, kind = f"{lp} → {rp} · {i18n.t('forward.row.mapped')}", "ok"
                 elif enabled:
-                    title, kind = f"{lp} → {rp} · 未连接", "idle"
+                    title, kind = f"{lp} → {rp} · {i18n.t('forward.row.disconnected')}", "idle"
                 else:
-                    title, kind = f"{lp} → {rp} · 已停用", "idle"
+                    title, kind = f"{lp} → {rp} · {i18n.t('forward.row.disabled')}", "idle"
                 if row.title != title:
                     row.title = title
                     _apply_status_dot(row, kind, point_size=8)
@@ -643,7 +662,7 @@ class MenuBuilder:
         点击深链偏好设置。"""
         st = self._get_state()
         a = self._app
-        parent = rumps.MenuItem("远程挂载", callback=None)
+        parent = rumps.MenuItem(i18n.t("menu.group.mount"), callback=None)
         _apply_icon(parent, "mount_menu")
 
         any_mounts = False
@@ -663,13 +682,15 @@ class MenuBuilder:
             self.refs[("mount_action", tid, mname)] = action
             row.add(action)
             item = rumps.MenuItem(
-                "打开挂载目录", callback=a.make_open_mount_dir(tid, mname))
+                i18n.t("mount.open_dir"),
+                callback=a.make_open_mount_dir(tid, mname))
             _apply_icon(item, "folder")
             row.add(item)
             parent.add(row)
 
         if not any_mounts:
-            item = rumps.MenuItem("配置挂载…", callback=a.show_prefs_mounts)
+            item = rumps.MenuItem(i18n.t("mount.configure"),
+                                  callback=a.show_prefs_mounts)
             _apply_icon(item, "folder")
             parent.add(item)
         self._refresh_mount_rows(st)
@@ -684,11 +705,11 @@ class MenuBuilder:
                 continue
             status, error = entry.status, entry.error
             base = f"{entry.tunnel_name} · {entry.name}"
-            kind, tail = _MOUNT_TAIL.get(status, ("idle", ""))
+            kind, key = _MOUNT_TAIL.get(status, ("idle", None))
             if status == "error" and error:
-                title = f"{base} · 异常：{_truncate(error, 40)}"
+                title = f"{base} · {i18n.t('mount.tail.error_detail', detail=_truncate(error, 40))}"
             else:
-                title = f"{base} · {tail}" if tail else base
+                title = f"{base} · {i18n.t(key)}" if key else base
             if row.title != title:
                 row.title = title
                 _apply_status_dot(row, kind, point_size=9)
@@ -696,7 +717,8 @@ class MenuBuilder:
                 ("mount_action", entry.tunnel_id, entry.name))
             if action is not None:
                 active = status in ("mounted", "mounting", "unmounting")
-                new_title = "卸载" if active else "挂载"
+                new_title = i18n.t(
+                    "mount.action.unmount" if active else "mount.action.mount")
                 if action.title != new_title:  # 图标随标题变化才重挂
                     action.title = new_title
                     _apply_icon(action, "fw_stop" if active else "fw_start")
@@ -704,22 +726,24 @@ class MenuBuilder:
     def _build_capture_submenu(self):
         a = self._app
         st = self._get_state()
-        parent = rumps.MenuItem("抓 包", callback=None)
+        parent = rumps.MenuItem(i18n.t("menu.group.capture"), callback=None)
         _apply_icon(parent, "capture")
         # A 类状态语法：标题=纯动作（启动/停止抓包），状态进点
         # （绿=运行/黄=启动中/黑=已停止/红=异常），引导与详情进 hint 行
         item = rumps.MenuItem(
-            "停止抓包" if st.capture_enabled else "启动抓包",
+            i18n.t("capture.stop" if st.capture_enabled else "capture.start"),
             callback=a.toggle_capture, key="m")
         _apply_status_dot(item, st.capture_state, point_size=9)
         parent.add(item)
         if st.capture_hint:
             parent.add(rumps.MenuItem(st.capture_hint, callback=None))
         parent.add(None)
-        item = rumps.MenuItem("打开抓包目录", callback=a.open_capture_dir)
+        item = rumps.MenuItem(i18n.t("capture.open_dir"),
+                              callback=a.open_capture_dir)
         _apply_icon(item, "folder")
         parent.add(item)
-        item = rumps.MenuItem("今日 JSONL", callback=a.open_today_jsonl)
+        item = rumps.MenuItem(i18n.t("capture.today_jsonl"),
+                              callback=a.open_today_jsonl)
         _apply_icon(item, "jsonl")
         parent.add(item)
         self.refs["group_capture"] = parent
@@ -728,79 +752,103 @@ class MenuBuilder:
     def _build_suanpan_submenu(self):
         a = self._app
         st = self._get_state()
-        parent = rumps.MenuItem("AI 路由", callback=None)
+        parent = rumps.MenuItem(i18n.t("menu.group.router"), callback=None)
         _apply_icon(parent, "router")
         # A 类状态语法：标题=动作，状态点=现状（绿=运行/黑=已停止/
         # 红=启动失败——结构性动作行随运行态出现，状态不再藏在结构里）
         item = rumps.MenuItem(
-            "停止路由" if st.suanpan_running else "启动路由",
+            i18n.t("router.stop" if st.suanpan_running else "router.start"),
             callback=a.toggle_suanpan)
         _apply_status_dot(item, "ok" if st.suanpan_running
                           else ("err" if st.suanpan_error else "idle"),
                           point_size=9)
         parent.add(item)
         if st.suanpan_running:
-            item = rumps.MenuItem("重启路由", callback=a.restart_suanpan)
+            item = rumps.MenuItem(i18n.t("router.restart"),
+                                  callback=a.restart_suanpan)
             _apply_icon(item, "cycle")
             parent.add(item)
-            item = rumps.MenuItem("重新加载配置", callback=a.reload_suanpan)
+            item = rumps.MenuItem(i18n.t("router.reload"),
+                                  callback=a.reload_suanpan)
             _apply_icon(item, "refresh")
             parent.add(item)
         parent.add(None)
-        item = rumps.MenuItem("配置 Agent…", callback=a.show_agent_setup)
+        item = rumps.MenuItem(i18n.t("router.setup_agent"),
+                              callback=a.show_agent_setup)
         _apply_icon(item, "wand.and.stars")
         parent.add(item)
-        item = rumps.MenuItem("复制连接地址", callback=a.copy_suanpan_url)
+        item = rumps.MenuItem(i18n.t("router.copy_url"),
+                              callback=a.copy_suanpan_url)
         _apply_icon(item, "doc")
         parent.add(item)
-        item = rumps.MenuItem("复制配置样例", callback=a.copy_suanpan_example)
+        item = rumps.MenuItem(i18n.t("router.copy_example"),
+                              callback=a.copy_suanpan_example)
         _apply_icon(item, "clipboard")
         parent.add(item)
         self.refs["group_router"] = parent
         return parent
 
     def _build_system_submenu(self):
-        """选 项 ▸ —— B 类设置（防睡眠 / 登录启动 / 配置 API）。
+        """选 项 ▸ —— B 类设置（防睡眠 / 登录启动 / 配置 API / 语言）。
 
         状态语法：设置用 macOS 母语 ✓（NSMenuItem.state），标题保持
         中性名词——「防睡眠 ✓」即当前值，点按即切换；不染运行色
         （「防睡眠开着」不是一种「运行」）。一次声明成表。"""
         a = self._app
         st = self._get_state()
-        parent = rumps.MenuItem("选 项", callback=None)
+        parent = rumps.MenuItem(i18n.t("menu.group.system"), callback=None)
         _apply_icon(parent, "system")
-        for ref_key, label, cfg_key, callback, shortcut, icon in (
-                ("prevent_sleep", "防睡眠", "prevent_sleep",
+        for ref_key, label_key, cfg_key, callback, shortcut, icon in (
+                ("prevent_sleep", "system.prevent_sleep", "prevent_sleep",
                  a.toggle_prevent_sleep, "n", "sleep"),
-                ("launch_login", "登录启动", "launch_at_login",
+                ("launch_login", "system.launch_login", "launch_at_login",
                  a.toggle_launch_at_login, "k", "login"),
-                ("config_api", "配置 API 服务", "config_api_enabled",
+                ("config_api", "system.config_api", "config_api_enabled",
                  a.toggle_config_api, None, "network")):
-            item = rumps.MenuItem(label, callback=callback, key=shortcut)
+            item = rumps.MenuItem(i18n.t(label_key), callback=callback,
+                                  key=shortcut)
             _apply_icon(item, icon)
             _apply_check(item, bool(st.config.get(cfg_key)))
             self.refs[ref_key] = item
             parent.add(item)
+        # 语言子菜单（ADR-012）：✓ 跟随磁盘偏好值（auto 也是一等选项）；
+        # 写径 make_set_language → update_mp → _apply_language + struct_key
+        # 既有机制整树重建换文案
+        parent.add(None)
+        lang_sub = rumps.MenuItem(i18n.t("system.language"), callback=None)
+        _apply_icon(lang_sub, "globe")
+        pref = st.config.get("language") or i18n.DEFAULT_LANGUAGE
+        for value, key in ((i18n.AUTO, "system.language.auto"),
+                           ("zh-CN", "system.language.zh"),
+                           ("en", "system.language.en")):
+            item = rumps.MenuItem(i18n.t(key),
+                                  callback=a.make_set_language(value))
+            _apply_check(item, pref == value)
+            lang_sub.add(item)
+        parent.add(lang_sub)
         return parent
 
     def _build_footer(self):
         app = self._app
         a = self._app
-        item = rumps.MenuItem("偏好设置…", callback=a.show_preferences, key=",")
+        item = rumps.MenuItem(i18n.t("footer.preferences"),
+                              callback=a.show_preferences, key=",")
         _apply_icon(item, "prefs")
         app.menu.add(item)
-        item = rumps.MenuItem("查看日志", callback=a.show_log_window, key="l")
+        item = rumps.MenuItem(i18n.t("footer.view_log"),
+                              callback=a.show_log_window, key="l")
         _apply_icon(item, "search")
         app.menu.add(item)
-        item = rumps.MenuItem("复制 AI 助手指令",
+        item = rumps.MenuItem(i18n.t("footer.copy_instructions"),
                               callback=a.copy_agent_instructions)
         _apply_icon(item, "clipboard")
         app.menu.add(item)
         app.menu.add(None)
-        item = rumps.MenuItem("关于 Magic Stack", callback=a.about)
+        item = rumps.MenuItem(i18n.t("footer.about"), callback=a.about)
         _apply_icon(item, "about")
         app.menu.add(item)
-        item = rumps.MenuItem("退出", callback=a.quit_app, key="q")
+        item = rumps.MenuItem(i18n.t("common.quit"), callback=a.quit_app,
+                              key="q")
         _apply_icon(item, "quit")
         app.menu.add(item)
 
@@ -812,20 +860,20 @@ class MenuBuilder:
         tunnel = st.current_server
         tunnel_name = tunnel.get("name") if tunnel else None
         tunnel_name = tunnel_name or (
-            f"{(tunnel.get('ssh') or {}).get('user', '')}@{(tunnel.get('ssh') or {}).get('host', '')}" if tunnel else "未配置")
+            f"{(tunnel.get('ssh') or {}).get('user', '')}@{(tunnel.get('ssh') or {}).get('host', '')}" if tunnel else i18n.t("status.name.unconfigured"))
 
         # Proxy status line —— 颜色由行首圆点图标承载（emoji 已退役）
         if st.paused:
-            proxy_text = f"AI Proxy · {tunnel_name} · 已暂停"
+            proxy_text = i18n.t("status.proxy.paused", name=tunnel_name)
         elif s == "connected":
             proxy_text = f"AI Proxy · {tunnel_name}"
         elif s == "connecting":
-            proxy_text = f"AI Proxy · {tunnel_name} · 连接中…"
+            proxy_text = i18n.t("status.proxy.connecting", name=tunnel_name)
         elif s == "error":
-            proxy_text = f"AI Proxy · {tunnel_name} · 连接失败"
+            proxy_text = i18n.t("status.proxy.failed", name=tunnel_name)
         elif tunnel:
             # 断开也保留隧道名——此刻恰恰更需要知道当前配的是谁
-            proxy_text = f"AI Proxy · {tunnel_name} · 未连接"
+            proxy_text = i18n.t("status.proxy.disconnected", name=tunnel_name)
         else:
             proxy_text = "AI Proxy"
         # 多活：转发会话在跑时状态行附转发计数（主图标语义不变——只反映
@@ -833,19 +881,19 @@ class MenuBuilder:
         fw_up = sum(1 for f in (st.forward_states or ())
                     if f.status == "connected")
         if fw_up:
-            proxy_text += f" · {fw_up} 条转发"
+            proxy_text += f" · {i18n.t('status.proxy.fw_count', n=fw_up)}"
         # 挂载计数同款模式（ADR-007）：只数已挂载
         mounts_up = sum(1 for entry in (st.mount_states or ())
                         if entry.status == "mounted")
         if mounts_up:
-            proxy_text += f" · {mounts_up} 个挂载"
+            proxy_text += f" · {i18n.t('status.proxy.mount_count', n=mounts_up)}"
         # 故障可见性（UX 批次）：异常不数成功、顶部无感知的时代结束——
         # 转发/挂载的 error 态在状态行立即可见，不必逐层展开子菜单
         fw_bad, mounts_bad = _error_counts(st)
         if fw_bad:
-            proxy_text += f" · ⚠ {fw_bad} 转发异常"
+            proxy_text += f" · {i18n.t('status.proxy.fw_bad', n=fw_bad)}"
         if mounts_bad:
-            proxy_text += f" · ⚠ {mounts_bad} 挂载异常"
+            proxy_text += f" · {i18n.t('status.proxy.mount_bad', n=mounts_bad)}"
         self._set_title("proxy_status", proxy_text)
 
         # Router status line —— 原始错误串不进菜单（截断读不完也无法
@@ -853,7 +901,7 @@ class MenuBuilder:
         if st.suanpan_running:
             router_text = f"AI Router · {st.suanpan_listen_address}"
         elif st.suanpan_error:
-            router_text = "AI Router · 启动失败"
+            router_text = i18n.t("status.router.failed")
         else:
             router_text = "AI Router"
         self._set_title("router_status", router_text)
@@ -864,7 +912,7 @@ class MenuBuilder:
             traffic_text = (
                 f"{_human(snap['rate_down'], 'B/s')}"
                 f"  ·  {_human(snap['rate_up'], 'B/s')}"
-                f"  ·  {snap['active_connections']} 连接"
+                f"  ·  {i18n.t('status.traffic.connections', n=snap['active_connections'])}"
             )
             self._set_title("traffic", traffic_text)
 
@@ -887,14 +935,17 @@ class MenuBuilder:
         计数与状态行 ⚠ 计数经 _error_counts 同源。"""
         fw_bad, mounts_bad = _error_counts(st)
         rollups = (
-            ("group_proxy", "代 理", 1 if st.ssh_status == "error" else 0),
-            ("group_forward", "端口映射", fw_bad),
-            ("group_mount", "远程挂载", mounts_bad),
-            ("group_router", "AI 路由", 1 if st.suanpan_error else 0),
-            ("group_capture", "抓 包",
+            ("group_proxy", "menu.group.proxy",
+             1 if st.ssh_status == "error" else 0),
+            ("group_forward", "menu.group.forward", fw_bad),
+            ("group_mount", "menu.group.mount", mounts_bad),
+            ("group_router", "menu.group.router",
+             1 if st.suanpan_error else 0),
+            ("group_capture", "menu.group.capture",
              1 if st.capture_state == "err" else 0),
         )
-        for ref_key, base, bad in rollups:
+        for ref_key, base_key, bad in rollups:
+            base = i18n.t(base_key)
             self._set_title(ref_key, f"{base} ⚠ {bad}" if bad else base)
 
     def _set_title(self, key, text):
