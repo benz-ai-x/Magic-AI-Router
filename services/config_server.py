@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 from shared import keychain
 from services import sp_config, server_check
+from shared import i18n
 from mpconf.config_state import ConfigStateStore
 from tunnel import ssh_launch
 from mount import remote_setup
@@ -43,10 +44,28 @@ _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 # Bearer 调 / 种 HttpOnly cookie → 成功则 reload 进配置页。仅 GET / 返回此页；
 # /api/* 的 401 保持纯 JSON（curl/脚本客户端不期待 HTML）。macOS 桥接首导航
 # 带 Bearer → 200 不经过此页，行为不变。
-_LOGIN_HTML = """<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
+def _inject_i18n_boot(html):
+    """ADR-012 M2：serve 时注入双语 catalog（浏览器直开与原生窗同路径）。
+    ensure_ascii + </ 转义防 </script> 提前闭合。"""
+    boot = json.dumps(
+        {"lang": i18n.language(),
+         "messages": {"zh-CN": i18n.catalog("zh-CN"),
+                      "en": i18n.catalog("en")}},
+        ensure_ascii=True, separators=(",", ":")).replace("</", "<\\/")
+    return html.replace(
+        '<script data-layer="model">',
+        "<script>window.__I18N__=" + boot + "</script>\n"
+        '<script data-layer="model">', 1)
+
+
+def _login_html():
+    """登录页（按当前语言渲染——ADR-012 M2：serve 时取词）。"""
+    lang = i18n.language()
+    return (
+        """<!doctype html>
+<html lang="@LANG@"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Magic Stack — 登录</title>
+<title>Magic Stack — @TITLE@</title>
 <style>
 body{font-family:-apple-system,system-ui,sans-serif;background:#f5f5f7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .card{background:#fff;border-radius:12px;padding:32px;box-shadow:0 4px 24px rgba(0,0,0,.08);width:320px}
@@ -57,10 +76,10 @@ button:disabled{background:#ccc;cursor:default}.err{color:#ff3b30;font-size:13px
 </style></head><body>
 <div class="card">
 <h1>Magic Stack</h1>
-<p>输入配置页面的访问 token（Docker 版用 <code>suanpan.sh config-ui</code> 查看）</p>
+<p>@HINT@</p>
 <input id="tok" type="password" placeholder="token" autocomplete="off" autofocus>
-<button id="go">进入</button>
-<div class="err" id="err">token 无效，请重试</div>
+<button id="go">@ENTER@</button>
+<div class="err" id="err">@INVALID@</div>
 </div>
 <script>
 const tok=document.getElementById('tok'),go=document.getElementById('go'),err=document.getElementById('err');
@@ -76,6 +95,12 @@ async function login(){
 go.onclick=login;
 tok.onkeydown=e=>{if(e.key==='Enter')login();};
 </script></body></html>"""
+        .replace("@LANG@", lang)
+        .replace("@TITLE@", i18n.t("ui.login.title"))
+        .replace("@HINT@", i18n.t("ui.login.hint"))
+        .replace("@ENTER@", i18n.t("ui.login.enter"))
+        .replace("@INVALID@", i18n.t("ui.login.invalid"))
+    )
 
 
 def _read_mp():
@@ -287,7 +312,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._valid_token():
             # GET / 的 401 返回登录页（浏览器直接打开可用）；API 路径仍 JSON
             if path in ("/", "/index.html"):
-                self._send(401, _LOGIN_HTML, "text/html; charset=utf-8")
+                self._send(401, _login_html(), "text/html; charset=utf-8")
             else:
                 self._json(401, {"error": "unauthorized"})
             return
@@ -338,6 +363,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _serve_config_html(self):
         try:
             html = open(_resource_path("config_ui.html"), encoding="utf-8").read()
+            html = _inject_i18n_boot(html)
             extra = []
             auth = self.headers.get("Authorization", "")
             if auth.startswith("Bearer "):

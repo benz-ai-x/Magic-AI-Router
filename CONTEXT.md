@@ -95,7 +95,7 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 ### 界面国际化（i18n，ADR-012）
 
-用户可见文案的中英双语单一归宿：语义键 → `shared/locales/{zh-CN,en}.json`，取词唯一口 `shared/i18n.t(key, **params)`（叶子层零域知识，**不得 import util**——同层不同域）。语言偏好存 mp 配置顶层 `language`（auto/zh-CN/en，缺省 zh-CN，值不校验 resolve 全兜底）；`auto` 经 plistlib 读 AppleLanguages。切换即时生效：`MenuState.language`（resolved 值）进 `struct_key()` 走既有整树重建——菜单刷新按稳定 ref_key 不按标题（PR #100 前的标题字典键坑对语言切换免疫）；写径三处（启动 / 菜单 update_mp / UI 保存回调）汇聚 `app._apply_language()`。纪律四道闸在 `tests/test_i18n.py`：键位奇偶 + 占位符一致、en 全译（值无汉字）、取词守卫（**调用点必须字面键，动态键禁止**——状态词表存键名）、汉字字面量守卫（产品 .py 字符串 AST 扫描，docstring/logging 子树豁免；未迁移文件 `_HAN_WHITELIST` 挂号，M4 清零）。日志与代码注释中文直写不进 catalog（D6）。
+用户可见文案的中英双语单一归宿：语义键 → `shared/locales/{zh-CN,en}.json`，取词唯一口 `shared/i18n.t(key, **params)`（叶子层零域知识，**不得 import util**——同层不同域）。语言偏好存 mp 配置顶层 `language`（auto/zh-CN/en，缺省 zh-CN，值不校验 resolve 全兜底）；`auto` 经 plistlib 读 AppleLanguages。切换即时生效：`MenuState.language`（resolved 值）进 `struct_key()` 走既有整树重建——菜单刷新按稳定 ref_key 不按标题（PR #100 前的标题字典键坑对语言切换免疫）；写径三处（启动 / 菜单 update_mp / UI 保存回调）汇聚 `app._apply_language()`。纪律四道闸在 `tests/test_i18n.py`：键位奇偶 + 占位符一致、en 全译（值无汉字）、取词守卫（**调用点必须字面键，动态键禁止**——状态词表存键名）、汉字字面量守卫（产品 .py 字符串 AST 扫描，docstring/logging 子树豁免；未迁移文件 `_HAN_WHITELIST` 挂号，M4 清零）。日志与代码注释中文直写不进 catalog（D6）。**M2（2026-09-25 落地）**：设置窗整页 `tt()` 键化（~480 键，含校验消息——LAYER 1 消息也走键，`tests/js/extract.mjs` 的 loadLayer 求值前注入从真实 catalog 构建的 tt，node 中文断言零改动）；config_server serve 时注入 `window.__I18N__`（登录页同按语言渲染）；系统选项页语言选择器 = PUT baseline+language 后**原地重渲染**（不 reload，未保存表单不丢），菜单栏经 `_on_mp_saved → _apply_language` 同拍切换；五道闸新增 HTML 渲染层残留检查。
 
 ### 服务生命周期（LifecycleRuntime）
 

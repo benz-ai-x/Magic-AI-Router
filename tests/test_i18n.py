@@ -202,6 +202,49 @@ class TestNoRawHanLiterals(unittest.TestCase):
         self.assertFalse(stale, f"白名单过期条目：{stale}")
 
 
+# ── 闸 5（M2）：设置窗 HTML 残留守卫 ──────────────────────────
+# LAYER 2/3（渲染层）零容忍；豁免三类：静态骨架（applyStaticI18n 运行时
+# 取词——服务端渲染 zh 骨架 + JS 首拍换装）、LAYER 1 数据面（node 测试
+# 钉死的 zh 标签/复合文案，渲染侧已键化；M3/M4 收编）、注释。
+_HTML_STATIC_ALLOW = (
+    "<title>", "brand-subtitle", "priority-note", "copyAgentInstructions()",
+    "id=\"page-title\"", "id=\"save-btn\"", "id=\"pending-title\"",
+    "id=\"pending-items\"", "onclick=\"discardAll()\"", "onclick=\"saveAll()\"",
+    "loading-text", "id=\"status-left\"", "id=\"shortcut-hint\"",
+    "id=\"toast-msg\"",
+)
+
+
+class TestConfigUiHtmlHanResidue(unittest.TestCase):
+    def test_render_layers_have_no_raw_han(self):
+        html = (ROOT / "shellui" / "config_ui.html").read_text("utf-8")
+        layer2 = html.index("// LAYER 2 ")
+        violations = []
+        for i, line in enumerate(html.splitlines(), 1):
+            if i < layer2 or not _HAN.search(line):
+                continue
+            stripped = line.strip()
+            if stripped.startswith(("//", "/*", "*")):
+                continue  # 注释
+            if any(marker in line for marker in _HTML_STATIC_ALLOW):
+                continue  # 静态骨架（applyStaticI18n 运行时取词）
+            if self._data_face(stripped):
+                continue
+            violations.append(f"{i}: {stripped[:70]}")
+        self.assertFalse(violations,
+                         "渲染层裸汉字（新文案必须 tt() 取词，见 ADR-012）：\n  "
+                         + "\n  ".join(violations))
+
+    @staticmethod
+    def _data_face(s):
+        """zh 数据面（node 测试钉死、渲染侧已键化）：LAYER 1 的标签/
+        复合文案在 LAYER 2 标记之前整段跳过；此处只放行 LAYER 2 内的
+        VIEWS/NAV/错误路由注册表。"""
+        return (s.startswith(("const VIEWS=", "const NAV_ORDER",
+                              "const NAV_GROUP_KEY", "const ERROR_VIEW_MAP"))
+                or ":{group:" in s)
+
+
 class TestI18nBehavior(unittest.TestCase):
     """行为冒烟：取词/兜底/解析（全局语言状态必须复原，防测试间泄漏）。"""
 

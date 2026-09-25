@@ -30,19 +30,19 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .brand-mark i{width:5px;height:5px;justify-self:center;border-radius:50%;background:var(--fg)}
 .brand-name{font-size:16px;font-weight:600;line-height:1.35;white-space:nowrap}
 .brand-subtitle{color:var(--muted);font-size:12px}
-.nav-group{margin-top:16px}
-.nav-group:first-of-type{margin-top:14px}
-.nav-label{padding:0 10px 6px;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.nav-group{margin-top:10px}
+.nav-group:first-of-type{margin-top:12px}
+.nav-label{padding:0 10px 4px;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .side-nav{display:grid;gap:3px}
-.nav-item{width:100%;min-height:40px;display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;text-align:left;font-weight:550;font-size:15px}
+.nav-item{width:100%;min-height:34px;display:flex;align-items:center;gap:10px;padding:5px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;text-align:left;font-weight:550;font-size:15px}
 .nav-item svg{width:16px;height:16px;flex:0 0 auto;align-self:flex-start;margin-top:2px}
 .nav-text{display:flex;flex-direction:column;min-width:0}
-.nav-sub{display:block;font-size:11px;color:var(--muted);font-weight:400;line-height:1.4}
+.nav-sub{display:block;font-size:11px;color:var(--muted);font-weight:400;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nav-item:hover{background:color-mix(in oklch,var(--surface),var(--border) 28%);color:var(--fg)}
 .nav-item[aria-current=page]{background:var(--bg);color:var(--fg);border-color:var(--border);box-shadow:0 1px 2px color-mix(in oklch,var(--fg),transparent 94%)}
-.sidebar-spacer{flex:1}
-.priority-note{margin:16px 4px 0;padding:12px 10px;border-top:1px solid var(--border);color:var(--muted);font-size:13px;line-height:1.6}
-.priority-note strong{display:block;margin-bottom:4px;color:var(--fg);font-weight:550}
+#nav-container{flex:1 1 auto;min-height:0;overflow-y:auto}
+.priority-note{margin:10px 4px 0;padding:9px 10px;border-top:1px solid var(--border);color:var(--muted);font-size:13px;line-height:1.5}
+.priority-note strong{display:inline;color:var(--fg);font-weight:550}
 .sidebar-ai-helper{margin:8px 4px 0}
 .sidebar-ai-helper .btn svg{width:16px;height:16px;flex:0 0 auto}
 /* workbench */
@@ -82,9 +82,10 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .panel{border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;margin-bottom:16px}
 .panel:last-child{margin-bottom:0}
 /* 宽窗口收束（#3 P2）：普通流式视图的面板/导语限宽居中，表单与统计卡片不再
-   过度拉伸；master-detail 的面板（含 .md-layout）保持全宽 */
+   过度拉伸；master-detail 的面板（含 .md-layout）保持全宽，其导语随之
+   左对齐与面板对齐（居中 760px 导语悬在全宽面板上方会错位） */
 .view .panel:not(:has(.md-layout)){max-width:1100px;margin-left:auto;margin-right:auto}
-.view>.module-intro{margin-left:auto;margin-right:auto}
+.view:not(:has(.md-layout))>.module-intro{margin-left:auto;margin-right:auto}
 /* empty state */
 .empty-state{padding:48px 24px;text-align:center;color:var(--muted)}
 .empty-state>svg{display:block;margin:0 auto 12px}
@@ -366,7 +367,6 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
       <div><div class="brand-name">Magic Stack</div><div class="brand-subtitle">设置</div></div>
     </div>
     <div id="nav-container"></div>
-    <div class="sidebar-spacer"></div>
     <div class="priority-note"><strong>保存后生效</strong>隧道变更需菜单「重新连接」；端口转发保存后自动重连；AI 路由保存后自动重载。</div>
     <div class="sidebar-ai-helper"><button class="btn btn-sm btn-ghost" onclick="copyAgentInstructions()">复制 AI 助手指令</button></div>
   </aside>
@@ -377,7 +377,7 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
     </header>
     <div class="pending-bar" id="pending-bar" hidden>
       <div class="pending-copy"><strong id="pending-title">有未保存的更改</strong><div class="pending-items" id="pending-items"></div></div>
-      <div class="pending-actions"><button class="btn btn-sm" onclick="discardAll()">放弃全部</button><button class="btn btn-sm btn-primary" id="pending-save-btn" onclick="saveAll()">保存全部</button></div>
+      <div class="pending-actions"><button class="btn btn-sm" id="pending-discard-btn" onclick="discardAll()">放弃全部</button><button class="btn btn-sm btn-primary" id="pending-save-btn" onclick="saveAll()">保存全部</button></div>
     </div>
     <div class="content-viewport" id="viewport"><section class="view is-active"><p class="loading-text">加载中…</p></section></div>
     <footer class="statusbar"><span id="status-left">就绪</span><span id="shortcut-hint">⌘S 保存</span></footer>
@@ -387,6 +387,17 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 
 <script data-layer="model">
 'use strict';
+// ── i18n（ADR-012 M2）：window.__I18N__ 由 config_server 在 serve 时注入
+// （浏览器路径）；node 分层求值由 tests/js/extract.mjs 注入同款 t——
+// zh catalog 是唯一中文真相源，键缺席回显键名（可见但不炸）。──
+const I18N=(typeof window!=='undefined'&&window.__I18N__)||{lang:'zh-CN',messages:{}};
+function tt(key,params){
+  let s=(I18N.messages[I18N.lang]||{})[key];
+  if(s==null)s=(I18N.messages['zh-CN']||{})[key];
+  if(s==null)return key;
+  if(params)s=s.replace(/\{(\w+)\}/g,(_,k)=>params[k]!=null?String(params[k]):'{'+k+'}');
+  return s;
+}
 // ════════════════════════════════════════════════════════════════
 // LAYER 1 — data & pure logic (no DOM access; mirrored by node tests
 // in tests/js/, extracted via the <script data-layer> boundaries).
@@ -568,26 +579,26 @@ function parseTarget(t){
 function validateConfig(S){
   // Pre-save validation; returns a list of human-readable error strings.
   const errors=[];
-  if(S&&S.sp&&S.sp._load_error)errors.push('Suanpan 配置装载失败，已阻止保存以防覆盖：'+S.sp._load_error);
-  if(S&&S.mp&&S.mp._load_error)errors.push('Magic Proxy 配置装载失败，已阻止保存以防覆盖：'+S.mp._load_error);
+  if(S&&S.sp&&S.sp._load_error)errors.push(tt('ui.validate.sp_load_error')+S.sp._load_error);
+  if(S&&S.mp&&S.mp._load_error)errors.push(tt('ui.validate.mp_load_error')+S.mp._load_error);
   (S.mp.servers||[]).forEach((t,i)=>{
-    if(!sshOf(t).host)errors.push(`服务器 ${i+1}: 未填写地址`);
-    if(sshOf(t).port&&(sshOf(t).port<1||sshOf(t).port>65535))errors.push(`服务器 ${i+1}: SSH 端口无效`);
+    if(!sshOf(t).host)errors.push(tt('ui.validate.addr',{n:i+1}));
+    if(sshOf(t).port&&(sshOf(t).port<1||sshOf(t).port>65535))errors.push(tt('ui.validate.ssh_port',{n:i+1}));
     // 端口转发行：范围 + 同服务器重复 + remote_host 文法（镜像 prepare 的
     // 中文文案——prepare 是 422 兜底，这里是保存前第一道；v2 模型是
     // 服务器，文案随 Python 侧同轴）
-    const tn=t.name||sshOf(t).host||(`服务器 ${i+1}`);
+    const tn=t.name||sshOf(t).host||(tt('ui.validate.server_n',{n:i+1}));
     const fwSeen={};
     forwardsOf(t).forEach(f=>{
       // 与 prepare 同口径：端口须整数（拦小数），remote_host 字串化
       // （数字形态仅在直改 state 时出现，String 兜底不抛 TypeError）
       const lp=f.local_port,rp=f.remote_port,rh=String(f.remote_host||'127.0.0.1');
-      if(!Number.isInteger(lp)||lp<1||lp>65535)errors.push(`${tn}: 转发本地端口无效（须 1..65535）`);
+      if(!Number.isInteger(lp)||lp<1||lp>65535)errors.push(tt('ui.validate.fw_local_port',{tn}));
       else if(f.enabled===false){/* 停用行不占端口，重复也不拦 */}
-      else if(fwSeen[lp])errors.push(`${tn}: 转发本地端口 ${lp} 重复`);
+      else if(fwSeen[lp])errors.push(tt('ui.validate.fw_dup',{tn,lp}));
       else fwSeen[lp]=1;
-      if(!Number.isInteger(rp)||rp<1||rp>65535)errors.push(`${tn}: 转发远程端口无效（须 1..65535）`);
-      if(/\s/.test(rh)||rh.includes(':'))errors.push(`${tn}: 转发远程地址无效（暂不支持 IPv6）`);
+      if(!Number.isInteger(rp)||rp<1||rp>65535)errors.push(tt('ui.validate.fw_remote_port',{tn}));
+      if(/\s/.test(rh)||rh.includes(':'))errors.push(tt('ui.validate.fw_remote_host',{tn}));
     });
     // NFS 本地端口行级形状（镜像 prepare 的 _nfs_errors；无效值不再
     // 进冲突命名空间——两个错误不得叠加报）
@@ -595,7 +606,7 @@ function validateConfig(S){
     if(n&&typeof n==='object'){
       const np=n.local_port;
       if(np!=null&&np!==''&&(!Number.isInteger(np)||np<1||np>65535))
-        errors.push(`${tn}: NFS 本地端口无效（须 1..65535）`);
+        errors.push(tt('ui.validate.nfs_port',{tn}));
     }
   });
   // 端口行级校验共享跳过语义：null/''/undefined = 未填跳过；显式 0
@@ -603,31 +614,31 @@ function validateConfig(S){
   // 只在 422 现形，与 R1-C5 的 NFS 端口同类洞；跨语言报警
   // test_validation_mirror 钉住与 prepare 的同错同净）
   const portInvalid=v=>v!=null&&v!==''&&(v<1||v>65535);
-  if(portInvalid(S.mp.socks5_port))errors.push('SOCKS5 端口无效');
-  if(portInvalid(S.mp.http_listen_port))errors.push('HTTP 监听端口无效');
-  if(portInvalid(S.mp.capture_port))errors.push('抓包端口无效');
-  if(portInvalid(S.mp.config_port))errors.push('配置服务端口无效');
-  if(portInvalid(S.sp.listen_port))errors.push('路由网关端口无效');
+  if(portInvalid(S.mp.socks5_port))errors.push(tt('ui.validate.socks5_port'));
+  if(portInvalid(S.mp.http_listen_port))errors.push(tt('ui.validate.http_port'));
+  if(portInvalid(S.mp.capture_port))errors.push(tt('ui.validate.capture_port'));
+  if(portInvalid(S.mp.config_port))errors.push(tt('ui.validate.config_port'));
+  if(portInvalid(S.sp.listen_port))errors.push(tt('ui.validate.gw_port'));
   // Port uniqueness across services — a duplicate only fails at bind time
   // otherwise, long after the user left the form. Absent values are skipped
   // (collect() fills defaults once the view has been visited).
-  const portRefs=[['SOCKS5',S.mp.socks5_port],['HTTP 监听',S.mp.http_listen_port],['抓包',S.mp.capture_port],['配置服务',S.mp.config_port],['路由网关',S.sp.listen_port]];
+  const portRefs=[['SOCKS5',S.mp.socks5_port],[tt('ui.portlabel.http'),S.mp.http_listen_port],[tt('ui.portlabel.capture'),S.mp.capture_port],[tt('ui.portlabel.config'),S.mp.config_port],[tt('ui.portlabel.gw'),S.sp.listen_port]];
   const seen={};
   portRefs.forEach(([label,p])=>{
     if(p==null||p==='')return;
-    if(seen[p])errors.push(`端口冲突：${seen[p]} 与 ${label} 同为 ${p}`);
+    if(seen[p])errors.push(tt('ui.validate.port_conflict',{a:seen[p],b:label,p}));
     else seen[p]=label;
   });
   // 转发本地端口全局唯一（多活 v0.9：任意隧道可并行，抢同端口会让两条
   // ssh 在 ExitOnForwardFailure 下互顶）；镜像 prepare 同一判定
   (S.mp.servers||[]).forEach(t=>{
-    const tn=t.name||sshOf(t).host||'服务器';
+    const tn=t.name||sshOf(t).host||tt('ui.validate.server_plain');
     forwardsOf(t).forEach(f=>{
       const lp=f.local_port;
-      const ref=`${tn} 端口转发本地端口`;
+      const ref=tt('ui.validate.fw_ref',{tn});
       if(f.enabled===false)return;  // 停用行不进会话 -L、不占本地端口
       if(lp){
-        if(seen[lp])errors.push(`端口冲突：${seen[lp]} 与 ${ref} 同为 ${lp}`);
+        if(seen[lp])errors.push(tt('ui.validate.port_conflict',{a:seen[lp],b:ref,p:lp}));
         else seen[lp]=ref;
       }
     });
@@ -641,24 +652,24 @@ function validateConfig(S){
     if(!(n.enabled===true||(n.mounts&&n.mounts.length)))return;
     const np=n.local_port;
     if(!Number.isInteger(np)||np<1||np>65535)return;  // 形状归行级校验
-    const tn=t.name||sshOf(t).host||'服务器';
-    const ref=`${tn} NFS 本地端口`;
-    if(seen[np])errors.push(`端口冲突：${seen[np]} 与 ${ref} 同为 ${np}`);
+    const tn=t.name||sshOf(t).host||tt('ui.validate.server_plain');
+    const ref=tt('ui.validate.nfs_ref',{tn});
+    if(seen[np])errors.push(tt('ui.validate.port_conflict',{a:seen[np],b:ref,p:np}));
     else seen[np]=ref;
   });
   Object.entries(S.sp.providers||{}).forEach(([k,p])=>{
-    if(!k||!k.trim())errors.push('供应商名称不能为空');
+    if(!k||!k.trim())errors.push(tt('ui.validate.provider_name'));
     // 对齐 suanpan/config.py ProviderConfig._check_auth：环境变量凭证必须显式选择认证头
-    if(p&&p.api_key_env&&!p.auth_header)errors.push(`供应商 ${k}：使用环境变量时须选择认证头`);
+    if(p&&p.api_key_env&&!p.auth_header)errors.push(tt('ui.validate.provider_env_auth',{k}));
   });
   // #3 悬空引用：规则/默认路由指向的供应商必须存在，否则网关路由落空。
   const providerNames=new Set(Object.keys(S.sp.providers||{}));
   (S.sp.rules||[]).forEach((r,i)=>{
     const t=(r&&r.route_to)||'',pk=parseTarget(t)[0];
-    if(t&&!providerNames.has(pk))errors.push(`规则 ${i+1} 引用了不存在的供应商 ${pk}`);
+    if(t&&!providerNames.has(pk))errors.push(tt('ui.validate.rule_missing_provider',{n:i+1,pk}));
   });
   const defRoute=(S.sp.router||{}).default||'',defPk=parseTarget(defRoute)[0];
-  if(defRoute&&!providerNames.has(defPk))errors.push(`默认路由引用了不存在的供应商 ${defPk}`);
+  if(defRoute&&!providerNames.has(defPk))errors.push(tt('ui.validate.default_missing_provider',{pk:defPk}));
   return errors;
 }
 
@@ -833,9 +844,9 @@ function routeTargetOptionsFor(providers,current,emptyLabel){
       if(v===current)currentListed=true;
       return `<option value="${esc(v)}" ${v===current?'selected':''}>${esc(v)}${ctxSuffix(m)}</option>`;
     }).join('');
-    groups.push(`<optgroup label="${esc(k)}${p.enabled===false?'（已停用）':''}">${opts}</optgroup>`);
+    groups.push(`<optgroup label="${esc(k)}${p.enabled===false?tt('ui.common.off_paren'):''}">${opts}</optgroup>`);
   });
-  const extra=current&&!currentListed?`<option value="${esc(current)}" selected>${esc(current)}（未在清单）</option>`:'';
+  const extra=current&&!currentListed?`<option value="${esc(current)}" selected>${esc(current)}${tt('ui.common.not_listed')}</option>`:'';
   return `<option value="">${emptyLabel}</option>${extra}${groups.join('')}`;
 }
 
@@ -847,8 +858,8 @@ function apiHeaders(token,extra){
 
 // Role-row guidance. #43: the subagent row carries a hint that subagents
 // should use a cheaper model than the main task (CONTEXT.md design intent).
-const CC_ROLE_HINTS={subagent:'建议选更便宜模型，区分主任务与子代理'};
-function ccRoleHint(key){return CC_ROLE_HINTS[key]||'';}
+const CC_ROLE_HINTS={subagent:'ui.cc.hint_subagent'};
+function ccRoleHint(key){return CC_ROLE_HINTS[key]?tt(CC_ROLE_HINTS[key]):'';}
 
 // Table row definitions from the /api/cc-default-roles payload (#44):
 // Python (_ROLES) is the single source of truth for order/labels/readonly;
@@ -885,7 +896,7 @@ function ccChangeBadge(action){return action==='add'?'新增':action==='remove'?
 function ccPreviewRows(pv){
   if(!pv||!pv.ok)return [];
   return (pv.changes||[]).map(c=>({
-    key:String(c.key||''),badge:ccChangeBadge(c.action),
+    key:String(c.key||''),badge:tt('ui.cc.badge.'+(c.action==='add'?'add':c.action==='remove'?'remove':'update')),
     old:c.old==null?'—':String(c.old),
     new:c.new==null?'—':String(c.new),
   }));
@@ -895,7 +906,7 @@ function ccPreviewRows(pv){
 function ccRuleRows(pv){
   if(!pv||!pv.ok)return [];
   return (pv.rule_changes||[]).map(c=>({
-    prefix:String(c.match_prefix||''),badge:ccChangeBadge(c.action),
+    prefix:String(c.match_prefix||''),badge:tt('ui.cc.badge.'+(c.action==='add'?'add':c.action==='remove'?'remove':'update')),
     old:c.old==null?'—':String(c.old),
     new:c.new==null?'—':String(c.new),
   }));
@@ -967,21 +978,21 @@ async function saveFlow(snap,deps,forceRulesSync){
   const rolesChanged=countChanges(baselineRoles,ccRoles)>0;
   const syncRules=forceRulesSync===true||rolesChanged;
   const out={configSaved:false,syncOk:false,cancelled:false};
-  if(!dirty&&!syncRules){deps.toast('没有需要保存的更改');return out;}
+  if(!dirty&&!syncRules){deps.toast(tt('ui.saveflow.nothing'));return out;}
   if(dirty){
     const errors=validateConfig(S);
-    if(errors.length){deps.toast(errors.slice(0,3).join('；')+(errors.length>3?` 等 ${errors.length} 项`:''),true);deps.gotoFirstError(errors[0]);return out;}
+    if(errors.length){deps.toast(errors.slice(0,3).join(tt('ui.common.list_sep'))+(errors.length>3?tt('ui.saveflow.more_errors',{n:errors.length}):''),true);deps.gotoFirstError(errors[0]);return out;}
   }
   const mpChanged=proj.views.has('servers')||proj.views.has('proxy');
   const spChanged=proj.views.has('providers')||proj.views.has('rules');
   const fwChangedIds=changedForwardTunnels(baselineState,S);
   let configSaved=false,syncMessage='';
-  deps.setSaving(true,syncRules?(dirty?'保存并同步中…':'同步中…'):'保存中…');
+  deps.setSaving(true,syncRules?(dirty?tt('ui.saveflow.saving_sync'):tt('ui.saveflow.syncing')):tt('ui.saveflow.saving'));
   try{
     if(dirty){
       const r=await deps.fetch(deps.api,{method:'PUT',headers:apiHeaders(deps.token,{'Content-Type':'application/json'}),body:JSON.stringify(S)});
       const d=await r.json();
-      if(!d.ok){deps.toast((d.errors||['未知错误']).join('；'),true);return out;}
+      if(!d.ok){deps.toast((d.errors||[tt('ui.common.unknown_error')]).join(tt('ui.common.list_sep')),true);return out;}
       deps.commitConfig(cloneData(S));configSaved=true;out.configSaved=true;
     }
     if(syncRules){
@@ -992,26 +1003,26 @@ async function saveFlow(snap,deps,forceRulesSync){
       try{
         const pr=await deps.fetch('/api/cc-sync-preview',{method:'POST',headers:apiHeaders(deps.token,{'Content-Type':'application/json'}),body:JSON.stringify({roles:ccRoles})});
         const pv=await pr.json();
-        if(!pv.ok){go=false;deps.toast('同步预览失败：'+(pv.msg||'未知错误')+'，未写入',true);}
+        if(!pv.ok){go=false;deps.toast(tt('ui.saveflow.preview_fail',{msg:pv.msg||tt('ui.common.unknown_error')}),true);}
         else if(!pv.already)go=await deps.confirmSync(pv);
-      }catch(e){go=false;deps.toast('同步预览失败：'+e.message+'，未写入',true);}
+      }catch(e){go=false;deps.toast(tt('ui.saveflow.preview_fail',{msg:e.message}),true);}
       if(!go){
-        if(configSaved){deps.stampSaved(deps.now());deps.toast('网关配置已保存；已取消写入 Claude Code（同步仍标记未保存）');}
-        else deps.toast('已取消，未写入 Claude Code');
+        if(configSaved){deps.stampSaved(deps.now());deps.toast(tt('ui.saveflow.saved_cc_cancelled'));}
+        else deps.toast(tt('ui.saveflow.cc_cancelled'));
         out.cancelled=true;return out;
       }
       const r=await deps.fetch('/api/setup-claude-code',{method:'POST',headers:apiHeaders(deps.token,{'Content-Type':'application/json'}),body:JSON.stringify({roles:ccRoles})});
       const d=await r.json();
-      if(!d.ok){deps.toast((configSaved?'网关配置已保存，但 ':'')+'同步失败：'+(d.msg||'未知错误'),true);return out;}
-      deps.commitRoles(cloneData(ccRoles));syncMessage=d.msg||'已同步到 Claude Code';out.syncOk=true;
+      if(!d.ok){deps.toast((configSaved?tt('ui.saveflow.saved_but'):'')+tt('ui.saveflow.sync_fail',{msg:d.msg||tt('ui.common.unknown_error')}),true);return out;}
+      deps.commitRoles(cloneData(ccRoles));syncMessage=d.msg||tt('ui.saveflow.synced');out.syncOk=true;
     }
     deps.stampSaved(deps.now());
     if(configSaved){
-      const names=[...proj.views].map(v=>deps.viewTitle(v)).join('、');
-      let msg=`已保存 ${proj.total} 项（${names}）`;
-      if(mpChanged&&spChanged)msg+=' — 代理需重新连接（服务器页「重新连接」或菜单栏），AI 路由已自动重载';
-      else if(mpChanged)msg+=' — 点击服务器页「重新连接」或菜单栏生效';
-      else if(spChanged)msg+=' — AI 路由已自动重载';
+      const names=[...proj.views].map(v=>deps.viewTitle(v)).join(tt('ui.common.name_sep'));
+      let msg=tt('ui.saveflow.saved',{n:proj.total,names});
+      if(mpChanged&&spChanged)msg+=tt('ui.saveflow.effect_both');
+      else if(mpChanged)msg+=tt('ui.saveflow.effect_mp');
+      else if(spChanged)msg+=tt('ui.saveflow.effect_sp');
       if(fwChangedIds.length&&deps.reconnectForwards){
         // 多活守卫重连：代理隧道保持 v0.8 语义（保存前后同身份的当前
         // 隧道才触发）；运行中的转发会话按 tunnel_id 定向守卫——原生侧
@@ -1028,13 +1039,13 @@ async function saveFlow(snap,deps,forceRulesSync){
             deps.reconnectForwards(id);
           }
         });
-        msg+='；端口转发变更已触发自动重连';
+        msg+=tt('ui.saveflow.effect_fw');
       }
       if(syncMessage)msg+='；'+syncMessage;
       deps.toast(msg);
     }else deps.toast(syncMessage);
   }catch(e){
-    deps.toast((configSaved?'配置已保存，后续操作失败：':'保存失败：')+e.message,true);
+    deps.toast((configSaved?tt('ui.saveflow.saved_then_fail'):tt('ui.saveflow.save_fail'))+e.message,true);
   }finally{
     deps.setSaving(false);
   }
@@ -1062,7 +1073,7 @@ const VIEWS={
   servers:{group:'代理',title:'服务器',sub:'远程服务器与其上的服务',icon:'server'},
   proxy:{group:'代理',title:'网络设置',sub:'端口与抓包',icon:'globe'},
   system:{group:'系统',title:'系统选项',sub:'防睡眠与登录启动',icon:'sliders-horizontal'},
-  quickstart:{group:'AI 路由',title:'快速接入',sub:'厂商 Key → 多 Agent 自动配置',readOnly:true,icon:'zap'},
+  quickstart:{group:'AI 路由',title:'快速接入',sub:'厂商 Key · 多 Agent 接入',readOnly:true,icon:'zap'},
   providers:{group:'AI 路由',title:'供应商',sub:'后端接入与凭证',icon:'share-2'},
   rules:{group:'AI 路由',title:'Claude Code 同步',sub:'角色模型映射与同步',icon:'list-todo'},
   usage:{group:'AI 路由',title:'运行统计',sub:'缓存命中与用量分析',readOnly:true,icon:'bar-chart-3'},
@@ -1094,6 +1105,8 @@ const ICONS={
 };
 function icon(name,size=16){return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]||''}</svg>`;}
 const NAV_ORDER=['代理','AI 路由','系统'];
+// 分组显示名走键（数据键仍是 zh 分组串——与 VIEWS.group 对齐）
+const NAV_GROUP_KEY={'代理':'proxy','AI 路由':'ai','系统':'system'};
 // 功能性图标（密码可见性 / 文件选择 / 复制）：几何不变，统一过单笔触语言
 const eyeOpen='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5z"/><circle cx="12" cy="12" r="2.5"/></svg>';
 const eyeOff='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6 0 9.5 5 9.5 5a16 16 0 0 1-2.3 2.7M6.1 6.1A16 16 0 0 0 2.5 12s3.5 5 9.5 5a10.9 10.9 0 0 0 4-.7M3 3l18 18"/></svg>';
@@ -1117,7 +1130,7 @@ function collectAndRecompute(){collect();recomputeDirty();}
 function captureBaseline(saved){
   baselineState=cloneData(S);baselineRoles=cloneData(ccRoles);
   dirty=false;dirtyViews.clear();dirtyCounts.clear();
-  if(saved)lastSavedAt=new Date().toLocaleTimeString('zh-CN');
+  if(saved)lastSavedAt=new Date().toLocaleTimeString(I18N.lang==='en'?'en-US':'zh-CN');
   updateStatus();notifyNative();
 }
 function discardAll(){
@@ -1125,15 +1138,15 @@ function discardAll(){
   S=normalizeState(cloneData(baselineState));ccRoles=cloneData(baselineRoles);credModeOverride='';
   activeTunnel=Math.min(activeTunnel,Math.max(0,S.mp.servers.length-1));
   if(!S.sp.providers[activeProvider])activeProvider=Object.keys(S.sp.providers)[0]||'';
-  recomputeDirty();renderNav();renderView();toast(`已放弃 ${count} 项改动`);
+  recomputeDirty();renderNav();renderView();toast(tt('ui.pending.discarded',{n:count}));
 }
 function refreshPendingBar(){
   const bar=document.getElementById('pending-bar');
   const count=totalDirtyCount();bar.hidden=!dirty;
   if(!dirty)return;
-  document.getElementById('pending-title').textContent=`${count} 项待保存`;
+  document.getElementById('pending-title').textContent=tt('ui.pending.title',{n:count});
   document.getElementById('pending-items').innerHTML=[...dirtyViews].map(view=>
-    `<button class="pending-item" onclick="setView('${view}')">${esc(VIEWS[view].title)} · ${dirtyCounts.get(view)} 项</button>`
+    `<button class="pending-item" onclick="setView('${view}')">${esc(tt('ui.nav.'+view+'.title'))}${tt('ui.pending.item_suffix',{n:dirtyCounts.get(view)})}</button>`
   ).join('');
   document.getElementById('pending-save-btn').disabled=saving;
 }
@@ -1144,29 +1157,29 @@ function refreshSaveBtn(){
   btn.classList.toggle('dirty',dirty&&!view.readOnly);
   // 快速接入：readOnly 但有专属主操作——头部按钮即全站「保存」位（CC 页先例）
   if(activeView==='quickstart'){
-    btn.textContent=qs.busy?'配置中…':'保存供应商并配置 Agent';
+    btn.textContent=qs.busy?tt('ui.btn.configuring'):tt('ui.btn.save_and_setup');
     btn.disabled=!!qs.busy;
     btn.title='';
     return;
   }
-  if(view.readOnly){btn.textContent='刷新';btn.disabled=false;btn.title=`刷新${view.title}`;return;}
+  if(view.readOnly){btn.textContent=tt('ui.btn.refresh');btn.disabled=false;btn.title=tt('ui.btn.refresh_title',{title:tt('ui.nav.'+activeView+'.title')});return;}
   const count=totalDirtyCount(),crossPage=dirtyViews.size>1||(dirty&&!dirtyViews.has(activeView));
   if(activeView==='rules'){
-    btn.textContent=dirty?(crossPage?`保存全部并同步 · ${count} 项`:`保存并同步 · ${count} 项`):'同步到 Claude Code';
+    btn.textContent=dirty?(crossPage?tt('ui.btn.save_all_sync',{n:count}):tt('ui.btn.save_sync',{n:count})):tt('ui.btn.sync_cc');
     btn.disabled=false;
   }else{
-    btn.textContent=dirty?(crossPage?`保存全部 · ${count} 项`:`保存更改 · ${count} 项`):'保存更改';
+    btn.textContent=dirty?(crossPage?tt('ui.btn.save_all',{n:count}):tt('ui.btn.save_n',{n:count})):tt('ui.btn.save');
     btn.disabled=!dirty;
   }
   btn.title='';
 }
 function updateStatus(){
   const el=document.getElementById('status-left');
-  if(dirty){el.textContent=`● ${totalDirtyCount()} 项未保存 · ${dirtyViews.size} 个页面`;el.classList.add('dirty');}
-  else if(lastSavedAt){el.textContent='已保存 · '+lastSavedAt;el.classList.remove('dirty');}
-  else{el.textContent='就绪';el.classList.remove('dirty');}
+  if(dirty){el.textContent=tt('ui.status.dirty',{n:totalDirtyCount(),m:dirtyViews.size});el.classList.add('dirty');}
+  else if(lastSavedAt){el.textContent=tt('ui.status.saved_at',{time:lastSavedAt});el.classList.remove('dirty');}
+  else{el.textContent=tt('ui.status.ready');el.classList.remove('dirty');}
   const hint=document.getElementById('shortcut-hint');
-  hint.textContent=dirty?'⌘S 保存全部':(activeView==='quickstart'?'⌘S 应用 · ⌘R 刷新':(VIEWS[activeView]&&VIEWS[activeView].readOnly?'⌘R 刷新':'⌘S 保存'));
+  hint.textContent=dirty?tt('ui.hint.save_all'):(activeView==='quickstart'?tt('ui.hint.qs'):(VIEWS[activeView]&&VIEWS[activeView].readOnly?tt('ui.hint.refresh'):tt('ui.hint.save')));
   refreshPendingBar();refreshSaveBtn();
 }
 
@@ -1175,7 +1188,7 @@ function cdel(btn,fn){
   if(btn.dataset.cf==='1'){btn.dataset.cf='';fn();return;}
   btn.dataset.cf='1';
   btn._oh=btn.innerHTML;
-  if(!btn.classList.contains('btn-icon'))btn.innerHTML='确认删除？';
+  if(!btn.classList.contains('btn-icon'))btn.innerHTML=tt('ui.btn.confirm_delete');
   btn.classList.add('btn-confirm');
   setTimeout(()=>{if(btn.dataset.cf==='1'){btn.dataset.cf='';btn.innerHTML=btn._oh;btn.classList.remove('btn-confirm');}},3000);
 }
@@ -1184,10 +1197,10 @@ function cdel(btn,fn){
 function renderNav(){
   let html='';
   for(const group of NAV_ORDER){
-    html+=`<div class="nav-group"><div class="nav-label">${group}</div><nav class="side-nav" aria-label="${group}">`;
+    html+=`<div class="nav-group"><div class="nav-label">${tt('ui.nav.group.'+NAV_GROUP_KEY[group])}</div><nav class="side-nav" aria-label="${tt('ui.nav.group.'+NAV_GROUP_KEY[group])}">`;
     html+=Object.entries(VIEWS).filter(([_,v])=>v.group===group).map(([id,v])=>
       `<button class="nav-item" data-view="${id}" ${id===activeView?'aria-current="page"':''} onclick="setView('${id}')">
-        ${icon(v.icon,16)}<span class="nav-text"><span>${v.title}</span><span class="nav-sub">${v.sub||''}</span></span></button>`).join('');
+        ${icon(v.icon,16)}<span class="nav-text"><span>${tt('ui.nav.'+id+'.title')}</span><span class="nav-sub">${tt('ui.nav.'+id+'.sub')}</span></span></button>`).join('');
     html+=`</nav></div>`;
   }
   document.getElementById('nav-container').innerHTML=html;
@@ -1204,8 +1217,8 @@ function setView(id){
 function renderView(){
   const vp=document.getElementById('viewport');vp.innerHTML='';
   const v=VIEWS[activeView]||VIEWS.servers;
-  document.getElementById('page-title').textContent=v.title;
-  document.getElementById('page-subtitle').textContent=v.sub||'';
+  document.getElementById('page-title').textContent=tt('ui.nav.'+activeView+'.title');
+  document.getElementById('page-subtitle').textContent=tt('ui.nav.'+activeView+'.sub');
   updateStatus();
   vp.innerHTML=v.render();
   vp.firstElementChild.classList.add('is-active');
@@ -1245,9 +1258,45 @@ function scheduleViewRefresh(view,refresh){
 }
 
 // ── load / save ───────────────────────────────────────
+// ── 语言切换（ADR-012 M2）：PUT baseline+language → 原地换语重渲染，
+// 不 reload——未保存的表单内容不丢。菜单栏经 _on_mp_saved 同拍切换。──
+function resolveLangJS(pref){
+  if(pref==='zh-CN'||pref==='en')return pref;
+  const l=(navigator.language||'').toLowerCase();
+  return l.startsWith('zh')?'zh-CN':l.startsWith('en')?'en':'zh-CN';
+}
+function applyStaticI18n(){
+  document.documentElement.lang=I18N.lang;
+  document.title=tt('ui.chrome.title');
+  const sub=document.querySelector('.brand-subtitle');if(sub)sub.textContent=tt('ui.chrome.subtitle');
+  const note=document.querySelector('.priority-note');if(note)note.innerHTML=tt('ui.chrome.priority_note');
+  const cb=document.querySelector('.sidebar-ai-helper button');if(cb)cb.textContent=tt('footer.copy_instructions');
+  const sb=document.getElementById('save-btn');if(sb&&!sb.textContent)sb.textContent=tt('ui.btn.save');
+  const pt=document.getElementById('pending-title');if(pt)pt.textContent=tt('ui.pending.title_default');
+  const pd=document.getElementById('pending-discard-btn');if(pd)pd.textContent=tt('ui.pending.discard_all');
+  const ps=document.getElementById('pending-save-btn');if(ps)ps.textContent=tt('ui.pending.save_all');
+  const sl=document.getElementById('status-left');if(sl&&!sl.textContent)sl.textContent=tt('ui.status.ready');
+  const sh=document.getElementById('shortcut-hint');if(sh&&!sh.textContent)sh.textContent=tt('ui.hint.save');
+  const tm=document.getElementById('toast-msg');if(tm)tm.textContent=tt('ui.chrome.saved');
+}
+async function setLanguagePref(v){
+  if(!['auto','zh-CN','en'].includes(v))return;
+  try{
+    const payload={mp:{...cloneData(baselineState.mp),language:v},sp:cloneData(baselineState.sp)};
+    const r=await fetch(API,{method:'PUT',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify(payload)});
+    const d=await r.json();
+    if(!d.ok){toast(tt('ui.system.language_save_fail'),true);return;}
+    S.mp.language=v;baselineState.mp.language=v;
+    I18N.lang=resolveLangJS(v);
+    applyStaticI18n();renderNav();renderView();recomputeDirty();
+    toast(tt('ui.system.language_applied'));
+  }catch(e){toast(tt('ui.system.language_save_fail')+e.message,true);}
+}
+
 async function load(){
+  applyStaticI18n();
   try{const r=await fetch(API,{headers:apiHeaders(null)});S=normalizeState(await r.json());}
-  catch(e){document.getElementById('viewport').innerHTML='<div class="view is-active" style="padding:40px;color:var(--muted)">加载失败：'+esc(e.message)+'</div>';return;}
+  catch(e){document.getElementById('viewport').innerHTML='<div class="view is-active" style="padding:40px;color:var(--muted)">'+tt('ui.chrome.load_fail',{msg:esc(e.message)})+'</div>';return;}
   // #51：模板装填 best-effort，不阻塞主状态（fetch 属 L2）
   fetch('/api/provider-templates',{headers:apiHeaders(null)})
     .then(r=>r.ok?r.json():null)
@@ -1292,24 +1341,24 @@ function ccConfirmSync(pv){
     const ruleRows=ccRuleRows(pv);
     const unlisted=ccUnlistedNote(pv);
     const ruleSec=ruleRows.length?`
-      <div class="cc-modal-sec">同步网关 tier 路由规则 <code class="mono">~/.suanpan.yaml</code>（${ruleRows.length} 条）</div>
-      <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>规则前缀</th><th>操作</th><th>原目标</th><th>新目标</th></tr></thead>
+      <div class="cc-modal-sec">${tt('ui.cc.sync_rules',{n:ruleRows.length})}</div>
+      <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>${tt('ui.cc.th_prefix')}</th><th>${tt('ui.cc.th_action')}</th><th>${tt('ui.cc.th_from')}</th><th>${tt('ui.cc.th_to')}</th></tr></thead>
         <tbody>${ruleRows.map(r=>`<tr><td class="mono">${esc(r.prefix)}</td><td><span class="cc-badge cc-badge-${esc(r.badge)}">${esc(r.badge)}</span></td><td class="mono">${esc(r.old)}</td><td class="mono">${esc(r.new)}</td></tr>`).join('')}</tbody></table></div>`:'';
     const warnSec=unlisted?`<p class="cc-modal-backup" style="color:var(--warn)">${esc(unlisted)}</p>`:'';
     const ov=document.createElement('div');
     ov.className='cc-modal-overlay';
     ov.innerHTML=`<div class="cc-modal" role="dialog" aria-modal="true" aria-labelledby="cc-modal-title" aria-describedby="cc-modal-target">
-      <h3 id="cc-modal-title">写入 Claude Code 配置</h3>
-      <p class="cc-modal-target" id="cc-modal-target">目标文件 <code class="mono">${esc(pv.target)}</code>${pv.exists?'':'（不存在，将新建）'}</p>
-      <div class="cc-modal-sec">将写入 ${rows.length} 项变更</div>
-      <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>环境变量</th><th>操作</th><th>原值</th><th>新值</th></tr></thead>
+      <h3 id="cc-modal-title">${tt('ui.cc.write_title')}</h3>
+      <p class="cc-modal-target" id="cc-modal-target">${tt('ui.cc.target_file')} <code class="mono">${esc(pv.target)}</code>${pv.exists?'':tt('ui.cc.not_exist_create')}</p>
+      <div class="cc-modal-sec">${tt('ui.cc.write_n',{n:rows.length})}</div>
+      <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>${tt('ui.cc.th_env')}</th><th>${tt('ui.cc.th_action')}</th><th>${tt('ui.cc.th_old')}</th><th>${tt('ui.cc.th_new')}</th></tr></thead>
         <tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.key)}</td><td><span class="cc-badge cc-badge-${esc(r.badge)}">${esc(r.badge)}</span></td><td class="mono">${esc(r.old)}</td><td class="mono">${esc(r.new)}</td></tr>`).join('')}</tbody></table></div>
       ${ruleSec}${warnSec}
       <p class="cc-modal-backup">${esc(ccBackupNote(pv))}</p>
-      <p class="cc-modal-hint">写入经原子替换（0600），重启 Claude Code 后生效</p>
+      <p class="cc-modal-hint">${tt('ui.cc.hint_cc')}</p>
       <div class="cc-modal-actions">
-        <button type="button" class="btn" id="cc-modal-cancel">取消</button>
-        <button type="button" class="btn btn-primary" id="cc-modal-ok">确认写入</button>
+        <button type="button" class="btn" id="cc-modal-cancel">${tt('ui.common.cancel_action')}</button>
+        <button type="button" class="btn btn-primary" id="cc-modal-ok">${tt('ui.cc.confirm_write')}</button>
       </div></div>`;
     const done=ok=>{document.removeEventListener('keydown',onKey,true);ov.remove();if(prev&&prev.focus)prev.focus();resolve(ok);};
     const onKey=e=>{
@@ -1336,7 +1385,7 @@ async function saveAll(forceRulesSync){
     {
       fetch:(...a)=>fetch(...a),api:API,token:'',
       confirmSync:ccConfirmSync,toast,gotoFirstError,
-      viewTitle:v=>(VIEWS[v]||{}).title||v,
+      viewTitle:v=>tt('ui.nav.'+v+'.title'),
       commitConfig:st=>{baselineState=st;},
       commitRoles:rl=>{baselineRoles=rl;},
       stampSaved:at=>{lastSavedAt=at;},
@@ -1345,7 +1394,7 @@ async function saveAll(forceRulesSync){
       // 执行——浏览器直开无桥接时 no-op；tunnelId 定向转发会话，null=代理）
       reconnectForwards:(tunnelId)=>nativeSend('reconnectProxy',
         {if_connected:true,...(tunnelId?{tunnel_id:tunnelId}:{})}),
-      now:()=>new Date().toLocaleTimeString('zh-CN'),
+      now:()=>new Date().toLocaleTimeString(I18N.lang==='en'?'en-US':'zh-CN'),
     },
     forceRulesSync);
   recomputeDirty();  // 覆盖取消/失败/成功全部出口的状态栏与 pending bar 刷新
@@ -1361,20 +1410,20 @@ function toast(msg,err){
 }
 function toggleSwitch(el){
   const on=el.getAttribute('aria-checked')!=='true';el.setAttribute('aria-checked',on);
-  const lbl=el.parentElement.querySelector('.switch-label');if(lbl)lbl.textContent=on?'已启用':'已停用';collectAndRecompute();
+  const lbl=el.parentElement.querySelector('.switch-label');if(lbl)lbl.textContent=tt(on?'ui.common.on':'ui.common.off');collectAndRecompute();
 }
 
 // ── tunnel view (master-detail only) ──────────────────
 function fwRows(t){
   const fs=forwardsOf(t);
-  if(!fs.length)return `<tr class="fw-empty"><td colspan="5">${icon('arrow-right-left',20)}暂无端口转发规则——点「+ 添加转发」把远程端口映射到本机</td></tr>`;
+  if(!fs.length)return `<tr class="fw-empty"><td colspan="5">${icon('arrow-right-left',20)}${tt('ui.fw.empty')}</td></tr>`;
   return fs.map((f,fi)=>`<tr data-fwr="${fi}">
-    <td><input class="control mono" data-fwf="local_port" type="number" min="1" max="65535" value="${esc(f.local_port||'')}" placeholder="9000" aria-label="转发 ${fi+1} 本地端口"></td>
-    <td><input class="control mono" data-fwf="remote_host" value="${esc(f.remote_host||'')}" placeholder="127.0.0.1" aria-label="转发 ${fi+1} 远程地址"></td>
-    <td><input class="control mono" data-fwf="remote_port" type="number" min="1" max="65535" value="${esc(f.remote_port||'')}" placeholder="8000" aria-label="转发 ${fi+1} 远程端口"></td>
-    <td><button class="switch" data-fwf="enabled" role="switch" aria-checked="${f.enabled!==false}" aria-label="转发 ${fi+1} 启用映射" onclick="toggleSwitch(this)"></button></td>
-    <td><div class="fw-actions"><button class="btn btn-sm" aria-label="测试转发 ${fi+1}" onclick="testForward(${fi},this)">测试</button>
-      <button class="btn btn-sm btn-danger" aria-label="删除转发 ${fi+1}" onclick="removeForward(${fi})">删除</button>
+    <td><input class="control mono" data-fwf="local_port" type="number" min="1" max="65535" value="${esc(f.local_port||'')}" placeholder="9000" aria-label="${tt('ui.fw.aria_local',{n:fi+1})}"></td>
+    <td><input class="control mono" data-fwf="remote_host" value="${esc(f.remote_host||'')}" placeholder="127.0.0.1" aria-label="${tt('ui.fw.aria_remote_host',{n:fi+1})}"></td>
+    <td><input class="control mono" data-fwf="remote_port" type="number" min="1" max="65535" value="${esc(f.remote_port||'')}" placeholder="8000" aria-label="${tt('ui.fw.aria_remote_port',{n:fi+1})}"></td>
+    <td><button class="switch" data-fwf="enabled" role="switch" aria-checked="${f.enabled!==false}" aria-label="${tt('ui.fw.aria_enabled',{n:fi+1})}" onclick="toggleSwitch(this)"></button></td>
+    <td><div class="fw-actions"><button class="btn btn-sm" aria-label="${tt('ui.fw.aria_test',{n:fi+1})}" onclick="testForward(${fi},this)">${tt('ui.fw.test')}</button>
+      <button class="btn btn-sm btn-danger" aria-label="${tt('ui.fw.aria_delete',{n:fi+1})}" onclick="removeForward(${fi})">${tt('ui.btn.delete')}</button>
       <span class="fw-status" id="fw-status-${fi}"></span></div></td>
   </tr>`).join('');
 }
@@ -1391,16 +1440,16 @@ function serverListRows(ts){
     const fw=forwardsOf(tn),fwOn=fw.filter(f=>f.enabled!==false).length;
     const n=nfsOf(tn),nfsOn=!!n&&n.enabled===true;
     const mountCount=nfsOn?(n.mounts||[]).length:0;
-    return `<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectServer(${i})"><span class="dot ${i===curIdx?'':'off'}" title="${i===curIdx?'代理服务器（SOCKS5 上游）':'非代理服务器（可启动端口转发）'}"></span><span><strong>${esc(tn.name||sshOf(tn).host||'Server '+(i+1))}</strong>${tn.forward_running?'<span class="fw-badge">转发中</span>':''}<span class="sub">${sshOf(tn).host?esc((sshOf(tn).user?sshOf(tn).user+'@':'')+sshOf(tn).host+(sshOf(tn).port&&sshOf(tn).port!==22?':'+sshOf(tn).port:'')):'（需填写地址）'}</span><span class="srv-tags">${i===curIdx?`<span class="tag proxy">${icon('bolt',12)}代理</span>`:''}${fw.length?`<span class="tag ${fwOn?'on':''}">${icon('arrow-right-left',12)}转发 ${fwOn}/${fw.length}</span>`:''}${nfsOn?`<span class="tag ${mountCount?'on':''}">${icon('hard-drive',12)}NFS ×${mountCount}</span>`:''}</span></span></button>`;
+    return `<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectServer(${i})"><span class="dot ${i===curIdx?'':'off'}" title="${i===curIdx?tt('ui.servers.dot_proxy'):tt('ui.servers.dot_plain')}"></span><span><strong>${esc(tn.name||sshOf(tn).host||'Server '+(i+1))}</strong>${tn.forward_running?'<span class="fw-badge">'+tt('ui.servers.fw_running')+'</span>':''}<span class="sub">${sshOf(tn).host?esc((sshOf(tn).user?sshOf(tn).user+'@':'')+sshOf(tn).host+(sshOf(tn).port&&sshOf(tn).port!==22?':'+sshOf(tn).port:'')):tt('ui.servers.need_addr')}</span><span class="srv-tags">${i===curIdx?`<span class="tag proxy">${icon('bolt',12)}${tt('ui.servers.tag_proxy')}</span>`:''}${fw.length?`<span class="tag ${fwOn?'on':''}">${icon('arrow-right-left',12)}${tt('ui.servers.tag_fw',{on:fwOn,total:fw.length})}</span>`:''}${nfsOn?`<span class="tag ${mountCount?'on':''}">${icon('hard-drive',12)}NFS ×${mountCount}</span>`:''}</span></span></button>`;
   }).join('');
 }
 function serversHTML(){
   const ts=S.mp.servers||[];
   if(!ts.length)return `<section class="view">
-    <p class="module-intro">管理远程服务器与其上的服务（SSH 隧道 / NFS / OpenVPN 占位）。变更保存后点击菜单栏「重新连接」生效。</p>
+    <p class="module-intro">${tt('ui.servers.intro_empty_list')}</p>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">服务器</h2><span class="count">0 台服务器</span></div>
-      <div class="empty-state">${icon('server',28)}<h2>还没有配置服务器</h2><p>添加 SSH 服务器后，Magic Stack 才能建立代理连接、端口转发与 NFS 挂载。</p><button class="btn btn-primary" onclick="addServer()">+ 添加第一台服务器</button></div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.servers.section')}</h2><span class="count">${tt('ui.servers.count_zero')}</span></div>
+      <div class="empty-state">${icon('server',28)}<h2>${tt('ui.servers.empty_title')}</h2><p>${tt('ui.servers.empty_body')}</p><button class="btn btn-primary" onclick="addServer()">${tt('ui.servers.add_first')}</button></div>
     </div>
   </section>`;
   const t=ts[activeTunnel];
@@ -1414,110 +1463,110 @@ function serversHTML(){
   const nfsOn=n.enabled===true;
   const mountCount=(n.mounts||[]).length;
   return `<section class="view">
-    <p class="module-intro">一台服务器一页配完：连接 / 端口映射 / NFS / OpenVPN 横向 tab 展开（OpenVPN 即将支持）。隧道变更保存后需「重新连接」生效（端口转发保存后自动重连）；「检测服务」探测已保存配置（SSH 可达 / NFS 状态 / OpenVPN 安装态），转发行的「测试」探测当前填写值；NFS「挂载 / 卸载」即时生效（无需保存）。</p>
+    <p class="module-intro">${tt('ui.servers.intro_detail')}</p>
     <div class="panel"><div class="md-layout">
       <div class="md-master">
-        <div class="section-bar"><h2 class="section-title">服务器</h2><span class="count">${ts.length} 台</span></div>
+        <div class="section-bar"><h2 class="section-title">${tt('ui.servers.section')}</h2><span class="count">${tt('ui.servers.count',{n:ts.length})}</span></div>
         <div class="md-list">${serverListRows(ts)}</div>
-        <div class="md-master-footer"><button class="btn" onclick="addServer()">+ 添加服务器</button></div>
+        <div class="md-master-footer"><button class="btn" onclick="addServer()">${tt('ui.servers.add')}</button></div>
       </div>
       <div class="md-detail">
         <div class="detail-bar srv"><div class="detail-title-wrap">
-          <input class="srv-title" data-tf="name" value="${esc(t.name||'')}" placeholder="Server ${activeTunnel+1}" aria-label="服务器名称">
-          <span class="srv-id mono" title="稳定 id（保存时生成，角色与会话引用它）">${esc(t.id||'（尚未保存）')}</span></div>
+          <input class="srv-title" data-tf="name" value="${esc(t.name||'')}" placeholder="Server ${activeTunnel+1}" aria-label="${tt('ui.servers.name_aria')}">
+          <span class="srv-id mono" title="${tt('ui.servers.id_title')}">${esc(t.id||tt('ui.servers.id_pending'))}</span></div>
           <div class="section-actions">
-            ${isCur?'<span class="fw-badge" title="该服务器是代理会话的 SSH 上游（SOCKS5 -D）">✓ 当前代理服务器</span>':(t.id?`<button class="btn btn-sm" aria-label="设为代理服务器 ${esc(tname)}" onclick="setProxyServer()">设为代理服务器</button>`:'')}
-            <button class="btn btn-sm" aria-label="重新连接 ${esc(tname)}" onclick="reconnectProxy(this,'${esc(t.id||'')}')">重新连接</button>
-            <button class="btn btn-sm btn-danger" aria-label="删除服务器 ${esc(tname)}" onclick="cdel(this,function(){removeServer(${activeTunnel})})">删除</button>
+            ${isCur?`<span class="fw-badge" title="${tt('ui.servers.cur_proxy_title')}">✓ ${tt('ui.servers.cur_proxy')}</span>`:(t.id?`<button class="btn btn-sm" aria-label="${tt('ui.servers.make_proxy_aria',{name:esc(tname)})}" onclick="setProxyServer()">${tt('ui.servers.make_proxy')}</button>`:'')}
+            <button class="btn btn-sm" aria-label="${tt('ui.servers.reconnect_aria',{name:esc(tname)})}" onclick="reconnectProxy(this,'${esc(t.id||'')}')">${tt('common.reconnect')}</button>
+            <button class="btn btn-sm btn-danger" aria-label="${tt('ui.servers.delete_aria',{name:esc(tname)})}" onclick="cdel(this,function(){removeServer(${activeTunnel})})">${tt('ui.btn.delete')}</button>
           </div></div>
-        <div class="svc-tabs" role="tablist" aria-label="服务器服务分页">
-          <button class="svc-tab ${activeSvcTab==='conn'?'is-active':''}" data-svc-tab="conn" role="tab" aria-selected="${activeSvcTab==='conn'}" onclick="svcTab('conn')">${icon('plug',16)}连接</button>
-          <button class="svc-tab ${activeSvcTab==='fw'?'is-active':''}" data-svc-tab="fw" role="tab" aria-selected="${activeSvcTab==='fw'}" onclick="svcTab('fw')">${icon('arrow-right-left',16)}端口映射${fw.length?`<span class="svc-tab-count">${fwOn}/${fw.length}</span>`:''}</button>
+        <div class="svc-tabs" role="tablist" aria-label="${tt('ui.servers.tabs_aria')}">
+          <button class="svc-tab ${activeSvcTab==='conn'?'is-active':''}" data-svc-tab="conn" role="tab" aria-selected="${activeSvcTab==='conn'}" onclick="svcTab('conn')">${icon('plug',16)}${tt('ui.servers.tab_conn')}</button>
+          <button class="svc-tab ${activeSvcTab==='fw'?'is-active':''}" data-svc-tab="fw" role="tab" aria-selected="${activeSvcTab==='fw'}" onclick="svcTab('fw')">${icon('arrow-right-left',16)}${tt('menu.group.forward')}${fw.length?`<span class="svc-tab-count">${fwOn}/${fw.length}</span>`:''}</button>
           <button class="svc-tab ${activeSvcTab==='nfs'?'is-active':''}" data-svc-tab="nfs" role="tab" aria-selected="${activeSvcTab==='nfs'}" onclick="svcTab('nfs')">${icon('hard-drive',16)}NFS${nfsOn?`<span class="svc-tab-count">×${mountCount}</span>`:''}</button>
-          <button class="svc-tab ${activeSvcTab==='vpn'?'is-active':''}" data-svc-tab="vpn" role="tab" aria-selected="${activeSvcTab==='vpn'}" onclick="svcTab('vpn')">${icon('shield',16)}OpenVPN<span class="soon">即将支持</span></button>
+          <button class="svc-tab ${activeSvcTab==='vpn'?'is-active':''}" data-svc-tab="vpn" role="tab" aria-selected="${activeSvcTab==='vpn'}" onclick="svcTab('vpn')">${icon('shield',16)}OpenVPN<span class="soon">${tt('ui.common.soon')}</span></button>
         </div>
         <div class="detail-body">
           <div class="svc-pane" data-svc-pane="conn" ${activeSvcTab==='conn'?'':'hidden'}>
-          <div class="form-section"><h3>${icon('key-round',14)}连接</h3>
-            <p class="fw-hint">SSH 端点与认证——全部服务共享这一份连接参数。</p>
+          <div class="form-section"><h3>${icon('key-round',14)}${tt('ui.servers.tab_conn')}</h3>
+            <p class="fw-hint">${tt('ui.servers.conn_hint')}</p>
             <div class="field-grid">
-              <div class="field span-2"><label>SSH 地址（user@host，不含端口）</label><input class="control mono" data-tf="addr" value="${esc(addrStr(t))}" placeholder="ubuntu@my-server.com"></div>
-              <div class="field"><label>SSH 端口</label><input class="control mono" data-tf="ssh_port" type="number" min="1" max="65535" value="${esc(sshOf(t).port||22)}" onblur="validatePort(this)"></div>
-              <div class="field"><label>认证方式</label><select class="select-control" data-tf="auth" onchange="toggleAuth(this)"><option value="key" ${sshOf(t).auth_type!=='password'?'selected':''}>密钥</option><option value="password" ${sshOf(t).auth_type==='password'?'selected':''}>密码</option></select></div>
-              <div class="field" data-auth="key" ${sshOf(t).auth_type==='password'?'style="display:none"':''}><label>密钥路径</label>
+              <div class="field span-2"><label>${tt('ui.servers.f_addr')}</label><input class="control mono" data-tf="addr" value="${esc(addrStr(t))}" placeholder="ubuntu@my-server.com"></div>
+              <div class="field"><label>${tt('ui.servers.f_port')}</label><input class="control mono" data-tf="ssh_port" type="number" min="1" max="65535" value="${esc(sshOf(t).port||22)}" onblur="validatePort(this)"></div>
+              <div class="field"><label>${tt('ui.servers.f_auth')}</label><select class="select-control" data-tf="auth" onchange="toggleAuth(this)"><option value="key" ${sshOf(t).auth_type!=='password'?'selected':''}>${tt('ui.servers.auth_key')}</option><option value="password" ${sshOf(t).auth_type==='password'?'selected':''}>${tt('ui.servers.auth_password')}</option></select></div>
+              <div class="field" data-auth="key" ${sshOf(t).auth_type==='password'?'style="display:none"':''}><label>${tt('ui.servers.f_keypath')}</label>
                 <div class="key-field"><input class="control mono" data-tf="key" value="${esc(sshOf(t).ssh_key||'')}" placeholder="~/.ssh/id_rsa">
-                <button class="key-toggle" type="button" onclick="pickKeyFile(this)" aria-label="选择文件">${folderIcon}</button></div></div>
-              <div class="field span-2" data-auth="password" ${sshOf(t).auth_type!=='password'?'style="display:none"':''}><label>密码</label><input class="control mono" type="password" data-tf="pw" placeholder="${t.has_password?'••••（已保存）':'SSH 密码'}"></div>
+                <button class="key-toggle" type="button" onclick="pickKeyFile(this)" aria-label="${tt('ui.servers.pick_file')}">${folderIcon}</button></div></div>
+              <div class="field span-2" data-auth="password" ${sshOf(t).auth_type!=='password'?'style="display:none"':''}><label>${tt('ui.servers.auth_password')}</label><input class="control mono" type="password" data-tf="pw" placeholder="${t.has_password?tt('ui.servers.pw_saved'):tt('ui.servers.pw_ph')}"></div>
             </div>
-            <div class="toggle-row" style="border:0;padding:12px 0 0"><label>SSH 压缩</label>
-              <div class="switch-line"><span class="switch-label">${sshOf(t).compression!==false?'已启用':'已停用'}</span>
-              <button class="switch" data-tf="compress" role="switch" aria-checked="${sshOf(t).compression!==false}" aria-label="SSH 压缩" onclick="toggleSwitch(this)"></button></div></div>
+            <div class="toggle-row" style="border:0;padding:12px 0 0"><label>${tt('ui.servers.f_compress')}</label>
+              <div class="switch-line"><span class="switch-label">${tt(sshOf(t).compression!==false?'ui.common.on':'ui.common.off')}</span>
+              <button class="switch" data-tf="compress" role="switch" aria-checked="${sshOf(t).compression!==false}" aria-label="${tt('ui.servers.f_compress')}" onclick="toggleSwitch(this)"></button></div></div>
           </div>
           </div>
           <div class="service-card svc-pane" data-svc-pane="fw" ${activeSvcTab==='fw'?'':'hidden'}>
             <div class="service-card-head">
               <div class="svc-icon">${icon('arrow-right-left',16)}</div>
-              <div><div class="svc-title">端口映射</div>
-                <div class="svc-sub">SSH 隧道（-L）· ${fw.length?`${fwOn} 启用 / ${fw.length} 条`:'未配置转发'}</div></div>
+              <div><div class="svc-title">${tt('menu.group.forward')}</div>
+                <div class="svc-sub">${tt('ui.fw.svc_sub')}${fw.length?tt('ui.fw.count',{on:fwOn,total:fw.length}):tt('ui.fw.none')}</div></div>
               <div class="grow"></div>
-              <span class="state-badge ${fwOn?'on':''}">${fwOn?`${fwOn} 条启用`:'未配置'}</span>
-              ${(isCur||t.is_proxy)?'':`<button class="btn btn-sm" aria-label="${t.forward_running?'停止':'启动'}端口转发 ${esc(tname)}" onclick="toggleForwardSession(this,'${esc(t.id||'')}','${t.forward_running?'stop':'start'}')">${t.forward_running?'停止转发':'启动转发'}</button>`}
-              <button class="btn btn-sm" aria-label="检测 SSH 服务 ${esc(tname)}" onclick="svcCheck('ssh',this)" title="探测已保存配置的 SSH 可达性">检测服务</button>
+              <span class="state-badge ${fwOn?'on':''}">${fwOn?tt('ui.fw.badge_on',{n:fwOn}):tt('ui.fw.none')}</span>
+              ${(isCur||t.is_proxy)?'':`<button class="btn btn-sm" aria-label="${tt(t.forward_running?'ui.fw.stop_aria':'ui.fw.start_aria',{name:esc(tname)})}" onclick="toggleForwardSession(this,'${esc(t.id||'')}','${t.forward_running?'stop':'start'}')">${tt(t.forward_running?'ui.fw.stop':'ui.fw.start')}</button>`}
+              <button class="btn btn-sm" aria-label="${tt('ui.svc.check_ssh_aria',{name:esc(tname)})}" onclick="svcCheck('ssh',this)" title="${tt('ui.svc.check_ssh_title')}">${tt('ui.svc.check')}</button>
             </div>
             <div class="probe-result mono" id="probe-ssh"></div>
             <div class="service-card-body">
-              <div class="toggle-row" style="border:0;padding:0 0 12px"><label>随应用启动转发</label>
-                <div class="switch-line"><span class="switch-label">${autostartOf(t)===true?'已启用':'已停用'}</span>
-                <button class="switch" data-tf="fw_autostart" role="switch" aria-checked="${autostartOf(t)===true}" aria-label="随应用启动转发" onclick="toggleSwitch(this)"></button></div></div>
-              <div class="fw-head"><h3>${icon('arrow-right-left',14)}转发实例</h3>
-                <button class="btn btn-sm" onclick="addForward()">+ 添加转发</button></div>
-              <p class="fw-hint">把远程服务器的端口映射到本机 127.0.0.1（ssh -L）；保存后自动重连生效。行内「测试」对当前填写的值做一次 SSH 探测（无需先保存）。多服务器可并行——非代理服务器用本页头「启动转发」独立运行。</p>
+              <div class="toggle-row" style="border:0;padding:0 0 12px"><label>${tt('ui.fw.autostart')}</label>
+                <div class="switch-line"><span class="switch-label">${tt(autostartOf(t)===true?'ui.common.on':'ui.common.off')}</span>
+                <button class="switch" data-tf="fw_autostart" role="switch" aria-checked="${autostartOf(t)===true}" aria-label="${tt('ui.fw.autostart')}" onclick="toggleSwitch(this)"></button></div></div>
+              <div class="fw-head"><h3>${icon('arrow-right-left',14)}${tt('ui.fw.instances')}</h3>
+                <button class="btn btn-sm" onclick="addForward()">+ ${tt('ui.fw.add')}</button></div>
+              <p class="fw-hint">${tt('ui.fw.hint')}</p>
               <table class="rules-table fw-table"><thead><tr>
-                <th style="width:15%">本地端口</th><th style="width:34%">远程地址（服务器侧）</th><th style="width:13%">远程端口</th><th style="width:11%">启用</th><th>操作</th>
+                <th style="width:15%">${tt('ui.fw.th_local')}</th><th style="width:34%">${tt('ui.fw.th_remote_host')}</th><th style="width:13%">${tt('ui.fw.th_remote_port')}</th><th style="width:11%">${tt('ui.fw.th_enabled')}</th><th>${tt('ui.fw.th_actions')}</th>
               </tr></thead><tbody>${fwRows(t)}</tbody></table>
             </div>
           </div>
           <div class="service-card svc-pane ${nfsOn?'':'disabled'}" data-svc-pane="nfs" ${activeSvcTab==='nfs'?'':'hidden'}>
             <div class="service-card-head">
               <div class="svc-icon">${icon('hard-drive',16)}</div>
-              <div><div class="svc-title">NFS 服务</div>
-                <div class="svc-sub">NFSv4 over SSH · 挂载实例 ${nfsOn?`×${mountCount}`:'（未启用）'}</div></div>
+              <div><div class="svc-title">${tt('ui.nfs.svc_title')}</div>
+                <div class="svc-sub">${tt('ui.nfs.svc_sub')}${nfsOn?`×${mountCount}`:tt('ui.nfs.not_enabled_paren')}</div></div>
               <div class="grow"></div>
-              <span class="state-badge ${nfsOn?'on':''}">${nfsOn?`${mountCount} 个挂载`:'未启用'}</span>
-              <div class="switch-line" title="启用 NFS 服务"><span class="switch-label">${n.enabled===true?'已启用':'已停用'}</span>
-                <button class="switch" data-nf="enabled" role="switch" aria-checked="${nfsOn}" aria-label="启用 NFS 服务" onclick="nfsToggleEnabled(this)"></button></div>
-              <button class="btn btn-sm" data-nfs-gated aria-label="检测远程 NFS ${esc(tname)}" onclick="nfsCheckRemote(this)" ${nfsOn?'':'disabled'}>检测服务</button>
-              <button class="btn btn-sm" data-nfs-gated aria-label="一键安装并配置导出 ${esc(tname)}" onclick="nfsSetupRemote(this)" ${nfsOn?'':'disabled'}>一键安装 / 更新导出</button>
+              <span class="state-badge ${nfsOn?'on':''}">${nfsOn?tt('ui.nfs.badge_on',{n:mountCount}):tt('ui.nfs.not_enabled')}</span>
+              <div class="switch-line" title="${tt('ui.nfs.enable_title')}"><span class="switch-label">${tt(n.enabled===true?'ui.common.on':'ui.common.off')}</span>
+                <button class="switch" data-nf="enabled" role="switch" aria-checked="${nfsOn}" aria-label="${tt('ui.nfs.enable_title')}" onclick="nfsToggleEnabled(this)"></button></div>
+              <button class="btn btn-sm" data-nfs-gated aria-label="${tt('ui.nfs.check_aria',{name:esc(tname)})}" onclick="nfsCheckRemote(this)" ${nfsOn?'':'disabled'}>${tt('ui.svc.check')}</button>
+              <button class="btn btn-sm" data-nfs-gated aria-label="${tt('ui.nfs.setup_aria',{name:esc(tname)})}" onclick="nfsSetupRemote(this)" ${nfsOn?'':'disabled'}>${tt('ui.nfs.setup')}</button>
             </div>
             <div class="probe-result mono" id="probe-nfs"></div>
             <div class="service-card-body">
-              <div class="fw-head"><h3>${icon('settings-2',14)}挂载选项</h3></div>
+              <div class="fw-head"><h3>${icon('settings-2',14)}${tt('ui.nfs.options')}</h3></div>
               <div class="field-grid">
-                <div class="field"><label>本地端口（→ 远程 2049）</label><input class="control mono" data-nf="port" type="number" min="1025" max="65535" value="${esc(n.local_port||12049)}" onblur="validatePort(this)"></div>
-                <div class="field"><label>远程 sudo 密码（可选）</label><input class="control mono" type="password" data-nf="sudo_pw" placeholder="密钥登录且未配 NOPASSWD 时填写"></div>
+                <div class="field"><label>${tt('ui.nfs.f_port')}</label><input class="control mono" data-nf="port" type="number" min="1025" max="65535" value="${esc(n.local_port||12049)}" onblur="validatePort(this)"></div>
+                <div class="field"><label>${tt('ui.nfs.f_sudo')}</label><input class="control mono" type="password" data-nf="sudo_pw" placeholder="${tt('ui.nfs.sudo_ph')}"></div>
               </div>
-              <div class="toggle-row"><div><label>属主统一映射</label><p class="panel-hint" style="margin:2px 0 0">服务器与 Mac 用户 UID 不一致时，文件属主统一映射到 SSH 用户（all_squash）</p></div>
-                <div class="switch-line"><span class="switch-label">${n.squash_to_ssh_user===true?'已启用':'已停用'}</span>
-                <button class="switch" data-nf="squash" role="switch" aria-checked="${n.squash_to_ssh_user===true}" aria-label="属主统一映射" onclick="toggleSwitch(this)"></button></div></div>
-              <div class="fw-head" style="margin-top:12px"><h3>${icon('folder-tree',14)}挂载实例</h3>
-                <button class="btn btn-sm" data-nfs-gated onclick="addNfsMount()" ${nfsOn?'':'disabled'}>+ 添加挂载</button></div>
-              <p class="fw-hint">远程路径为服务器绝对路径（一键安装会自动创建并导出）；本地目录留空 = /Volumes/&lt;挂载名&gt;。「挂载 / 卸载」即时生效（无需保存）；改名或改路径须保存后重新挂载。密码登录的服务器自动复用隧道密码执行安装，无需在此填 sudo 密码。</p>
+              <div class="toggle-row"><div><label>${tt('ui.nfs.squash')}</label><p class="panel-hint" style="margin:2px 0 0">${tt('ui.nfs.squash_hint')}</p></div>
+                <div class="switch-line"><span class="switch-label">${tt(n.squash_to_ssh_user===true?'ui.common.on':'ui.common.off')}</span>
+                <button class="switch" data-nf="squash" role="switch" aria-checked="${n.squash_to_ssh_user===true}" aria-label="${tt('ui.nfs.squash')}" onclick="toggleSwitch(this)"></button></div></div>
+              <div class="fw-head" style="margin-top:12px"><h3>${icon('folder-tree',14)}${tt('ui.nfs.instances')}</h3>
+                <button class="btn btn-sm" data-nfs-gated onclick="addNfsMount()" ${nfsOn?'':'disabled'}>+ ${tt('ui.nfs.add')}</button></div>
+              <p class="fw-hint">${tt('ui.nfs.hint')}</p>
               <table class="rules-table fw-table"><thead><tr>
-                <th style="width:16%">挂载名</th><th style="width:28%">远程路径（服务器）</th><th style="width:24%">本地目录</th><th style="width:10%">自动挂载</th><th>状态 / 操作</th>
+                <th style="width:16%">${tt('ui.nfs.th_name')}</th><th style="width:28%">${tt('ui.nfs.th_remote')}</th><th style="width:24%">${tt('ui.nfs.th_local')}</th><th style="width:10%">${tt('ui.nfs.th_auto')}</th><th>${tt('ui.nfs.th_state')}</th>
               </tr></thead><tbody>${nfsMountRows(t)}</tbody></table>
             </div>
           </div>
           <div class="service-card svc-pane disabled" data-svc-pane="vpn" ${activeSvcTab==='vpn'?'':'hidden'}>
             <div class="service-card-head">
               <div class="svc-icon">${icon('shield',16)}</div>
-              <div><div class="svc-title">OpenVPN 服务<span class="soon">即将支持</span></div>
-                <div class="svc-sub">VPN 实例（与 SSH 隧道二选一互斥）</div></div>
+              <div><div class="svc-title">${tt('ui.vpn.svc_title')}<span class="soon">${tt('ui.common.soon')}</span></div>
+                <div class="svc-sub">${tt('ui.vpn.svc_sub')}</div></div>
               <div class="grow"></div>
-              <span class="state-badge">占位</span>
-              <button class="btn btn-sm" aria-label="检测 OpenVPN 服务 ${esc(tname)}" onclick="svcCheck('openvpn',this)" title="探测远程是否已安装 OpenVPN（服务配置即将支持）">检测服务</button>
+              <span class="state-badge">${tt('ui.vpn.placeholder')}</span>
+              <button class="btn btn-sm" aria-label="${tt('ui.vpn.check_aria',{name:esc(tname)})}" onclick="svcCheck('openvpn',this)" title="${tt('ui.vpn.check_title')}">${tt('ui.svc.check')}</button>
             </div>
             <div class="probe-result mono" id="probe-vpn"></div>
-            <div class="vpn-ph"><div>· 服务框架已预留此服务类型——正式版将支持 VPN 实例、经 management interface 的连接控制、与 SSH 隧道的互斥切换</div></div>
+            <div class="vpn-ph"><div>· ${tt('ui.vpn.ph_body')}</div></div>
           </div>
         </div>
       </div>
@@ -1554,7 +1603,7 @@ function setProxyServer(){
   // 赋）→ 置空 id，merge 侧按首条回退解析
   S.mp.proxy_server_id=t.id||'';
   recomputeDirty();renderView();
-  toast(`已标记「${t.name||sshOf(t).host||('Server '+(activeTunnel+1))}」为代理服务器——保存后经「重新连接」生效`);
+  toast(tt('ui.servers.proxy_set',{name:t.name||sshOf(t).host||('Server '+(activeTunnel+1))}));
 }
 function addServer(){collectServers();S.mp.servers.push({id:'',name:'',ssh:{user:'',host:'',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}});activeTunnel=S.mp.servers.length-1;recomputeDirty();renderView();}
 // 删除时保全代理角色：删的是角色服务器（id 匹配）→ 清空 id 真相，靠下标
@@ -1628,89 +1677,90 @@ const SVC_PROBE_ID={ssh:'probe-ssh',openvpn:'probe-vpn'};
 async function svcCheck(kind,btn){
   collectServers();
   const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可检测的服务器',true);return;}
+  if(!(i>=0&&i<ts.length)){toast(tt('ui.svc.no_server'),true);return;}
   const pid=SVC_PROBE_ID[kind]||('probe-'+kind);
   const orig=btn.textContent;
-  btn.disabled=true;btn.textContent='检测中…';
-  _setProbeResult(pid,'检测中…（探测已保存的配置）','var(--muted)');
+  btn.disabled=true;btn.textContent=tt('ui.svc.checking');
+  _setProbeResult(pid,tt('ui.svc.checking_saved'),'var(--muted)');
   const restore=()=>{btn.disabled=false;btn.textContent=orig;};
   try{
     const r=await fetch('/api/server-check',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({index:i,only:kind})});
     const d=await r.json();
     const res=d&&d.results&&d.results[kind];
-    if(!res)_setProbeResult(pid,'❌ '+(d.error||'检测失败'),'var(--danger)');
+    if(!res)_setProbeResult(pid,'❌ '+(d.error||tt('ui.svc.fail')),'var(--danger)');
     else if(kind==='openvpn'){
-      if(!res.ok)_setProbeResult(pid,'❌ '+(res.error||'检测失败'),'var(--danger)');
-      else if(res.installed)_setProbeResult(pid,'✅ 已安装 · '+(res.version||''),'var(--ok)');
-      else _setProbeResult(pid,'❌ 未安装（安装后此处将显示可用入口）','var(--muted)');
+      if(!res.ok)_setProbeResult(pid,'❌ '+(res.error||tt('ui.svc.fail')),'var(--danger)');
+      else if(res.installed)_setProbeResult(pid,'✅ '+tt('ui.svc.installed')+' · '+(res.version||''),'var(--ok)');
+      else _setProbeResult(pid,'❌ '+tt('ui.svc.not_installed'),'var(--muted)');
     }else{
-      if(res.ok)_setProbeResult(pid,'✅ SSH 可达'+(res.latency_ms!=null?' · '+res.latency_ms+'ms':''),'var(--ok)');
-      else _setProbeResult(pid,'❌ '+(res.error||'检测失败'),'var(--danger)');
+      if(res.ok)_setProbeResult(pid,'✅ '+tt('ui.svc.ssh_ok')+(res.latency_ms!=null?' · '+res.latency_ms+'ms':''),'var(--ok)');
+      else _setProbeResult(pid,'❌ '+(res.error||tt('ui.svc.fail')),'var(--danger)');
     }
     restore();
-  }catch(e){_setProbeResult(pid,'❌ 请求失败: '+e.message,'var(--danger)');restore();}
+  }catch(e){_setProbeResult(pid,'❌ '+tt('ui.svc.request_fail',{msg:e.message}),'var(--danger)');restore();}
 }
 // 行内端口转发测试：探测的是表单当前值（collect 后的转发实例行），
 // 未保存的新服务器/新行同样可测——后端 probe_forward 不依赖服务器当前状态。
 async function testForward(fi,btn){
   collectServers();
   const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可测试的服务器',true);return;}
+  if(!(i>=0&&i<ts.length)){toast(tt('ui.fw.no_server'),true);return;}
   const f=((forwardsOf(ts[i]))||[])[fi];
-  if(!f){toast('转发行不存在',true);return;}
+  if(!f){toast(tt('ui.fw.row_missing'),true);return;}
   const st=document.getElementById('fw-status-'+fi);
   const set=(txt,cls)=>{if(!st)return;st.textContent=txt||'';st.className='fw-status'+(cls?' '+cls:'');};
-  btn.disabled=true;btn.textContent='测试中…';set('测试中…','');
+  btn.disabled=true;btn.textContent=tt('ui.fw.testing');set(tt('ui.fw.testing'),'');
   try{
     const r=await fetch('/api/test-forward',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({tunnel:ts[i],forward:f})});
     const d=await r.json();
-    if(d.ok)set('✓ 连通 · '+(d.latency_ms!=null?d.latency_ms+'ms':''),'ok');
-    else set('✗ '+(d.error||'测试失败'),'err');
-  }catch(e){set('✗ 请求失败: '+e.message,'err');}
-  btn.disabled=false;btn.textContent='测试';
+    if(d.ok)set('✓ '+tt('ui.fw.ok')+' · '+(d.latency_ms!=null?d.latency_ms+'ms':''),'ok');
+    else set('✗ '+(d.error||tt('ui.fw.test_fail')),'err');
+  }catch(e){set('✗ '+tt('ui.svc.request_fail',{msg:e.message}),'err');}
+  btn.disabled=false;btn.textContent=tt('ui.fw.test');
 }
 // 重连 = 菜单栏「重新连接」等价动作（Python 端停隧道→重读配置→重启），
 // 经 bridge 触发；tunnelId 定向该隧道的转发会话（多活），缺省 = 代理会话。
 // 浏览器直开设置页时无桥接，回退提示。
 function reconnectProxy(btn,tunnelId){
   if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
-    if(btn){btn.disabled=true;btn.textContent='重连中…';
-      setTimeout(()=>{btn.disabled=false;btn.textContent='重新连接';},4000);}
+    if(btn){btn.disabled=true;btn.textContent=tt('ui.servers.reconnecting');
+      setTimeout(()=>{btn.disabled=false;btn.textContent=tt('common.reconnect');},4000);}
     nativeSend('reconnectProxy',tunnelId?{tunnel_id:tunnelId}:{});
-  }else toast('重新连接需在应用的设置窗内使用');
+  }else toast(tt('ui.bridge.reconnect_native_only'));
 }
 // 多活：非代理隧道的转发会话启停（会话编排归原生侧 coordinator）
 function toggleForwardSession(btn,tunnelId,action){
-  if(!tunnelId){toast('该服务器尚未保存，请先保存再启动转发',true);return;}
+  if(!tunnelId){toast(tt('ui.bridge.save_before_forward'),true);return;}
   if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
     nativeSend('forwardSession',{tunnel_id:tunnelId,action:action==='stop'?'stop':'start'});
     btn.disabled=true;
     setTimeout(()=>{recomputeDirty();renderView();},1200);
-  }else toast('端口转发启停需在应用的设置窗内使用');
+  }else toast(tt('ui.bridge.forward_native_only'));
 }
 
 // ── NFS 服务卡内容（ADR-007；v0.13.0 并入服务器单视图的服务卡）──
-const NFS_STATUS_LABEL={mounted:['已挂载','ok'],mounting:['挂载中…','warn'],
-  unmounting:['卸载中…','warn'],error:['异常','err'],unmounted:['未挂载','muted']};
+const NFS_STATUS_KEY={mounted:'ui.nfs.st_mounted',mounting:'ui.nfs.st_mounting',
+  unmounting:'ui.nfs.st_unmounting',error:'ui.nfs.st_error',unmounted:'ui.nfs.st_unmounted'};
 function nfsMountRows(t){
   const n=nfsOf(t)||{},states=t.nfs_states||{};
   const ms=n.mounts||[];
-  if(!ms.length)return `<tr class="fw-empty"><td colspan="5">${icon('folder-tree',20)}暂无挂载项——点「+ 添加挂载」把远程目录挂到本机</td></tr>`;
+  if(!ms.length)return `<tr class="fw-empty"><td colspan="5">${icon('folder-tree',20)}${tt('ui.nfs.empty')}</td></tr>`;
   return ms.map((m,mi)=>{
     const o=nfsStateOf(states,m.name);
-    const [lbl,cls]=NFS_STATUS_LABEL[o.status]||NFS_STATUS_LABEL.unmounted;
+    const cls={mounted:'ok',mounting:'warn',unmounting:'warn',error:'err',unmounted:'muted'}[o.status]||'muted';
+    const lbl=tt(NFS_STATUS_KEY[o.status]||'ui.nfs.st_unmounted');
     const isErr=o.status==='error';
     return `<tr data-nmr="${mi}">
-      <td><input class="control" data-nmf="name" value="${esc(m.name||'')}" placeholder="data" aria-label="挂载 ${mi+1} 名称"></td>
-      <td><input class="control mono" data-nmf="remote_path" value="${esc(m.remote_path||'')}" placeholder="/data" aria-label="挂载 ${mi+1} 远程路径"></td>
-      <td><input class="control mono" data-nmf="local_dir" value="${esc(m.local_dir||'')}" placeholder="/Volumes/${esc(m.name||'名称')}" aria-label="挂载 ${mi+1} 本地目录"></td>
-      <td><button class="switch" data-nmf="auto" role="switch" aria-checked="${m.auto_mount===true}" aria-label="挂载 ${mi+1} 随应用自动挂载" onclick="toggleSwitch(this)"></button></td>
+      <td><input class="control" data-nmf="name" value="${esc(m.name||'')}" placeholder="data" aria-label="${tt('ui.nfs.aria_name',{n:mi+1})}"></td>
+      <td><input class="control mono" data-nmf="remote_path" value="${esc(m.remote_path||'')}" placeholder="/data" aria-label="${tt('ui.nfs.aria_remote',{n:mi+1})}"></td>
+      <td><input class="control mono" data-nmf="local_dir" value="${esc(m.local_dir||'')}" placeholder="/Volumes/${esc(m.name||tt('ui.nfs.name_default'))}" aria-label="${tt('ui.nfs.aria_local',{n:mi+1})}"></td>
+      <td><button class="switch" data-nmf="auto" role="switch" aria-checked="${m.auto_mount===true}" aria-label="${tt('ui.nfs.aria_auto',{n:mi+1})}" onclick="toggleSwitch(this)"></button></td>
       <td><div class="fw-actions"><span id="nfs-st-${mi}" class="fw-status ${cls}" title="${esc(o.error)}">${lbl}</span>
-        <button class="btn btn-sm" aria-label="挂载 ${esc(m.name||('项'+(mi+1)))}" onclick="nfsMountAction(this,${mi},'mount')">挂载</button>
-        <button class="btn btn-sm" aria-label="卸载 ${esc(m.name||('项'+(mi+1)))}" onclick="nfsMountAction(this,${mi},'unmount')">卸载</button>
-        <button class="btn btn-sm btn-danger" aria-label="删除挂载 ${mi+1}" onclick="removeNfsMount(${mi})">删除</button></div>
+        <button class="btn btn-sm" aria-label="${tt('ui.nfs.aria_mount',{name:esc(m.name||(tt('ui.nfs.item_n',{n:mi+1})))})}" onclick="nfsMountAction(this,${mi},'mount')">${tt('mount.action.mount')}</button>
+        <button class="btn btn-sm" aria-label="${tt('ui.nfs.aria_unmount',{name:esc(m.name||(tt('ui.nfs.item_n',{n:mi+1})))})}" onclick="nfsMountAction(this,${mi},'unmount')">${tt('mount.action.unmount')}</button>
+        <button class="btn btn-sm btn-danger" aria-label="${tt('ui.nfs.aria_delete',{n:mi+1})}" onclick="removeNfsMount(${mi})">${tt('ui.btn.delete')}</button></div>
         <div id="nfs-err-${mi}" class="nfs-errmsg" ${isErr?'':'hidden'}>${isErr?esc(o.error.slice(0,90)):''}</div>
-        <button id="nfs-fix-${mi}" class="btn btn-sm" style="margin-top:4px" ${isErr&&o.fixable==='exports'?'':'hidden'} onclick="nfsFixExports(${mi},this)">修复导出并重挂</button></td>
+        <button id="nfs-fix-${mi}" class="btn btn-sm" style="margin-top:4px" ${isErr&&o.fixable==='exports'?'':'hidden'} onclick="nfsFixExports(${mi},this)">${tt('ui.nfs.fix_exports')}</button></td>
     </tr>`;
   }).join('');
 }
@@ -1718,41 +1768,41 @@ function addNfsMount(){collectServers();const t=S.mp.servers[activeTunnel];if(!t
 function removeNfsMount(mi){collectServers();const t=S.mp.servers[activeTunnel];if(!t)return;const n=nfsOf(t);if(!n||!(n.mounts||[]).length)return;n.mounts.splice(mi,1);recomputeDirty();renderView();}
 async function nfsCheckRemote(btn){
   collectServers();const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可检测的服务器',true);return;}
+  if(!(i>=0&&i<ts.length)){toast(tt('ui.svc.no_server'),true);return;}
   const orig=btn.textContent;
-  btn.disabled=true;btn.textContent='检测中…';_setProbeResult('probe-nfs','检测中…（探测发行版 / NFS 服务 / 2049 监听）','var(--muted)');
+  btn.disabled=true;btn.textContent=tt('ui.svc.checking');_setProbeResult('probe-nfs',tt('ui.nfs.checking_remote'),'var(--muted)');
   const restore=()=>{btn.disabled=false;btn.textContent=orig;};
   try{
     const r=await fetch('/api/nfs-check-remote',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({tunnel:ts[i]})});
     const d=await r.json();
-    if(!d.ok)_setProbeResult('probe-nfs','❌ '+(d.error||'检测失败'),'var(--danger)');
+    if(!d.ok)_setProbeResult('probe-nfs','❌ '+(d.error||tt('ui.svc.fail')),'var(--danger)');
     else{
-      const parts=[`发行版：${d.family}`,
-        `NFS 服务：${d.installed?'已安装':'未安装'}`,
-        `2049 监听：${d.listening?'是':'否'}`,
-        d.exports?'导出表已配置':'导出表未配置'];
+      const parts=[tt('ui.nfs.p_distro',{v:d.family}),
+        tt('ui.nfs.p_installed',{v:d.installed?tt('ui.svc.installed'):tt('ui.nfs.p_not_installed')}),
+        tt('ui.nfs.p_listening',{v:d.listening?tt('ui.common.yes'):tt('ui.common.no')}),
+        d.exports?tt('ui.nfs.p_exports_ok'):tt('ui.nfs.p_exports_missing')];
       _setProbeResult('probe-nfs','✅ '+parts.join(' · '),'var(--ok)');
     }
     restore();
-  }catch(e){_setProbeResult('probe-nfs','❌ 请求失败: '+e.message,'var(--danger)');restore();}
+  }catch(e){_setProbeResult('probe-nfs','❌ '+tt('ui.svc.request_fail',{msg:e.message}),'var(--danger)');restore();}
 }
 async function nfsSetupRemote(btn){
   collectServers();const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可安装的服务器',true);return;}
+  if(!(i>=0&&i<ts.length)){toast(tt('ui.nfs.no_server_install'),true);return;}
   const t=ts[i],n=nfsOf(t)||{};
   const mounts=[...new Set((n.mounts||[]).map(m=>(m.remote_path||'').trim()).filter(p=>p&&p.startsWith('/')))];
-  if(!mounts.length){_setProbeResult('probe-nfs','❌ 请先填写至少一条有效的远程绝对路径','var(--danger)');return;}
+  if(!mounts.length){_setProbeResult('probe-nfs','❌ '+tt('ui.nfs.need_path'),'var(--danger)');return;}
   const pwEl=document.querySelector('.md-detail [data-nf="sudo_pw"]');
   const sudo_pw=pwEl?pwEl.value:'';
-  btn.disabled=true;btn.textContent='安装中…';_setProbeResult('probe-nfs','安装中…（远程装包 + 写导出表，最长约 5 分钟）','var(--muted)');
+  btn.disabled=true;btn.textContent=tt('ui.nfs.installing');_setProbeResult('probe-nfs',tt('ui.nfs.installing_hint'),'var(--muted)');
   try{
     const r=await fetch('/api/nfs-setup-remote',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),
       body:JSON.stringify({tunnel:t,mounts,squash:n.squash_to_ssh_user===true,sudo_password:sudo_pw})});
     const d=await r.json();
-    if(d.ok){_setProbeResult('probe-nfs','✅ 远程 NFS 已就绪'+(d.installed?'（本次完成了安装）':'')+'——现在可以点「挂载」','var(--ok)');if(pwEl)pwEl.value='';}
-    else _setProbeResult('probe-nfs','❌ '+(d.error||'安装失败')+(d.stage?`（阶段：${d.stage==='install'?'安装软件包':d.stage==='apply'?'应用导出':'前置检查'}）`:''),'var(--danger)');
-  }catch(e){_setProbeResult('probe-nfs','❌ 请求失败: '+e.message,'var(--danger)');}
-  btn.disabled=false;btn.textContent='一键安装 / 更新导出';
+    if(d.ok){_setProbeResult('probe-nfs','✅ '+tt(d.installed?'ui.nfs.ready_installed':'ui.nfs.ready'),'var(--ok)');if(pwEl)pwEl.value='';}
+    else _setProbeResult('probe-nfs','❌ '+(d.error||tt('ui.nfs.install_fail'))+(d.stage?tt('ui.nfs.stage',{stage:tt(d.stage==='install'?'ui.nfs.stage_install':d.stage==='apply'?'ui.nfs.stage_apply':'ui.nfs.stage_precheck')}):''),'var(--danger)');
+  }catch(e){_setProbeResult('probe-nfs','❌ '+tt('ui.svc.request_fail',{msg:e.message}),'var(--danger)');}
+  btn.disabled=false;btn.textContent=tt('ui.nfs.setup');
 }
 // ── 挂载运行态可见性（2026-09-18 真机案例）：分类(fixable)→投影→
 // /api/state 装饰→此处定向轮询——设置窗曾是"不刷新的快照"，错误永远
@@ -1780,7 +1830,8 @@ function nfsUpdateStatusCells(){
   ((nfsOf(t)||{}).mounts||[]).forEach((m,mi)=>{
     if(!m||!m.name)return;
     const o=nfsStateOf(states,m.name);
-    const [lbl,cls]=NFS_STATUS_LABEL[o.status]||NFS_STATUS_LABEL.unmounted;
+    const cls={mounted:'ok',mounting:'warn',unmounting:'warn',error:'err',unmounted:'muted'}[o.status]||'muted';
+    const lbl=tt(NFS_STATUS_KEY[o.status]||'ui.nfs.st_unmounted');
     const stEl=document.getElementById('nfs-st-'+mi);
     if(stEl){stEl.textContent=lbl;stEl.className='fw-status '+(cls||'');stEl.title=o.error||'';}
     const errEl=document.getElementById('nfs-err-'+mi);
@@ -1796,73 +1847,73 @@ async function nfsFixExports(mi,btn){
   const n=nfsOf(t)||{};
   const row=(n.mounts||[])[mi];
   const mounts=[...new Set((n.mounts||[]).map(m=>(m.remote_path||'').trim()).filter(p=>p&&p.startsWith('/')))];
-  if(!mounts.length){toast('请先填写有效的远程路径',true);return;}
+  if(!mounts.length){toast(tt('ui.nfs.need_path_short'),true);return;}
   const pwEl=document.querySelector('.md-detail [data-nf="sudo_pw"]');
-  const orig=btn.textContent;btn.disabled=true;btn.textContent='修复中…';
-  _setProbeResult('probe-nfs','修复中…（重建远端导出表，秒级）','var(--muted)');
+  const orig=btn.textContent;btn.disabled=true;btn.textContent=tt('ui.nfs.fixing');
+  _setProbeResult('probe-nfs',tt('ui.nfs.fixing_hint'),'var(--muted)');
   try{
     const r=await fetch('/api/nfs-setup-remote',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),
       body:JSON.stringify({tunnel:t,mounts,squash:n.squash_to_ssh_user===true,sudo_password:pwEl?pwEl.value:''})});
     const d=await r.json();
     if(d.ok){
-      _setProbeResult('probe-nfs','✅ 导出已修复——重新挂载 '+((row&&row.name)||'')+' …','var(--ok)');
+      _setProbeResult('probe-nfs','✅ '+tt('ui.nfs.fixed',{name:(row&&row.name)||''}),'var(--ok)');
       if(t.id&&row&&row.name)
         nativeSend('nfsMountToggle',{tunnel_id:t.id,name:row.name,action:'mount'});
       setTimeout(nfsRefreshRuntime,1500);
     }else{
-      _setProbeResult('probe-nfs','❌ 修复失败：'+(d.error||'')+(d.stage?`（阶段：${d.stage==='install'?'安装软件包':d.stage==='apply'?'应用导出':'前置检查'}）`:''),'var(--danger)');
+      _setProbeResult('probe-nfs','❌ '+tt('ui.nfs.fix_fail')+':'+(d.error||'')+(d.stage?tt('ui.nfs.stage',{stage:tt(d.stage==='install'?'ui.nfs.stage_install':d.stage==='apply'?'ui.nfs.stage_apply':'ui.nfs.stage_precheck')}):''),'var(--danger)');
     }
-  }catch(e){_setProbeResult('probe-nfs','❌ 请求失败: '+e.message,'var(--danger)');}
+  }catch(e){_setProbeResult('probe-nfs','❌ '+tt('ui.svc.request_fail',{msg:e.message}),'var(--danger)');}
   btn.disabled=false;btn.textContent=orig;
 }
 function nfsMountAction(btn,mi,action){
   collectServers();const t=S.mp.servers[activeTunnel];if(!t)return;
   const m=((nfsOf(t)||{}).mounts||[])[mi];
-  if(!m||!m.name){toast('请先填写挂载名',true);return;}
-  if(!t.id){toast('该服务器尚未保存，请先保存再挂载',true);return;}
+  if(!m||!m.name){toast(tt('ui.nfs.need_name'),true);return;}
+  if(!t.id){toast(tt('ui.nfs.save_before_mount'),true);return;}
   if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
     nativeSend('nfsMountToggle',{tunnel_id:t.id,name:m.name,action});
     btn.disabled=true;
     // 定向补拉真实运行态（renderView 会冲掉未保存表单且用的还是旧 S）
     setTimeout(nfsRefreshRuntime,1500);
     setTimeout(nfsRefreshRuntime,4000);
-  }else toast('挂载操作需在应用的设置窗内使用');
+  }else toast(tt('ui.bridge.mount_native_only'));
 }
 
 // ── proxy settings view (ports + capture + toggles) ────
-function toggleRowHTML(id,label,val,hint){return `<div class="toggle-row"><div><label>${esc(label)}</label>${hint?`<p class="panel-hint" style="margin:2px 0 0">${esc(hint)}</p>`:''}</div><div class="switch-line"><span class="switch-label">${val?'已启用':'已停用'}</span><button class="switch" id="${id}" role="switch" aria-checked="${!!val}" aria-label="${esc(label)}" onclick="toggleSwitch(this)"></button></div></div>`;}
+function toggleRowHTML(id,label,val,hint){return `<div class="toggle-row"><div><label>${esc(label)}</label>${hint?`<p class="panel-hint" style="margin:2px 0 0">${esc(hint)}</p>`:''}</div><div class="switch-line"><span class="switch-label">${tt(val?'ui.common.on':'ui.common.off')}</span><button class="switch" id="${id}" role="switch" aria-checked="${!!val}" aria-label="${esc(label)}" onclick="toggleSwitch(this)"></button></div></div>`;}
 function proxyHTML(){
   const capOn=S.mp.capture_active===true;
   return `<section class="view">
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">代理端口</h2></div>
-      <div class="settings-full"><p class="panel-hint">代理隧道监听端口，变更后需「重新连接」生效</p></div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.net.proxy_ports')}</h2></div>
+      <div class="settings-full"><p class="panel-hint">${tt('ui.net.proxy_ports_hint')}</p></div>
       <div class="settings-row">
         <div class="field"><label>SOCKS5</label><input class="control mono" id="cfg-socks5" type="number" min="1" max="65535" value="${esc(S.mp.socks5_port||1080)}" onblur="validatePort(this)"></div>
-        <div class="field"><label>HTTP 监听</label><input class="control mono" id="cfg-http" type="number" min="1" max="65535" value="${esc(S.mp.http_listen_port||8888)}" onblur="validatePort(this)"></div>
+        <div class="field"><label>${tt('ui.net.http_listen')}</label><input class="control mono" id="cfg-http" type="number" min="1" max="65535" value="${esc(S.mp.http_listen_port||8888)}" onblur="validatePort(this)"></div>
       </div>
     </div>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">抓包模式（代理）</h2>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.net.capture_title')}</h2>
         <div class="section-actions">
-          <span class="count ${capOn?'pct-ok':''}" id="capture-state">抓包：${capOn?'运行中':'未开启'}</span>
-          <button class="btn btn-sm" aria-label="打开抓包目录" onclick="openCaptureDir()">打开目录</button>
-          <button class="btn btn-sm btn-danger" id="capture-clean-btn" aria-label="立即清理抓包记录" onclick="cdel(this,function(){cleanCapture()})">立即清理</button>
+          <span class="count ${capOn?'pct-ok':''}" id="capture-state">${tt('ui.net.capture_state')}${tt(capOn?'ui.common.running':'ui.common.not_running')}</span>
+          <button class="btn btn-sm" aria-label="${tt('capture.open_dir')}" onclick="openCaptureDir()">${tt('ui.net.open_dir')}</button>
+          <button class="btn btn-sm btn-danger" id="capture-clean-btn" aria-label="${tt('ui.net.clean_aria')}" onclick="cdel(this,function(){cleanCapture()})">${tt('ui.net.clean')}</button>
         </div></div>
-      <div class="settings-full"><p class="panel-hint">mitmproxy TLS 解密端口，开启抓包时系统代理指向此端口；启停在菜单栏「抓包」菜单</p></div>
+      <div class="settings-full"><p class="panel-hint">${tt('ui.net.capture_hint')}</p></div>
       <div class="settings-row">
-        <div class="field"><label>抓包端口</label><input class="control mono" id="cfg-capport" type="number" min="1" max="65535" value="${esc(S.mp.capture_port||8080)}" onblur="validatePort(this)"></div>
-        <div class="field"><label>保留天数</label><input class="control mono" id="cfg-retention" type="number" min="1" value="${esc(S.mp.retention_days||7)}"></div>
+        <div class="field"><label>${tt('ui.net.capture_port')}</label><input class="control mono" id="cfg-capport" type="number" min="1" max="65535" value="${esc(S.mp.capture_port||8080)}" onblur="validatePort(this)"></div>
+        <div class="field"><label>${tt('ui.net.retention')}</label><input class="control mono" id="cfg-retention" type="number" min="1" value="${esc(S.mp.retention_days||7)}"></div>
       </div>
-      <div class="settings-full"><div class="field"><label>抓包目录</label><input class="control mono" id="cfg-capdir" value="${esc(S.mp.capture_dir||'~/.magic-proxy-captures')}"></div></div>
+      <div class="settings-full"><div class="field"><label>${tt('ui.net.capture_dir')}</label><input class="control mono" id="cfg-capdir" value="${esc(S.mp.capture_dir||'~/.magic-proxy-captures')}"></div></div>
     </div>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">AI 路由端口</h2></div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.net.router_ports')}</h2></div>
       <div class="settings-row">
-        <div class="field"><label>配置服务</label><input class="control mono" id="cfg-csport" type="number" min="1" max="65535" value="${esc(S.mp.config_port||9528)}" onblur="validatePort(this)"></div>
-        <div class="field"><label>路由网关</label><input class="control mono" id="cfg-gwport" type="number" min="1" max="65535" value="${esc(S.sp.listen_port||9527)}" onblur="validatePort(this)"></div>
+        <div class="field"><label>${tt('ui.net.config_srv')}</label><input class="control mono" id="cfg-csport" type="number" min="1" max="65535" value="${esc(S.mp.config_port||9528)}" onblur="validatePort(this)"></div>
+        <div class="field"><label>${tt('ui.net.gateway')}</label><input class="control mono" id="cfg-gwport" type="number" min="1" max="65535" value="${esc(S.sp.listen_port||9527)}" onblur="validatePort(this)"></div>
       </div>
-      <div class="settings-full"><p class="panel-hint">配置服务端口需重启应用生效；路由网关保存后自动重载。</p></div>
+      <div class="settings-full"><p class="panel-hint">${tt('ui.net.router_ports_hint')}</p></div>
     </div>
   </section>`;
 }
@@ -1877,12 +1928,12 @@ function validatePort(el){
     msg=document.createElement('div');msg.className='field-error';
     msg.id='ferr-'+(++_labelSeq);field.appendChild(msg);
   }
-  if(msg){msg.textContent='请输入 1–65535 之间的端口';el.setAttribute('aria-describedby',msg.id);}
+  if(msg){msg.textContent=tt('ui.net.port_range');el.setAttribute('aria-describedby',msg.id);}
   return false;
 }
 // 保存失败定位：按错误文案前缀映射页面，跳转后聚焦第一个无效端口（#3——
 // 错误不再只靠 Toast，跨隐藏页面的错误也能一键到达）。
-const ERROR_VIEW_MAP=[[/^服务器/,'servers'],[/^(SOCKS5|HTTP|抓包|配置服务|路由网关|端口冲突)/,'proxy'],[/^供应商/,'providers']];
+const ERROR_VIEW_MAP=[[/^服务器|^Server /,'servers'],[/^(SOCKS5|HTTP|抓包|配置服务|路由网关|端口冲突)|^Invalid |^Port conflict/,'proxy'],[/^供应商|^Provider |^Rule |^Default route/,'providers']];
 function gotoFirstError(firstError){
   const hit=ERROR_VIEW_MAP.find(([re])=>re.test(firstError));
   if(!hit)return;
@@ -1910,18 +1961,18 @@ function openCaptureDir(){
   if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
     nativeSend('openPath',{kind:'captureDir'});return;
   }
-  toast('抓包目录：'+(S.mp.capture_dir||'~/.magic-proxy-captures'));
+  toast(tt('ui.net.capture_dir_is',{dir:S.mp.capture_dir||'~/.magic-proxy-captures'}));
 }
 async function cleanCapture(){
   const btn=document.getElementById('capture-clean-btn');
   // cdel 确认点击后不会自动还原按钮文案——这里手动恢复再发请求。
-  if(btn){btn.innerHTML=btn._oh||'立即清理';btn.classList.remove('btn-confirm');btn.disabled=true;}
+  if(btn){btn.innerHTML=btn._oh||tt('ui.net.clean');btn.classList.remove('btn-confirm');btn.disabled=true;}
   try{
     const r=await fetch('/api/capture-clean',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:'{}'});
     const d=await r.json();
-    if(d.ok)toast(`已清理 ${d.removed} 个抓包文件`);
-    else toast(d.error||'清理失败',true);
-  }catch(e){toast('清理失败: '+e.message,true);}
+    if(d.ok)toast(tt('ui.net.cleaned',{n:d.removed}));
+    else toast(d.error||tt('ui.net.clean_fail'),true);
+  }catch(e){toast(tt('ui.net.clean_fail')+': '+e.message,true);}
   if(btn)btn.disabled=false;
 }
 
@@ -1945,11 +1996,17 @@ window.__native={receive:function(msg){
 function systemHTML(){
   return `<section class="view">
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">系统选项</h2></div>
-      ${toggleRowHTML('cfg-sysproxy','连接后自动设为系统代理',S.mp.system_proxy_default,'连接成功后，把 macOS 系统代理指向本机 HTTP 监听端口')}
-      ${toggleRowHTML('cfg-sleep','连接时防止系统睡眠',S.mp.prevent_sleep,'隧道连接期间阻止 Mac 自动睡眠')}
-      ${toggleRowHTML('cfg-login','登录时自动启动',S.mp.launch_at_login,'开机登录后自动出现在菜单栏')}
-      ${toggleRowHTML('cfg-api','配置 API 服务（浏览器 / AI 助手）',S.mp.config_api_enabled===true,'常驻监听配置端口供浏览器直开与 AI 助手 curl；关闭时仅打开设置窗期间监听')}
+      <div class="section-bar"><h2 class="section-title">${tt('ui.nav.system.title')}</h2></div>
+      ${toggleRowHTML('cfg-sysproxy',tt('ui.system.sysproxy'),S.mp.system_proxy_default,tt('ui.system.sysproxy_hint'))}
+      ${toggleRowHTML('cfg-sleep',tt('ui.system.sleep'),S.mp.prevent_sleep,tt('ui.system.sleep_hint'))}
+      ${toggleRowHTML('cfg-login',tt('ui.system.login'),S.mp.launch_at_login,tt('ui.system.login_hint'))}
+      ${toggleRowHTML('cfg-api',tt('ui.system.api'),S.mp.config_api_enabled===true,tt('ui.system.api_hint'))}
+      <div class="toggle-row"><div><label>${tt('system.language')}</label><p class="panel-hint" style="margin:2px 0 0">${tt('ui.system.language_hint')}</p></div>
+        <div class="switch-line"><select class="select-control" id="cfg-language" style="min-width:150px" onchange="setLanguagePref(this.value)">
+          <option value="auto" ${(S.mp.language||'zh-CN')==='auto'?'selected':''}>${tt('system.language.auto')}</option>
+          <option value="zh-CN" ${(S.mp.language||'zh-CN')==='zh-CN'?'selected':''}>${tt('system.language.zh')}</option>
+          <option value="en" ${S.mp.language==='en'?'selected':''}>${tt('system.language.en')}</option>
+        </select></div></div>
     </div>
   </section>`;
 }
@@ -1964,7 +2021,7 @@ function collectSystem(){
 // ── provider view ─────────────────────────────────────
 function providerHTML(){
   const pks=Object.keys(S.sp.providers||{});
-  if(!pks.length)return `<section class="view"><div class="empty-state"><p>还没有配置供应商</p><button class="btn btn-primary" onclick="addProvider()">+ 添加第一个供应商</button></div></section>`;
+  if(!pks.length)return `<section class="view"><div class="empty-state"><p>${tt('ui.providers.empty')}</p><button class="btn btn-primary" onclick="addProvider()">+ ${tt('ui.providers.add_first')}</button></div></section>`;
   if(!activeProvider||!S.sp.providers[activeProvider]){activeProvider=pks[0]||'';credModeOverride='';}
   const p=S.sp.providers[activeProvider]||{};
   const isMasked=p.api_key_set===true;
@@ -1972,66 +2029,66 @@ function providerHTML(){
   const showTemplates=!(p.base_url||'').trim();  // 全新空白供应商才展示模板
   const nativeAdvise=supportsAnthropicPromptCaching(p)&&p.anthropic_native!==true;
   return `<section class="view">
-    <p class="module-intro">供应商提供 AI 模型能力，需兼容 Anthropic Messages 协议。</p>
+    <p class="module-intro">${tt('ui.providers.intro')}</p>
     <div class="panel"><div class="md-layout">
       <div class="md-master">
-        <div class="section-bar"><h2 class="section-title">供应商</h2>
-          <div class="section-actions"><span class="md-legend"><span class="dot" aria-hidden="true"></span>已启用<span class="dot off" aria-hidden="true"></span>已停用</span><span class="count">${pks.length} 个</span></div></div>
-        <div class="md-list">${pks.map(k=>{const pr=S.sp.providers[k];return `<button class="md-row ${k===activeProvider?'is-selected':''}" onclick="selectProvider(this)" data-pname="${esc(k)}"><span class="dot ${pr.enabled===false?'off':''}" title="${pr.enabled===false?'已停用':'已启用'}"></span><span><strong>${esc(k)}</strong><span class="sub">${esc(pr.base_url||'未配置')}</span></span></button>`;}).join('')}</div>
-        <div class="md-master-footer"><button class="btn" onclick="addProvider()">+ 添加供应商</button></div>
+        <div class="section-bar"><h2 class="section-title">${tt('ui.providers.section')}</h2>
+          <div class="section-actions"><span class="md-legend"><span class="dot" aria-hidden="true"></span>${tt('ui.common.on')}<span class="dot off" aria-hidden="true"></span>${tt('ui.common.off')}</span><span class="count">${tt('ui.providers.count',{n:pks.length})}</span></div></div>
+        <div class="md-list">${pks.map(k=>{const pr=S.sp.providers[k];return `<button class="md-row ${k===activeProvider?'is-selected':''}" onclick="selectProvider(this)" data-pname="${esc(k)}"><span class="dot ${pr.enabled===false?'off':''}" title="${tt(pr.enabled===false?'ui.common.off':'ui.common.on')}"></span><span><strong>${esc(k)}</strong><span class="sub">${esc(pr.base_url||tt('ui.providers.not_configured'))}</span></span></button>`;}).join('')}</div>
+        <div class="md-master-footer"><button class="btn" onclick="addProvider()">+ ${tt('ui.providers.add')}</button></div>
       </div>
       <div class="md-detail">
-        <div class="detail-bar"><h2>${esc(activeProvider||'无')}</h2>
-          <button class="btn btn-sm btn-danger" aria-label="删除供应商 ${esc(activeProvider||'')}" onclick="cdel(this,function(){removeProvider()})" ${pks.length<=1?'disabled':''}>删除</button></div>
+        <div class="detail-bar"><h2>${esc(activeProvider||tt('ui.providers.none'))}</h2>
+          <button class="btn btn-sm btn-danger" aria-label="${tt('ui.providers.delete_aria',{name:esc(activeProvider||'')})}" onclick="cdel(this,function(){removeProvider()})" ${pks.length<=1?'disabled':''}>${tt('ui.btn.delete')}</button></div>
         <div class="detail-body">
-          ${showTemplates?`<div class="form-section"><h3>快速模板</h3>
-            <div class="tpl-row">${PROVIDER_TEMPLATES.map(t=>`<button type="button" class="btn btn-sm" aria-label="应用 ${esc(t.label)} 模板" onclick="applyProviderTpl('${t.id}')">${esc(t.label)}</button>`).join('')}</div>
-            <p class="field-hint">点选后自动填入 Base URL 与协议模式；凭证仍需自行填写</p></div>`:''}
-          <div class="form-section"><h3>标识</h3>
-            <div class="field"><label>名称（标识符）</label><input class="control mono" data-pf="name" value="${esc(activeProvider)}"></div>
-            <div class="field"><label>Base URL</label><input class="control mono" data-pf="base_url" value="${esc(p.base_url||'')}" placeholder="https://api.deepseek.com（示例，各家不同）">
-            <p class="field-hint">常见供应商：GLM → https://open.bigmodel.cn/api/anthropic · KIMI → https://api.kimi.com/coding · DeepSeek → https://api.deepseek.com</p></div>
+          ${showTemplates?`<div class="form-section"><h3>${tt('ui.providers.templates')}</h3>
+            <div class="tpl-row">${PROVIDER_TEMPLATES.map(t=>`<button type="button" class="btn btn-sm" aria-label="${tt('ui.providers.apply_tpl_aria',{name:esc(t.label)})}" onclick="applyProviderTpl('${t.id}')">${esc(t.id==='custom'?tt('ui.tpl.custom'):t.label)}</button>`).join('')}</div>
+            <p class="field-hint">${tt('ui.providers.tpl_hint')}</p></div>`:''}
+          <div class="form-section"><h3>${tt('ui.providers.identity')}</h3>
+            <div class="field"><label>${tt('ui.providers.f_name')}</label><input class="control mono" data-pf="name" value="${esc(activeProvider)}"></div>
+            <div class="field"><label>Base URL</label><input class="control mono" data-pf="base_url" value="${esc(p.base_url||'')}" placeholder="https://api.deepseek.com">
+            <p class="field-hint">${tt('ui.providers.common_hint')}</p></div>
           </div>
-          <div class="form-section"><h3>凭证</h3>
-            <div class="field"><label>凭证来源</label>
-              <div class="seg" role="group" aria-label="凭证来源">
-                <button type="button" class="seg-btn" aria-pressed="${mode==='key'}" onclick="setCredentialMode('key')">直接填写 API Key</button>
-                <button type="button" class="seg-btn" aria-pressed="${mode==='env'}" onclick="setCredentialMode('env')">读取环境变量</button>
+          <div class="form-section"><h3>${tt('ui.providers.credentials')}</h3>
+            <div class="field"><label>${tt('ui.providers.cred_source')}</label>
+              <div class="seg" role="group" aria-label="${tt('ui.providers.cred_source')}">
+                <button type="button" class="seg-btn" aria-pressed="${mode==='key'}" onclick="setCredentialMode('key')">${tt('ui.providers.cred_key')}</button>
+                <button type="button" class="seg-btn" aria-pressed="${mode==='env'}" onclick="setCredentialMode('env')">${tt('ui.providers.cred_env')}</button>
               </div></div>
             <div class="field-grid">
               <div class="field" ${mode==='key'?'':'hidden'}><label>API Key</label>
-                <div class="key-field"><input class="control mono" type="password" data-pf="api_key" value="${isMasked?'':esc(p.api_key||'')}" placeholder="${isMasked?'••••（已保存，留空则不修改）':'直接填 key'}">
-                <button class="key-toggle" type="button" onclick="toggleKeyVis(this)" aria-label="显示">${eyeOpen}</button></div></div>
-              <div class="field" ${mode==='env'?'':'hidden'}><label>环境变量</label><input class="control mono" data-pf="api_key_env" value="${esc(p.api_key_env||'')}" placeholder="ENV_VAR">
-                <p class="field-hint">网关进程启动时从该变量读取 key，须在右侧选择认证头</p></div>
-              <div class="field"><label>认证头</label><select class="select-control" data-pf="auth_header"><option value="x-api-key" ${p.auth_header==='x-api-key'?'selected':''}>x-api-key</option><option value="Authorization" ${p.auth_header==='Authorization'?'selected':''}>Authorization</option><option value="" ${!p.auth_header?'selected':''}>（无）</option></select>
-                <p class="field-hint">有 key 时：留空或 Authorization → 发送 Authorization: Bearer &lt;key&gt;；x-api-key → 发送 x-api-key: &lt;key&gt;（Anthropic 官方端点风格）</p></div>
+                <div class="key-field"><input class="control mono" type="password" data-pf="api_key" value="${isMasked?'':esc(p.api_key||'')}" placeholder="${isMasked?tt('ui.providers.key_saved'):tt('ui.providers.key_ph')}">
+                <button class="key-toggle" type="button" onclick="toggleKeyVis(this)" aria-label="${tt('ui.providers.show')}">${eyeOpen}</button></div></div>
+              <div class="field" ${mode==='env'?'':'hidden'}><label>${tt('ui.providers.env_var')}</label><input class="control mono" data-pf="api_key_env" value="${esc(p.api_key_env||'')}" placeholder="ENV_VAR">
+                <p class="field-hint">${tt('ui.providers.env_hint')}</p></div>
+              <div class="field"><label>${tt('ui.providers.auth_header')}</label><select class="select-control" data-pf="auth_header"><option value="x-api-key" ${p.auth_header==='x-api-key'?'selected':''}>x-api-key</option><option value="Authorization" ${p.auth_header==='Authorization'?'selected':''}>Authorization</option><option value="" ${!p.auth_header?'selected':''}>${tt('ui.providers.none_paren')}</option></select>
+                <p class="field-hint">${tt('ui.providers.auth_hint')}</p></div>
             </div>
-            ${mode==='env'&&isMasked?'<p class="field-hint">该供应商已保存直接 API Key，运行时仍会优先生效于环境变量</p>':''}
+            ${mode==='env'&&isMasked?'<p class="field-hint">'+tt('ui.providers.key_over_env')+'</p>':''}
           </div>
-          <div class="form-section"><h3>模型</h3>
-            <div class="chips">${(p.models||[]).map((m,i)=>`<span class="chip mono">${esc(m)}${ctxSuffix(m)}<button class="chip-x" onclick="removeProviderModel(${i})" aria-label="删除模型 ${esc(m)}">×</button></span>`).join('')||'<span class="sub">配置好 Base URL 和 API Key 后，点「从 API 拉取」自动获取可用模型</span>'}</div>
+          <div class="form-section"><h3>${tt('ui.providers.models')}</h3>
+            <div class="chips">${(p.models||[]).map((m,i)=>`<span class="chip mono">${esc(m)}${ctxSuffix(m)}<button class="chip-x" onclick="removeProviderModel(${i})" aria-label="${tt('ui.providers.remove_model',{name:esc(m)})}">×</button></span>`).join('')||'<span class="sub">'+tt('ui.providers.models_hint')+'</span>'}</div>
             <div class="models-actions">
-              <button class="btn btn-sm" onclick="fetchProviderModels(this)">从 API 拉取</button>
-              <button class="btn btn-sm" onclick="testProvider(this)">测试连接</button>
-              <input class="control mono" id="model-add-input" placeholder="手动添加模型名" style="max-width:220px">
-              <button class="btn btn-sm" onclick="addProviderModel()">添加</button>
+              <button class="btn btn-sm" onclick="fetchProviderModels(this)">${tt('ui.providers.fetch')}</button>
+              <button class="btn btn-sm" onclick="testProvider(this)">${tt('ui.providers.test')}</button>
+              <input class="control mono" id="model-add-input" placeholder="${tt('ui.providers.add_model_ph')}" style="max-width:220px">
+              <button class="btn btn-sm" onclick="addProviderModel()">${tt('ui.providers.add_btn')}</button>
             </div>
             <div class="models-error" id="models-error"></div>
           </div>
-          <p class="field-hint" style="margin:0 -20px;padding:10px 20px 0;border-top:1px solid var(--border)">原生 Anthropic 协议：后端完整接受 Anthropic 请求体（如官方 API、GLM /api/anthropic），保留 cache_control（prompt 缓存生效）、document 块与 beta 字段；DeepSeek 等兼容端点须保持关闭。</p>
+          <p class="field-hint" style="margin:0 -20px;padding:10px 20px 0;border-top:1px solid var(--border)">${tt('ui.providers.native_hint')}</p>
           <div class="toggle-row" style="margin:0 -20px;border-bottom:0">
-            <div><label>原生 Anthropic 协议</label>${nativeAdvise?`<p class="panel-hint" style="margin:2px 0 0">该端点支持 Anthropic 原生协议，建议开启以保留 cache_control 提升缓存命中率</p>`:''}</div>
-            <div class="switch-line"><span class="switch-label">${p.anthropic_native===true?'保留 cache_control':'兼容模式'}</span><button class="switch" data-pf="anthropic_native" role="switch" aria-checked="${p.anthropic_native===true}" aria-label="${esc(activeProvider)}：原生 Anthropic 协议" onclick="toggleSwitch(this)"></button></div></div>
+            <div><label>${tt('ui.providers.native')}</label>${nativeAdvise?`<p class="panel-hint" style="margin:2px 0 0">${tt('ui.providers.native_advise')}</p>`:''}</div>
+            <div class="switch-line"><span class="switch-label">${tt(p.anthropic_native===true?'ui.providers.native_on':'ui.providers.native_off')}</span><button class="switch" data-pf="anthropic_native" role="switch" aria-checked="${p.anthropic_native===true}" aria-label="${esc(activeProvider)}：${tt('ui.providers.native')}" onclick="toggleSwitch(this)"></button></div></div>
           <div class="toggle-row" style="margin:0 -20px -20px;border-top:1px solid var(--border);border-bottom:0">
-            <label>启用此供应商</label>
-            <div class="switch-line"><span class="switch-label">${p.enabled!==false?'已启用':'已停用'}</span><button class="switch" data-pf="enabled" role="switch" aria-checked="${p.enabled!==false}" aria-label="${esc(activeProvider)}：启用此供应商" onclick="toggleSwitch(this)"></button></div></div>
+            <label>${tt('ui.providers.enable')}</label>
+            <div class="switch-line"><span class="switch-label">${tt(p.enabled!==false?'ui.common.on':'ui.common.off')}</span><button class="switch" data-pf="enabled" role="switch" aria-checked="${p.enabled!==false}" aria-label="${esc(activeProvider)}：${tt('ui.providers.enable')}" onclick="toggleSwitch(this)"></button></div></div>
         </div>
       </div>
     </div></div>
   </section>`;
 }
-function toggleKeyVis(btn){const inp=btn.parentElement.querySelector('input');const show=inp.type==='password';inp.type=show?'text':'password';btn.innerHTML=show?eyeOff:eyeOpen;btn.setAttribute('aria-label',show?'隐藏':'显示');}
+function toggleKeyVis(btn){const inp=btn.parentElement.querySelector('input');const show=inp.type==='password';inp.type=show?'text':'password';btn.innerHTML=show?eyeOff:eyeOpen;btn.setAttribute('aria-label',show?tt('ui.providers.hide'):tt('ui.providers.show'));}
 function selectProvider(btn){collectProvider();recomputeDirty();activeProvider=btn.dataset.pname;credModeOverride='';renderView();}
 function addProvider(){collectProvider();let n='new-provider',i=1;while(n in S.sp.providers)n=`new-provider-${++i}`;S.sp.providers[n]={base_url:'',api_key:null,api_key_env:null,auth_header:null,enabled:true,anthropic_native:false};activeProvider=n;credModeOverride='';recomputeDirty();renderView();}
 async function removeProvider(){
@@ -2064,7 +2121,7 @@ function collectProvider(){
   const sw=d.querySelector('[data-pf="enabled"]');p.enabled=sw&&sw.getAttribute('aria-checked')==='true';
   const swAN=d.querySelector('[data-pf="anthropic_native"]');p.anthropic_native=swAN&&swAN.getAttribute('aria-checked')==='true';
   if(newName!==activeProvider){
-    if(S.sp.providers[newName]){toast('供应商名称「'+newName+'」已被占用，未重命名',true);return;}
+    if(S.sp.providers[newName]){toast(tt('ui.providers.name_taken',{name:newName}),true);return;}
     const oldName=activeProvider;
     const np={};for(const[k2,v2]of Object.entries(S.sp.providers))np[k2===activeProvider?newName:k2]=v2;S.sp.providers=np;activeProvider=newName;
     // Update rule references
@@ -2082,8 +2139,8 @@ async function fetchProviderModels(btn){
   collectProvider();
   const name=activeProvider,errEl=document.getElementById('models-error');
   if(errEl)errEl.textContent='';
-  btn.disabled=true;btn.textContent='拉取中…';
-  const restore=()=>{btn.disabled=false;btn.textContent='从 API 拉取';};
+  btn.disabled=true;btn.textContent=tt('ui.providers.fetching');
+  const restore=()=>{btn.disabled=false;btn.textContent=tt('ui.providers.fetch');};
   try{
     const r=await fetch('/api/fetch-models',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({provider:name})});
     const d=await r.json();
@@ -2094,27 +2151,27 @@ async function fetchProviderModels(btn){
       (d.models||[]).forEach(m=>{if(!cur.includes(m))cur.push(m);});
       S.sp.providers[name].models=cur;recomputeDirty();renderView();
     }
-  }catch(e){if(errEl)errEl.textContent='请求失败: '+e;restore();}
+  }catch(e){if(errEl)errEl.textContent=tt('ui.svc.request_fail',{msg:e});restore();}
 }
 async function testProvider(btn){
   collectProvider();
   const name=activeProvider,errEl=document.getElementById('models-error');
   if(errEl)errEl.textContent='';
-  btn.disabled=true;btn.textContent='测试中…';
-  const restore=()=>{btn.disabled=false;btn.textContent='检测服务';};
+  btn.disabled=true;btn.textContent=tt('ui.providers.testing');
+  const restore=()=>{btn.disabled=false;btn.textContent=tt('ui.svc.check');};
   try{
     const r=await fetch('/api/test-provider',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({provider:name})});
     const d=await r.json();
     if(d.ok){
       if(errEl){
         errEl.style.color='var(--ok)';
-        errEl.textContent='✅ '+d.model+'：'+(d.reply||'(空回复)');
+        errEl.textContent='✅ '+d.model+'：'+(d.reply||tt('ui.providers.empty_reply'));
       }
     }else{
-      if(errEl){errEl.style.color='var(--danger)';errEl.textContent='❌ '+(d.error||'未知错误');}
+      if(errEl){errEl.style.color='var(--danger)';errEl.textContent='❌ '+(d.error||tt('ui.common.unknown_error'));}
     }
     restore();
-  }catch(e){if(errEl){errEl.style.color='var(--danger)';errEl.textContent='❌ 请求失败: '+e;}restore();}
+  }catch(e){if(errEl){errEl.style.color='var(--danger)';errEl.textContent='❌ '+tt('ui.svc.request_fail',{msg:e});}restore();}
 }
 function addProviderModel(){
   collectProvider();
@@ -2133,27 +2190,27 @@ function routeTargetOptions(current,emptyLabel){
 function rulesHTML(){
   return `<section class="view">
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">同步到 Claude Code</h2></div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.cc.section')}</h2></div>
       <div class="route-slot" style="padding:0">
-        <p class="module-intro" style="margin:0;padding:12px 20px 8px">显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。右上角「保存并同步」会把角色映射同时写入网关 tier 路由规则（~/.suanpan.yaml）和 Claude Code（~/.claude/settings.json）——别名请求与直连流量永远同路</p>
+        <p class="module-intro" style="margin:0;padding:12px 20px 8px">${tt('ui.cc.intro')}</p>
         <div id="cc-drift-banner" hidden style="display:flex;align-items:center;gap:12px;margin:0 20px 8px;padding:8px 12px;border:1px solid color-mix(in oklch,var(--warn),transparent 70%);border-radius:8px;background:color-mix(in oklch,var(--warn),transparent 92%)">
           <span id="cc-drift-text" style="flex:1;font-size:13px;color:var(--warn)"></span>
         </div>
         <table class="rules-table">
-          <thead><tr><th style="width:80px">模型角色</th><th>显示名称</th><th>实际请求模型</th><th style="width:80px;text-align:center">声明支持 1M</th></tr></thead>
+          <thead><tr><th style="width:80px">${tt('ui.cc.th_role')}</th><th>${tt('ui.cc.th_display')}</th><th>${tt('ui.cc.th_model')}</th><th style="width:80px;text-align:center">${tt('ui.cc.th_1m')}</th></tr></thead>
           <tbody id="cc-roles-body"></tbody>
         </table>
       </div>
     </div>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">默认兜底模型</h2></div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.cc.fallback')}</h2></div>
       <div class="route-slot">
         <div style="display:flex;align-items:center;gap:12px">
-          <span style="font-weight:550;font-size:14px;min-width:40px">默认</span>
-          <select class="select-control mono" id="cc-default-model" aria-label="默认兜底模型" style="flex:1"></select>
-          <label style="display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" id="cc-default-1m" checked title="仅声明给 Claude Code 的上下文能力，与模型选项后的上下文注释无关" style="width:16px;height:16px;accent-color:var(--accent)"><span style="font-size:12px;color:var(--muted)">1M</span></label>
+          <span style="font-weight:550;font-size:14px;min-width:40px">${tt('ui.cc.default')}</span>
+          <select class="select-control mono" id="cc-default-model" aria-label="${tt('ui.cc.fallback')}" style="flex:1"></select>
+          <label style="display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" id="cc-default-1m" checked title="${tt('ui.cc.1m_title')}" style="width:16px;height:16px;accent-color:var(--accent)"><span style="font-size:12px;color:var(--muted)">1M</span></label>
         </div>
-        <p class="module-intro" style="margin:12px 0 0;font-size:13px">用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写；否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。</p>
+        <p class="module-intro" style="margin:12px 0 0;font-size:13px">${tt('ui.cc.fallback_hint')}</p>
       </div>
     </div>
   </section>`;
@@ -2162,32 +2219,32 @@ function rulesHTML(){
 // ── balance overview (external provider APIs) ─────────
 function statusHTML(){
   return `<section class="view">
-    <p class="module-intro">查看供应商余额与套餐配额。此页会访问各供应商的余额 API，加载速度取决于外部服务。</p>
+    <p class="module-intro">${tt('ui.balance.intro')}</p>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">供应商余额与配额</h2>
-        <div class="section-actions"><span class="count" id="status-updated"></span><button class="btn btn-sm" onclick="refreshStatus()">刷新</button></div></div>
-      <div id="balance-grid"><p class="loading-text">加载中…</p></div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.balance.section')}</h2>
+        <div class="section-actions"><span class="count" id="status-updated"></span><button class="btn btn-sm" onclick="refreshStatus()">${tt('ui.btn.refresh')}</button></div></div>
+      <div id="balance-grid"><p class="loading-text">${tt('ui.chrome.loading')}</p></div>
     </div>
   </section>`;
 }
 async function refreshStatus(silent){
   if(!silent){
     const bg=document.getElementById('balance-grid');if(!bg)return;  // view already switched away
-    bg.innerHTML='<p class="loading-text">查询中…</p>';
+    bg.innerHTML='<p class="loading-text">'+tt('ui.balance.querying')+'</p>';
   }
   try{
     const br=await fetch('/api/balance',{headers:apiHeaders(null)});
     const bal=await br.json();
     if(activeView!=='status')return;  // raced: user switched view mid-fetch
     renderBalance(bal);
-    const ts=document.getElementById('status-updated');if(ts)ts.textContent='更新于 '+new Date().toLocaleTimeString('zh-CN');
-  }catch(e){if(!silent){const bg=document.getElementById('balance-grid');if(bg)bg.innerHTML='<p class="loading-text" style="color:var(--danger)">加载失败：'+esc(e.message)+'</p>';}}
+    const ts=document.getElementById('status-updated');if(ts)ts.textContent=tt('ui.common.updated_at',{time:new Date().toLocaleTimeString(I18N.lang==='en'?'en-US':'zh-CN')});
+  }catch(e){if(!silent){const bg=document.getElementById('balance-grid');if(bg)bg.innerHTML='<p class="loading-text" style="color:var(--danger)">'+tt('ui.chrome.load_fail',{msg:esc(e.message)})+'</p>';}}
   if(activeView!=='status')return;
   scheduleViewRefresh('status',refreshStatus);
 }
 function renderBalance(bal){
   const bg=document.getElementById('balance-grid');
-  if(!bal||!bal.length){bg.innerHTML='<p class="loading-text">无数据</p>';return;}
+  if(!bal||!bal.length){bg.innerHTML='<p class="loading-text">'+tt('ui.balance.no_data')+'</p>';return;}
   // 进度条色阶复用 pctClass（ok/warn/danger），但 CSS 变量名映射到 fill
   const barColor=p=>p>=90?'var(--danger)':p>=70?'var(--warn)':'var(--ok)';
   const quotaHTML=a=>{
@@ -2198,11 +2255,11 @@ function renderBalance(bal){
     return plan+`<div class="bal-quotas">`+a.quotas.map(q=>{
       const period=quotaPeriodLabel(q);
       const pct=q.pct!=null?Math.min(Math.max(q.pct,0),100):0;
-      const resetTxt=q.reset?` · 重置 ${esc(q.reset)}`:'';
+      const resetTxt=q.reset?tt('ui.balance.reset_at',{v:esc(q.reset)}):'';
       const w=Math.round(pct*2)/2;
       return `<div class="bal-quota">
         <span class="bal-period">${esc(period)}</span>
-        <div class="bal-progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(period)}用量">
+        <div class="bal-progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${tt('ui.balance.usage_of',{period:esc(period)})}">
           <div class="bal-progress-fill" style="width:${w}%;background:${barColor(pct)}"></div>
         </div>
         <span class="bal-nums">${esc(quotaNumsText(q))}</span>
@@ -2218,11 +2275,11 @@ function renderBalance(bal){
     const m=balanceRowModel(b);
     const name=`<div class="bal-card-left"><span class="bal-name">${esc(m.name)}</span></div>`;
     if(m.state==='error')return `<div class="bal-empty"><span class="bal-error">${esc(m.name)} · ${esc(m.note)}</span></div>`;
-    if(m.state==='disabled')return `<div class="bal-empty">${esc(m.name)} · 已停用</div>`;
+    if(m.state==='disabled')return `<div class="bal-empty">${esc(m.name)} · ${tt('ui.common.off')}</div>`;
     if(m.state==='unsupported')return `<div class="bal-empty">${esc(m.name)} · ${esc(m.note)}</div>`;
     const quotaBlock=m.quotaApis.map(quotaHTML).join('');
     const moneyBlock=m.moneyApis.length?`<div class="bal-money">${m.moneyApis.map(moneyHTML).join('')}</div>`:'';
-    return `<div class="bal-card">${name}<div class="bal-card-mid">${quotaBlock||'<span class="s-secondary">无配额信息</span>'}</div>${moneyBlock}</div>`;
+    return `<div class="bal-card">${name}<div class="bal-card-mid">${quotaBlock||'<span class="s-secondary">'+tt('ui.balance.no_quota')+'</span>'}</div>${moneyBlock}</div>`;
   }).join('');
   bg.innerHTML=`<div class="bal-list">${cards}</div>`;
 }
@@ -2239,36 +2296,36 @@ function dailyBarsSVG(daily,metric){
     const h=Math.max(2,b.ratio*(H-2));
     return `<rect x="${(i*SLOT+(SLOT-BAR)/2).toFixed(1)}" y="${(H-h).toFixed(1)}" width="${BAR}" height="${h.toFixed(1)}" rx="1.5"><title>${esc(b.title)}</title></rect>`;
   }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="每日${esc(def.label)}趋势（最右为最近一天）" style="max-width:${W}px">${rects}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${tt('ui.usage.trend_aria',{metric:tt('ui.usage.metric.'+metric)})}" style="max-width:${W}px">${rects}</svg>`;
 }
 function usageHTML(){
   const ranges=usageRangeOptions(usageRange).map(x=>
-    `<button class="range-btn ${x.active?'is-active':''}" aria-pressed="${x.active}" onclick="setUsageRange('${x.value}')">${x.label}</button>`).join('');
+    `<button class="range-btn ${x.active?'is-active':''}" aria-pressed="${x.active}" onclick="setUsageRange('${x.value}')">${tt('ui.usage.range.'+x.value)}</button>`).join('');
   return `<section class="view">
-    <p class="module-intro">统计完全来自本地 usage.jsonl，不访问任何供应商。缓存命中率 = 缓存读 ÷（输入 + 缓存读 + 缓存写）。</p>
+    <p class="module-intro">${tt('ui.usage.intro')}</p>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">用量总览</h2>
-        <div class="section-actions"><div class="range-switch" aria-label="统计时间范围">${ranges}</div><span class="count" id="usage-updated"></span><button class="btn btn-sm" onclick="refreshUsage()">刷新</button></div></div>
-      <div id="usage-summary" class="loading-text">加载中…</div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.usage.section_summary')}</h2>
+        <div class="section-actions"><div class="range-switch" aria-label="${tt('ui.usage.range_aria')}">${ranges}</div><span class="count" id="usage-updated"></span><button class="btn btn-sm" onclick="refreshUsage()">${tt('ui.btn.refresh')}</button></div></div>
+      <div id="usage-summary" class="loading-text">${tt('ui.chrome.loading')}</div>
     </div>
     <div id="usage-details" style="display:none">
       <div class="panel">
-        <div class="section-bar"><h2 class="section-title">每日趋势</h2>
-          <div class="section-actions"><span class="count">${esc(DAILY_METRICS.input.label)} = 输入 + 缓存读 + 缓存写</span></div></div>
+        <div class="section-bar"><h2 class="section-title">${tt('ui.usage.section_daily')}</h2>
+          <div class="section-actions"><span class="count">${tt('ui.usage.metric.input')} = ${tt('ui.usage.formula_input')}</span></div></div>
         <div id="usage-daily-chart" class="daily-bars" hidden></div>
         <div id="usage-daily" class="table-scroll"></div>
       </div>
       <div class="panel">
-        <div class="section-bar"><h2 class="section-title">供应商分组</h2></div>
+        <div class="section-bar"><h2 class="section-title">${tt('ui.usage.section_providers')}</h2></div>
         <div id="usage-providers" class="table-scroll"></div>
       </div>
       <div class="panel">
-        <div class="section-bar"><h2 class="section-title">路由来源</h2></div>
+        <div class="section-bar"><h2 class="section-title">${tt('ui.usage.section_routes')}</h2></div>
         <div id="usage-scenarios" class="table-scroll"></div>
       </div>
       <div class="panel">
-        <div class="section-bar"><h2 class="section-title">来源 Agent</h2>
-          <div class="section-actions"><span class="count">ADR-010：User-Agent 判别</span></div></div>
+        <div class="section-bar"><h2 class="section-title">${tt('ui.usage.section_agents')}</h2>
+          <div class="section-actions"><span class="count">${tt('ui.usage.ua_note')}</span></div></div>
         <div id="usage-agents" class="table-scroll"></div>
       </div>
     </div>
@@ -2284,18 +2341,18 @@ async function refreshUsage(silent){
   const summary=document.getElementById('usage-summary');
   if(!summary)return;  // view already switched away
   const requestedRange=usageRange;
-  if(!silent){summary.className='loading-text';summary.textContent='查询中…';}
+  if(!silent){summary.className='loading-text';summary.textContent=tt('ui.balance.querying');}
   try{
     const r=await fetch('/api/usage?range='+encodeURIComponent(requestedRange),{headers:apiHeaders(null)});
     if(!r.ok)throw new Error(`HTTP ${r.status}`);
     const use=await r.json();
     if(activeView!=='usage'||usageRange!==requestedRange)return;
     renderUsage(use);
-    const ts=document.getElementById('usage-updated');if(ts)ts.textContent='更新于 '+new Date().toLocaleTimeString('zh-CN');
+    const ts=document.getElementById('usage-updated');if(ts)ts.textContent=tt('ui.common.updated_at',{time:new Date().toLocaleTimeString(I18N.lang==='en'?'en-US':'zh-CN')});
   }catch(e){
     if(!silent){
       summary.className='loading-text';
-      summary.innerHTML='<span style="color:var(--danger)">加载失败：'+esc(e.message)+'</span>';
+      summary.innerHTML='<span style="color:var(--danger)">'+tt('ui.chrome.load_fail',{msg:esc(e.message)})+'</span>';
       const details=document.getElementById('usage-details');if(details)details.style.display='none';
     }
   }
@@ -2308,44 +2365,44 @@ function renderUsage(usage){
   const details=document.getElementById('usage-details');
   if(!total.calls){
     summary.className='empty-state-inline';
-    summary.innerHTML='<p>这个时间范围内还没有请求记录</p><span>先向 AI 路由网关发一条请求，统计会在这里自动出现。</span>';
+    summary.innerHTML='<p>'+tt('ui.usage.empty_range')+'</p><span>'+tt('ui.usage.empty_range_hint')+'</span>';
     details.style.display='none';
     return;
   }
   summary.className='usage-summary';
   summary.innerHTML=`
-    <div class="stat-card"><strong>${fmtNum(total.calls||0)}</strong><span>总调用</span></div>
-    <div class="stat-card"><strong>${fmtNum(total.errors||0)}</strong><span>错误数</span></div>
-    <div class="stat-card"><strong>${fmtNum(total.input_tokens||0)}</strong><span>输入 token</span></div>
-    <div class="stat-card"><strong>${fmtNum(total.output_tokens||0)}</strong><span>输出 token</span></div>
-    <div class="stat-card"><strong>${fmtRate(total.cache_hit_rate)}</strong><span>缓存命中率</span></div>
-    <div class="stat-card"><strong>${total.avg_latency_ms==null?'—':fmtNum(total.avg_latency_ms)+' ms'}</strong><span>平均延迟</span></div>`;
+    <div class="stat-card"><strong>${fmtNum(total.calls||0)}</strong><span>${tt('ui.usage.total_calls')}</span></div>
+    <div class="stat-card"><strong>${fmtNum(total.errors||0)}</strong><span>${tt('ui.usage.total_errors')}</span></div>
+    <div class="stat-card"><strong>${fmtNum(total.input_tokens||0)}</strong><span>${tt('ui.usage.total_input')}</span></div>
+    <div class="stat-card"><strong>${fmtNum(total.output_tokens||0)}</strong><span>${tt('ui.usage.total_output')}</span></div>
+    <div class="stat-card"><strong>${fmtRate(total.cache_hit_rate)}</strong><span>${tt('ui.usage.hit_rate')}</span></div>
+    <div class="stat-card"><strong>${total.avg_latency_ms==null?'—':fmtNum(total.avg_latency_ms)+' ms'}</strong><span>${tt('ui.usage.avg_latency')}</span></div>`;
   details.style.display='block';
 
   const daily=usage.daily||[];
   const chart=document.getElementById('usage-daily-chart');
   if(chart){const svg=dailyBarsSVG(daily);chart.innerHTML=svg;chart.hidden=!svg;}
   document.getElementById('usage-daily').innerHTML=daily.length?`
-    <table class="rules-table usage-table"><thead><tr><th>日期</th><th style="text-align:right">调用</th><th style="text-align:right">输入</th><th style="text-align:right">输出</th><th style="text-align:right">缓存读</th><th style="text-align:right">缓存写</th><th style="text-align:right">命中率</th></tr></thead>
-    <tbody>${dailyRowsDesc(daily).map(day=>`<tr><td><span class="rule-num">${esc(day.date)}</span></td><td class="mono" style="text-align:right">${fmtNum(day.calls||0)}</td><td class="mono" style="text-align:right">${fmtNum(day.input_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(day.output_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(day.cache_read_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(day.cache_creation_tokens||0)}</td><td class="mono" style="text-align:right">${fmtRate(day.cache_hit_rate)}</td></tr>`).join('')}</tbody></table>`:'<p class="loading-text">没有可按日期分桶的记录</p>';
+    <table class="rules-table usage-table"><thead><tr><th>${tt('ui.usage.th_date')}</th><th style="text-align:right">${tt('ui.usage.th_calls')}</th><th style="text-align:right">${tt('ui.usage.th_in')}</th><th style="text-align:right">${tt('ui.usage.th_out')}</th><th style="text-align:right">${tt('ui.usage.th_cr')}</th><th style="text-align:right">${tt('ui.usage.th_cw')}</th><th style="text-align:right">${tt('ui.usage.th_hit')}</th></tr></thead>
+    <tbody>${dailyRowsDesc(daily).map(day=>`<tr><td><span class="rule-num">${esc(day.date)}</span></td><td class="mono" style="text-align:right">${fmtNum(day.calls||0)}</td><td class="mono" style="text-align:right">${fmtNum(day.input_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(day.output_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(day.cache_read_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(day.cache_creation_tokens||0)}</td><td class="mono" style="text-align:right">${fmtRate(day.cache_hit_rate)}</td></tr>`).join('')}</tbody></table>`:'<p class="loading-text">'+tt('ui.usage.empty_daily')+'</p>';
 
   const providers=Object.entries(usage.providers||{});
   document.getElementById('usage-providers').innerHTML=providers.length?`
-    <table class="rules-table usage-table"><thead><tr><th>供应商</th><th style="text-align:right">调用</th><th style="text-align:right">输入</th><th style="text-align:right">输出</th><th style="text-align:right">缓存读</th><th style="text-align:right">缓存写</th><th style="text-align:right">命中率</th><th style="text-align:right">错误</th></tr></thead>
-    <tbody>${providers.map(([providerName,metrics])=>{const hint=providerCacheHint((S.sp.providers||{})[providerName],metrics);return`<tr><td><span class="rule-num">${esc(providerName)}</span>${hint?`<span class="cache-hint">${esc(hint)}</span>`:''}</td><td class="mono" style="text-align:right">${fmtNum(metrics.calls||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.input_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.output_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.cache_read_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.cache_creation_tokens||0)}</td><td class="mono" style="text-align:right">${fmtRate(metrics.cache_hit_rate)}</td><td class="mono" style="text-align:right;${metrics.errors?'color:var(--danger)':''}">${fmtNum(metrics.errors||0)}</td></tr>`;}).join('')}</tbody></table>`:'<p class="loading-text">没有供应商用量</p>';
+    <table class="rules-table usage-table"><thead><tr><th>${tt('ui.usage.th_provider')}</th><th style="text-align:right">${tt('ui.usage.th_calls')}</th><th style="text-align:right">${tt('ui.usage.th_in')}</th><th style="text-align:right">${tt('ui.usage.th_out')}</th><th style="text-align:right">${tt('ui.usage.th_cr')}</th><th style="text-align:right">${tt('ui.usage.th_cw')}</th><th style="text-align:right">${tt('ui.usage.th_hit')}</th><th style="text-align:right">${tt('ui.usage.th_errors')}</th></tr></thead>
+    <tbody>${providers.map(([providerName,metrics])=>{const hint=providerCacheHint((S.sp.providers||{})[providerName],metrics);return`<tr><td><span class="rule-num">${esc(providerName)}</span>${hint?`<span class="cache-hint">${tt('ui.usage.cache_hint_anthropic')}</span>`:''}</td><td class="mono" style="text-align:right">${fmtNum(metrics.calls||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.input_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.output_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.cache_read_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.cache_creation_tokens||0)}</td><td class="mono" style="text-align:right">${fmtRate(metrics.cache_hit_rate)}</td><td class="mono" style="text-align:right;${metrics.errors?'color:var(--danger)':''}">${fmtNum(metrics.errors||0)}</td></tr>`;}).join('')}</tbody></table>`:'<p class="loading-text">'+tt('ui.usage.empty_providers')+'</p>';
 
   const routeSourceOrder={inline:0,subagent:1,rule:2,default:3};
   const routeSources=Object.entries(usage.scenarios||{}).sort(([a],[b])=>(routeSourceOrder[a]??99)-(routeSourceOrder[b]??99));
   document.getElementById('usage-scenarios').innerHTML=routeSources.length?`
-    <table class="rules-table"><thead><tr><th>路由来源</th><th style="text-align:right">调用</th><th style="text-align:right">命中率</th></tr></thead>
-    <tbody>${routeSources.map(([source,metrics])=>`<tr><td><span style="font-weight:550;font-size:14px">${esc(routeSourceLabel(source))}</span><span class="rule-num" style="margin-left:8px">${esc(source)}</span></td><td class="mono" style="text-align:right">${fmtNum(metrics.calls||0)}</td><td class="mono" style="text-align:right">${fmtRate(metrics.cache_hit_rate)}</td></tr>`).join('')}</tbody></table>`:'<p class="loading-text">没有路由来源记录</p>';
+    <table class="rules-table"><thead><tr><th>${tt('ui.usage.section_routes')}</th><th style="text-align:right">${tt('ui.usage.th_calls')}</th><th style="text-align:right">${tt('ui.usage.th_hit')}</th></tr></thead>
+    <tbody>${routeSources.map(([source,metrics])=>`<tr><td><span style="font-weight:550;font-size:14px">${esc(tt('ui.route.'+source))}</span><span class="rule-num" style="margin-left:8px">${esc(source)}</span></td><td class="mono" style="text-align:right">${fmtNum(metrics.calls||0)}</td><td class="mono" style="text-align:right">${fmtRate(metrics.cache_hit_rate)}</td></tr>`).join('')}</tbody></table>`:'<p class="loading-text">'+tt('ui.usage.empty_routes')+'</p>';
 
   // ADR-010 M5：来源 Agent 分桶（空串桶 = 未识别 UA / 旧日志行）
   const agents=Object.entries(usage.agents||{}).sort(([a],[b])=>(a==='')-(b==='')||String(a).localeCompare(String(b)));
   const agentEl=document.getElementById('usage-agents');
   if(agentEl)agentEl.innerHTML=agents.length?`
-    <table class="rules-table"><thead><tr><th>Agent</th><th style="text-align:right">调用</th><th style="text-align:right">输入</th><th style="text-align:right">输出</th><th style="text-align:right">缓存读</th><th style="text-align:right">命中率</th></tr></thead>
-    <tbody>${agents.map(([agent,metrics])=>`<tr><td><span class="rule-num">${esc(agent||'未识别')}</span></td><td class="mono" style="text-align:right">${fmtNum(metrics.calls||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.input_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.output_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.cache_read_tokens||0)}</td><td class="mono" style="text-align:right">${fmtRate(metrics.cache_hit_rate)}</td></tr>`).join('')}</tbody></table>`:'<p class="loading-text">没有来源 Agent 记录</p>';
+    <table class="rules-table"><thead><tr><th>Agent</th><th style="text-align:right">${tt('ui.usage.th_calls')}</th><th style="text-align:right">${tt('ui.usage.th_in')}</th><th style="text-align:right">${tt('ui.usage.th_out')}</th><th style="text-align:right">${tt('ui.usage.th_cr')}</th><th style="text-align:right">${tt('ui.usage.th_hit')}</th></tr></thead>
+    <tbody>${agents.map(([agent,metrics])=>`<tr><td><span class="rule-num">${esc(agent||tt('ui.usage.unidentified'))}</span></td><td class="mono" style="text-align:right">${fmtNum(metrics.calls||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.input_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.output_tokens||0)}</td><td class="mono" style="text-align:right">${fmtNum(metrics.cache_read_tokens||0)}</td><td class="mono" style="text-align:right">${fmtRate(metrics.cache_hit_rate)}</td></tr>`).join('')}</tbody></table>`:'<p class="loading-text">'+tt('ui.usage.empty_agents')+'</p>';
 }
 
 // ── collect dispatch: one registry lookup, no switch ──
@@ -2412,7 +2469,7 @@ function ccRenderDrift(){
   if(info.reset&&!btn){
     btn=document.createElement('button');
     btn.className='btn btn-sm';btn.id='cc-drift-reset';
-    btn.textContent='按路由规则重置';btn.onclick=ccResetSeed;
+    btn.textContent=tt('ui.cc.reset_by_rules');btn.onclick=ccResetSeed;
     el.appendChild(btn);
   }else if(!info.reset&&btn){btn.remove();}
 }
@@ -2434,15 +2491,15 @@ function ccRenderRoles(){
   tbody.innerHTML=ccRoleRows(ccRoleMeta).map(r=>{
     const role=ccRoles[r.key]||{model:'',ctx_1m:true};
     const nameInput=r.readonly
-      ?'<input class="control mono" placeholder="不显示在 /model 菜单" readonly aria-label="'+esc(r.label)+'：显示名称（只读）" style="background:var(--surface);color:var(--muted)">'
-      :`<input class="control mono" data-cc-name="${r.key}" value="${esc(role.name||role.model)}" placeholder="显示名称" aria-label="${esc(r.label)}：显示名称" oninput="ccRoleName('${r.key}',this.value)">`;
-    const opts=routeTargetOptions(role.model||'','（未设置）');
+      ?'<input class="control mono" placeholder="'+tt('ui.cc.not_in_menu')+'" readonly aria-label="'+esc(r.label)+'：'+tt('ui.cc.display_ro')+'" style="background:var(--surface);color:var(--muted)">'
+      :`<input class="control mono" data-cc-name="${r.key}" value="${esc(role.name||role.model)}" placeholder="${tt('ui.cc.th_display')}" aria-label="${esc(r.label)}：${tt('ui.cc.th_display')}" oninput="ccRoleName('${r.key}',this.value)">`;
+    const opts=routeTargetOptions(role.model||'',tt('ui.common.unset'));
     const hint=ccRoleHint(r.key);
     return `<tr>
       <td style="font-weight:550;font-size:14px">${esc(r.label)}</td>
       <td>${nameInput}${hint?`<div class="panel-hint" style="margin-top:4px;white-space:nowrap">${esc(hint)}</div>`:''}</td>
-      <td><select class="select-control mono" data-cc-role="${r.key}" aria-label="${esc(r.label)}：实际请求模型" onchange="ccRoleChange('${r.key}',this.value)">${opts}</select></td>
-      <td style="text-align:center"><input type="checkbox" ${role.ctx_1m?'checked':''} onchange="ccRole1m('${r.key}',this.checked)" aria-label="${esc(r.label)}：声明支持 1M" title="仅声明给 Claude Code 的上下文能力，与模型选项后的上下文注释无关" style="width:16px;height:16px;accent-color:var(--accent)"></td>
+      <td><select class="select-control mono" data-cc-role="${r.key}" aria-label="${esc(r.label)}：${tt('ui.cc.th_model')}" onchange="ccRoleChange('${r.key}',this.value)">${opts}</select></td>
+      <td style="text-align:center"><input type="checkbox" ${role.ctx_1m?'checked':''} onchange="ccRole1m('${r.key}',this.checked)" aria-label="${esc(r.label)}：${tt('ui.cc.th_1m')}" title="${tt('ui.cc.1m_title')}" style="width:16px;height:16px;accent-color:var(--accent)"></td>
     </tr>`;
   }).join('');
 }
@@ -2482,7 +2539,7 @@ function ccRenderDefault(){
   const sel=document.getElementById('cc-default-model');
   if(!sel)return;
   const cur=(S.sp.router||{}).default||'';
-  sel.innerHTML=routeTargetOptions(cur,'（未设置）');
+  sel.innerHTML=routeTargetOptions(cur,tt('ui.common.unset'));
   const checkbox=document.getElementById('cc-default-1m');
   if(checkbox)checkbox.checked=ccRoles.default?.ctx_1m!==false;
 }
@@ -2505,11 +2562,11 @@ async function copyAgentInstructionsViaApi(){
     const r=await fetch('/api/agent-instructions');
     if(!r.ok)throw new Error('HTTP '+r.status);
     const d=await r.json();
-    if(!d.text)throw new Error('响应缺少文本');
-    if(!(await _writeClipboard(d.text)))throw new Error('浏览器拒绝写剪贴板');
-    toast('已复制 AI 助手指令');
+    if(!d.text)throw new Error(tt('ui.agent.no_text'));
+    if(!(await _writeClipboard(d.text)))throw new Error(tt('ui.agent.clip_denied'));
+    toast(tt('ui.agent.copied'));
   }catch(e){
-    toast('复制失败：'+(e&&e.message||e),true);
+    toast(tt('ui.agent.copy_fail',{msg:(e&&e.message||e)}),true);
   }
 }
 async function _writeClipboard(text){
@@ -2584,20 +2641,20 @@ function qsAgentRow(a){
   if(a.id==='codex'){
     proto='Responses';
     if(!qsVendorHasResponses()){
-      dis=true;sub='该厂商无 Responses 端点，暂不支持 Codex';
-      proto='<span class="qs-state-muted">Responses（不可用）</span>';
+      dis=true;sub=tt('ui.qs.no_responses');
+      proto='<span class="qs-state-muted">'+tt('ui.qs.responses_na')+'</span>';
     }
-  }else if(a.id==='opencode')proto='Anthropic / OpenAI（在③选择）';
-  else if(a.id==='claude-code')proto='Anthropic · 角色映射';
+  }else if(a.id==='opencode')proto=tt('ui.qs.opencodes_proto');
+  else if(a.id==='claude-code')proto=tt('ui.qs.cc_proto');
   else proto='Anthropic';
-  if(!a.installed&&!sub)sub='未安装——安装后再来配置';
-  if(a.id==='claude-code'&&a.synced&&!sub)sub='已同步过，重复配置无副作用';
+  if(!a.installed&&!sub)sub=tt('ui.qs.not_installed');
+  if(a.id==='claude-code'&&a.synced&&!sub)sub=tt('ui.qs.already_synced');
   const state=a.synced
-    ?'<span class="qs-state-ok">✓ 已同步</span>'
-    :(a.installed?'<span class="qs-state-default">已安装</span>':'<span class="qs-state-muted">未安装</span>');
+    ?'<span class="qs-state-ok">✓ '+tt('ui.qs.synced')+'</span>'
+    :(a.installed?'<span class="qs-state-default">'+tt('ui.svc.installed')+'</span>':'<span class="qs-state-muted">'+tt('ui.qs.missing')+'</span>');
   const box=a.installed&&!dis
-    ?`<input type="checkbox" ${checked?'checked':''} onchange="qsToggle('${esc(a.id)}',this.checked)" style="width:16px;height:16px;accent-color:var(--accent)" aria-label="配置 ${esc(a.label)}">`
-    :`<input type="checkbox" disabled style="width:16px;height:16px;accent-color:var(--accent)" aria-label="${esc(a.label)}（不可用）">`;
+    ?`<input type="checkbox" ${checked?'checked':''} onchange="qsToggle('${esc(a.id)}',this.checked)" style="width:16px;height:16px;accent-color:var(--accent)" aria-label="${tt('ui.qs.configure',{name:esc(a.label)})}">`
+    :`<input type="checkbox" disabled style="width:16px;height:16px;accent-color:var(--accent)" aria-label="${esc(a.label)}${tt('ui.qs.unavailable_paren')}">`;
   return `<tr${dis?' class="qs-disabled"':''}${a.installed&&!dis?` onclick="qsRowClick(event,'${esc(a.id)}',${!checked})"`:''}>
     <td style="text-align:center;width:40px">${box}</td>
     <td><span class="qs-agent-main">${esc(a.label)}</span>${sub?`<span class="qs-agent-sub">${esc(sub)}</span>`:''}</td>
@@ -2616,15 +2673,15 @@ function qsOptionsHTML(){
     const opts=models.length
       ?models.map(m=>`<option value="${esc(m)}">${esc(m)}${ctxSuffix(m)}</option>`).join('')
       :'';
-    parts.push(`<div class="field"><label>Codex 默认模型</label>
-      <select class="select-control mono" id="qs-codex-model" ${opts?'':'disabled'}>${opts||'<option value="">（先在①探测端点拉取该厂商的模型）</option>'}</select>
-      ${models.length?'':'<p class="field-hint">探测成功后自动填充；也可在供应商页先配置模型清单</p>'}</div>`);
+    parts.push(`<div class="field"><label>${tt('ui.qs.codex_model')}</label>
+      <select class="select-control mono" id="qs-codex-model" ${opts?'':'disabled'}>${opts||'<option value="">'+tt('ui.qs.probe_first')+'</option>'}</select>
+      ${models.length?'':'<p class="field-hint">'+tt('ui.qs.codex_hint')+'</p>'}</div>`);
   }
   if(sel.some(a=>a.id==='opencode'&&qs.sel[a.id])){
-    parts.push(`<div class="field"><label>OpenCode 协议</label>
+    parts.push(`<div class="field"><label>${tt('ui.qs.opencode_proto')}</label>
       <select class="select-control" id="qs-opencode-proto">
-        <option value="anthropic">Anthropic（推荐——保留缓存语义）</option>
-        <option value="openai">OpenAI 兼容</option>
+        <option value="anthropic">${tt('ui.qs.op_anthropic')}</option>
+        <option value="openai">${tt('ui.qs.op_openai')}</option>
       </select></div>`);
   }
   if(!parts.length)return'';
@@ -2637,46 +2694,46 @@ function quickstartHTML(){
   const pick=qsPickEndpoint(qsTemplate());
   const existing=(((S.sp||{}).providers)||{})[qs.name];
   const probeRows=qs.probe?Object.entries(qs.probe).filter(([,v])=>v&&typeof v==='object').map(([proto,r])=>{
-    const state=r.reachable?(r.auth_ok===false?'<span class="qs-state-err">✗ Key 无效</span>':(r.auth_ok?'<span class="qs-state-ok">✓ 可用</span>':'<span class="qs-state-default">✓ 端点在</span>'))
-      :`<span class="qs-state-muted">✗ ${esc(r.error||'不可达')}</span>`;
+    const state=r.reachable?(r.auth_ok===false?'<span class="qs-state-err">✗ '+tt('ui.qs.key_invalid')+'</span>':(r.auth_ok?'<span class="qs-state-ok">✓ '+tt('ui.qs.usable')+'</span>':'<span class="qs-state-default">✓ '+tt('ui.qs.endpoint_up')+'</span>'))
+      :`<span class="qs-state-muted">✗ ${esc(r.error||tt('ui.qs.unreachable'))}</span>`;
     const modelsText=(r.models&&r.models.length)
-      ?esc(r.models.slice(0,4).join('、'))+(r.models.length>4?`…（共 ${r.models.length} 个）`:'')
+      ?esc(r.models.slice(0,4).join(tt('ui.common.name_sep')))+(r.models.length>4?tt('ui.qs.more_models',{n:r.models.length}):'')
       :'—';
     return`<tr><td class="mono">${esc(proto)}</td><td>${state}</td><td class="mono" style="text-align:right">${r.latency_ms!=null?r.latency_ms+' ms':'—'}</td><td>${modelsText}</td></tr>`;
   }).join(''):'';
   const agentRows=(qs.agents||[]).map(qsAgentRow).join('');
   const resultRows=qs.results.map(r=>`<tr><td><span class="qs-agent-main">${esc(r.agent)}</span></td><td>${r.ok?'<span class="qs-state-ok">✓</span>':'<span class="qs-state-err">✗</span>'}</td><td class="qs-state-muted">${esc(r.msg||'')}</td></tr>`).join('');
   return `<section class="view qs-narrow">
-    <p class="module-intro">选厂商填 Key → 自动探测端点 → 勾选 Agent 一键配置；Agent 里写入的是本地网关凭证，厂商 Key 永不落 Agent 配置。</p>
+    <p class="module-intro">${tt('ui.qs.intro')}</p>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">① 厂商与 Key</h2></div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.qs.s1')}</h2></div>
       <div class="detail-body">
-        <div class="qs-vendors">${chips||'<p class="loading-text">模板加载中…</p>'}</div>
+        <div class="qs-vendors">${chips||'<p class="loading-text">'+tt('ui.qs.tpl_loading')+'</p>'}</div>
         <div class="field-grid">
-          <div class="field"><label>供应商名</label>
-            <input class="control mono" id="qs-name" value="${esc(qs.name)}" oninput="qsSet('name',this.value)" placeholder="如 glm">
-            ${existing?'<p class="field-hint">与已有供应商同名——复用配置，不覆盖已存 Key</p>':''}</div>
+          <div class="field"><label>${tt('ui.qs.f_name')}</label>
+            <input class="control mono" id="qs-name" value="${esc(qs.name)}" oninput="qsSet('name',this.value)" placeholder="glm">
+            ${existing?'<p class="field-hint">'+tt('ui.qs.existing_hint')+'</p>':''}</div>
           <div class="field"><label>API Key</label>
-            <div class="key-field"><input class="control mono" id="qs-key" type="password" value="${esc(qs.key)}" oninput="qsSet('key',this.value)" placeholder="${existing?'留空 = 复用已保存的 Key':'粘贴厂商 API Key'}"></div>
-            <p class="field-hint">可留空——仅探测端点存在性</p></div>
+            <div class="key-field"><input class="control mono" id="qs-key" type="password" value="${esc(qs.key)}" oninput="qsSet('key',this.value)" placeholder="${existing?tt('ui.qs.key_reuse'):tt('ui.qs.key_paste')}"></div>
+            <p class="field-hint">${tt('ui.qs.key_optional')}</p></div>
         </div>
-        ${pick?`<p class="panel-hint">将使用 ${esc(pick.protocol==='anthropic'?'Anthropic':'OpenAI')} 端点 <code class="mono">${esc(pick.base_url)}</code></p>`:'<p class="panel-hint">先选择厂商模板——自定义端点请到「供应商」页配置</p>'}
-        <div class="qs-actions"><button class="btn btn-sm" onclick="qsProbe()" ${qs.busy?'disabled':''}>${qs.busy?'探测中…':'探测端点'}</button></div>
+        ${pick?`<p class="panel-hint">${tt('ui.qs.will_use',{proto:esc(pick.protocol==='anthropic'?'Anthropic':'OpenAI'),url:esc(pick.base_url)})}</p>`:'<p class="panel-hint">'+tt('ui.qs.pick_first')+'</p>'}
+        <div class="qs-actions"><button class="btn btn-sm" onclick="qsProbe()" ${qs.busy?'disabled':''}>${qs.busy?tt('ui.qs.probing'):tt('ui.qs.probe')}</button></div>
       </div>
-      ${qs.probe?`<div class="table-scroll"><table class="rules-table"><thead><tr><th>协议</th><th>状态</th><th style="text-align:right">延迟</th><th>模型</th></tr></thead><tbody>${probeRows}</tbody></table></div>`:''}
+      ${qs.probe?`<div class="table-scroll"><table class="rules-table"><thead><tr><th>${tt('ui.qs.th_proto')}</th><th>${tt('ui.qs.th_state')}</th><th style="text-align:right">${tt('ui.qs.th_latency')}</th><th>${tt('ui.qs.th_models')}</th></tr></thead><tbody>${probeRows}</tbody></table></div>`:''}
     </div>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">② Agent 矩阵</h2>
-        <div class="section-actions"><button class="btn btn-sm" onclick="qsLoadAgents()">重新检测</button></div></div>
-      ${qs.agents===null?'<p class="loading-text">检测中…</p>':qs.agents.length?`<div class="table-scroll"><table class="rules-table qs-agents"><thead><tr><th style="width:40px"></th><th>Agent</th><th>状态</th><th>协议</th></tr></thead><tbody>${agentRows}</tbody></table></div>`:'<p class="loading-text">加载失败，点「重新检测」</p>'}
+      <div class="section-bar"><h2 class="section-title">${tt('ui.qs.s2')}</h2>
+        <div class="section-actions"><button class="btn btn-sm" onclick="qsLoadAgents()">${tt('ui.qs.redetect')}</button></div></div>
+      ${qs.agents===null?'<p class="loading-text">'+tt('ui.svc.checking')+'</p>':qs.agents.length?`<div class="table-scroll"><table class="rules-table qs-agents"><thead><tr><th style="width:40px"></th><th>Agent</th><th>${tt('ui.qs.th_state')}</th><th>${tt('ui.qs.th_proto')}</th></tr></thead><tbody>${agentRows}</tbody></table></div>`:'<p class="loading-text">'+tt('ui.qs.load_fail')+'</p>'}
     </div>
     <div class="panel">
-      <div class="section-bar"><h2 class="section-title">③ 应用</h2></div>
+      <div class="section-bar"><h2 class="section-title">${tt('ui.qs.s3')}</h2></div>
       <div class="detail-body">
         ${qsOptionsHTML()}
-        <p class="panel-hint">右上角按钮会保存供应商并写入所选 Agent 配置；每个写入前弹出 diff 确认</p>
+        <p class="panel-hint">${tt('ui.qs.apply_hint')}</p>
       </div>
-      ${resultRows?`<div class="table-scroll"><table class="rules-table"><thead><tr><th>Agent</th><th style="width:30px"></th><th>结果</th></tr></thead><tbody>${resultRows}</tbody></table></div>`:''}
+      ${resultRows?`<div class="table-scroll"><table class="rules-table"><thead><tr><th>Agent</th><th style="width:30px"></th><th>${tt('ui.qs.th_result')}</th></tr></thead><tbody>${resultRows}</tbody></table></div>`:''}
     </div>
   </section>`;
 }
@@ -2692,7 +2749,7 @@ async function qsLoadAgents(){
 
 async function qsProbe(){
   const pick=qsPickEndpoint(qsTemplate());
-  if(!pick){toast('请先选择厂商模板',true);return;}
+  if(!pick){toast(tt('ui.qs.pick_first_short'),true);return;}
   qs.busy=true;qs.probe=null;renderView();
   try{
     const body={base_url:pick.base_url};
@@ -2703,8 +2760,8 @@ async function qsProbe(){
       body:JSON.stringify(body)});
     const d=await r.json();
     qs.probe=d.error?{error:d.error}:d;
-    if(d.error)toast('探测失败：'+d.error,true);
-  }catch(e){toast('探测失败：'+e.message,true);}
+    if(d.error)toast(tt('ui.qs.probe_fail',{msg:d.error}),true);
+  }catch(e){toast(tt('ui.qs.probe_fail',{msg:e.message}),true);}
   qs.busy=false;
   if(activeView==='quickstart')renderView();
 }
@@ -2727,21 +2784,21 @@ function qsOptionsFor(id){
 function qsConfirm(pv,label){
   return new Promise(resolve=>{
     const prev=document.activeElement;
-    const rows=(pv.changes||[]).map(c=>({key:c.key,badge:ccChangeBadge(c.action),
+    const rows=(pv.changes||[]).map(c=>({key:c.key,badge:tt('ui.cc.badge.'+(c.action==='add'?'add':c.action==='remove'?'remove':'update')),
       old:c.old==null?'—':String(c.old),new:c.new==null?'—':String(c.new)}));
     const ov=document.createElement('div');
     ov.className='cc-modal-overlay';
     ov.innerHTML=`<div class="cc-modal" role="dialog" aria-modal="true">
-      <h3>写入 ${esc(label)} 配置</h3>
-      <p class="cc-modal-target">目标文件 <code class="mono">${esc(pv.target)}</code>${pv.exists?'':'（不存在，将新建）'}</p>
-      <div class="cc-modal-sec">将写入 ${rows.length} 项变更</div>
-      <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>配置项</th><th>操作</th><th>原值</th><th>新值</th></tr></thead>
+      <h3>${tt('ui.qs.write_title',{name:esc(label)})}</h3>
+      <p class="cc-modal-target">${tt('ui.cc.target_file')} <code class="mono">${esc(pv.target)}</code>${pv.exists?'':tt('ui.cc.not_exist_create')}</p>
+      <div class="cc-modal-sec">${tt('ui.cc.write_n',{n:rows.length})}</div>
+      <div class="cc-diff-scroll"><table class="cc-diff-table"><thead><tr><th>${tt('ui.qs.th_key')}</th><th>${tt('ui.cc.th_action')}</th><th>${tt('ui.cc.th_old')}</th><th>${tt('ui.cc.th_new')}</th></tr></thead>
       <tbody>${rows.map(r=>`<tr><td class="mono">${esc(r.key)}</td><td><span class="cc-badge cc-badge-${esc(r.badge)}">${esc(r.badge)}</span></td><td class="mono">${esc(r.old)}</td><td class="mono">${esc(r.new)}</td></tr>`).join('')}</tbody></table></div>
       <p class="cc-modal-backup">${esc((pv.backup&&pv.backup.note)||'')}</p>
-      <p class="cc-modal-hint">写入经原子替换（0600），重启该 Agent 后生效</p>
+      <p class="cc-modal-hint">${tt('ui.qs.hint_agent')}</p>
       <div class="cc-modal-actions">
-        <button type="button" class="btn" id="qs-modal-cancel">取消</button>
-        <button type="button" class="btn btn-primary" id="qs-modal-ok">确认写入</button>
+        <button type="button" class="btn" id="qs-modal-cancel">${tt('ui.common.cancel_action')}</button>
+        <button type="button" class="btn btn-primary" id="qs-modal-ok">${tt('ui.cc.confirm_write')}</button>
       </div></div>`;
     const done=ok=>{document.removeEventListener('keydown',onKey,true);ov.remove();if(prev&&prev.focus)prev.focus();resolve(ok);};
     const onKey=e=>{
@@ -2767,11 +2824,11 @@ async function qsPost(url,body){
 async function qsApply(){
   const t=qsTemplate();const pick=qsPickEndpoint(t);
   const name=(qs.name||'').trim();
-  if(!name){toast('请填写供应商名',true);return;}
+  if(!name){toast(tt('ui.qs.need_name'),true);return;}
   const exists=(((S.sp||{}).providers)||{})[name];
   if(!exists){
-    if(!pick){toast('请先选择厂商模板（或到供应商页手动配置）',true);return;}
-    if(!qs.key){toast('新供应商需要填写 API Key',true);return;}
+    if(!pick){toast(tt('ui.qs.pick_first_full'),true);return;}
+    if(!qs.key){toast(tt('ui.qs.need_key'),true);return;}
   }
   qs.busy=true;qs.results=[];
   if(activeView==='quickstart')renderView();
@@ -2794,21 +2851,21 @@ async function qsApply(){
         headers:apiHeaders(null,{'Content-Type':'application/json'}),
         body:JSON.stringify(next)});
       const d=await r.json();
-      if(!d.ok){toast((d.errors||['未知错误']).join('；'),true);return;}
+      if(!d.ok){toast((d.errors||[tt('ui.common.unknown_error')]).join(tt('ui.common.list_sep')),true);return;}
       S=normalizeState(next);captureBaseline(true);
-      qs.results.push({agent:'供应商 '+name,ok:true,msg:'已保存'});
+      qs.results.push({agent:tt('ui.qs.provider_label',{name:name}),ok:true,msg:tt('ui.saveflow.saved_one')});
     }
     const selected=(qs.agents||[]).filter(a=>qs.sel[a.id]&&a.installed);
     for(const a of selected){
       try{
         if(a.id==='codex'&&!qsVendorHasResponses()){
-          qs.results.push({agent:a.label,ok:false,msg:'该厂商无 Responses 端点，暂不支持 Codex'});
+          qs.results.push({agent:a.label,ok:false,msg:tt('ui.qs.no_responses')});
           continue;
         }
         if(a.id==='claude-code'){
           const pv=await qsPost('/api/cc-sync-preview',{roles:null});
-          if(!pv.ok){qs.results.push({agent:a.label,ok:false,msg:pv.msg||'预览失败'});}
-          else if(!pv.already&&!(await ccConfirmSync(pv))){qs.results.push({agent:a.label,ok:false,msg:'已取消'});}
+          if(!pv.ok){qs.results.push({agent:a.label,ok:false,msg:pv.msg||tt('ui.qs.preview_fail')});}
+          else if(!pv.already&&!(await ccConfirmSync(pv))){qs.results.push({agent:a.label,ok:false,msg:tt('ui.common.cancelled')});}
           else{
             const d=await qsPost('/api/setup-claude-code',{roles:null});
             qs.results.push({agent:a.label,ok:!!d.ok,msg:d.msg||''});
@@ -2816,8 +2873,8 @@ async function qsApply(){
         }else{
           const options=qsOptionsFor(a.id);
           const pv=await qsPost('/api/agent-setup-preview',{agent:a.id,options});
-          if(!pv.ok){qs.results.push({agent:a.label,ok:false,msg:pv.msg||'预览失败'});}
-          else if(!pv.already&&!(await qsConfirm(pv,a.label))){qs.results.push({agent:a.label,ok:false,msg:'已取消'});}
+          if(!pv.ok){qs.results.push({agent:a.label,ok:false,msg:pv.msg||tt('ui.qs.preview_fail')});}
+          else if(!pv.already&&!(await qsConfirm(pv,a.label))){qs.results.push({agent:a.label,ok:false,msg:tt('ui.common.cancelled')});}
           else{
             const d=await qsPost('/api/setup-agent',{agent:a.id,options});
             qs.results.push({agent:a.label,ok:!!d.ok,msg:d.msg||''});
@@ -2826,7 +2883,7 @@ async function qsApply(){
       }catch(e){qs.results.push({agent:a.label,ok:false,msg:e.message});}
       if(activeView==='quickstart')renderView();
     }
-    toast(qs.results.every(r=>r.ok)?'配置完成':'部分步骤失败，见结果列表');
+    toast(qs.results.every(r=>r.ok)?tt('ui.qs.done'):tt('ui.qs.partial_fail'));
     await qsLoadAgents();
   }finally{
     qs.busy=false;

@@ -26,11 +26,24 @@ export function extractLayer(n) {
 }
 
 // Evaluate layer source and return its bindings as an object.
+// ADR-012 M2：分层求值时注入 t()——LAYER 1 的文案经 t() 取词，zh catalog
+// 是唯一中文真相源（与页面运行时同一份 shared/locales/*.json）。
+export function i18nPrelude() {
+  const zh = JSON.parse(readFileSync(path.join(ROOT, "shared", "locales", "zh-CN.json"), "utf8"));
+  const en = JSON.parse(readFileSync(path.join(ROOT, "shared", "locales", "en.json"), "utf8"));
+  return (
+    "const __I18N_MESSAGES={'zh-CN':" + JSON.stringify(zh) + ",en:" + JSON.stringify(en) + "};\n" +
+    "function tt(key,params){let s=(__I18N_MESSAGES['zh-CN']||{})[key];" +
+    "if(s==null)s=(__I18N_MESSAGES.en||{})[key];if(s==null)return key;" +
+    "if(params)s=s.replace(/\\{(\\w+)\\}/g,(_,k)=>params[k]!=null?String(params[k]):'{'+'k'+'}');return s;}\n"
+  );
+}
+
 export function loadLayer(n) {
   const src = extractLayer(n);
   // Collect top-level const/let/function names and return them.
   const names = [...src.matchAll(/^(?:async\s+)?(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm)]
     .map((x) => x[1]);
-  const factory = new Function(`${src}\nreturn {${names.join(",")}};`);
+  const factory = new Function(i18nPrelude() + `${src}\nreturn {${names.join(",")}};`);
   return factory();
 }

@@ -97,7 +97,13 @@ function makeRuntime(fetchImpl) {
     structuredClone,
     location: { search: "", port: "9528" },
     navigator: { clipboard: { writeText: async () => {} } },
-    window: {},
+    window: { __I18N__: {
+      lang: "zh-CN",
+      messages: {
+        "zh-CN": JSON.parse(readFileSync(path.join(ROOT, "shared", "locales", "zh-CN.json"), "utf8")),
+        en: JSON.parse(readFileSync(path.join(ROOT, "shared", "locales", "en.json"), "utf8")),
+      },
+    } },
     document,
     fetch: fetchImpl || (async () => { throw new Error("unexpected fetch"); }),
   });
