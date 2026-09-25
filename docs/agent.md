@@ -108,6 +108,7 @@ query-string 认证已删除；无凭证时 `/api/*` 返回 401 JSON，裸 GET `
 | GET | `/api/provider-templates` | 供应商快速模板单一真源（内置厂商卡：per-协议端点矩阵 / 认证头 / 原生协议位 + `custom` 恒在）——快速接入向导的数据面 |
 | POST | `/api/test-tunnel` | 测试已保存隧道的 SSH 可达性（body: `{"index": 0}`；一次性探针与真实隧道同一调用策略，未信任主机快速失败） |
 | POST | `/api/test-forward` | 测试一条端口转发（body: `{"tunnel": {…隧道字段…}, "forward": {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000}}`；一次性 `ssh -W` 探测表单当前值——隧道与转发都无需先保存，返回 `{"ok", "latency_ms"?, "error"?}`。兼容旧载荷 `{"index": 0, "forward": …}` 按已保存隧道解析） |
+| POST | `/api/server-check` | 服务卡一键检测（body: `{"tunnel"|"index", "only"?: "ssh"\|"nfs"\|"openvpn"}`，缺省 `only` 跑全部卡；返回 `{"ok": true, "results": {"ssh": {"ok","error","latency_ms"}, "nfs": {"ok","error","family","installed","listening_2049","exports_configured"}, "openvpn": {"ok","error","installed","version"}}}`——SSH 与真实隧道同一探针策略并附延迟、NFS 只读探测、OpenVPN 探测远程安装态；单卡失败不影响其它卡） |
 | POST | `/api/nfs-check-remote` | 探测远程 NFS 状态（body: `{"tunnel": {…}}` 或 `{"index": 0}`；只读——发行版/已装/监听/导出表） |
 | POST | `/api/nfs-setup-remote` | 远程一键安装 + 配置导出（幂等；body: `{"tunnel"|"index", "mounts": ["/data"], "squash"?, "sudo_password"?}`——显式 sudo 密码成功后落 Keychain 复用） |
 | POST | `/api/probe-provider` | **ADR-010 端点三级探测**（免费 GET 语义）：body = provider 形态 dict（`base_url` 必填 + 可选 `api_key`/`auth_header`）→ 返回 anthropic/openai/responses 三协议各自的 `{reachable, auth_ok, latency_ms, models, error}` |
