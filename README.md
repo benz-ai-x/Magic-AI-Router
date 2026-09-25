@@ -101,6 +101,7 @@ First run on macOS: Preferences → **Proxy → Tunnel** → fill SSH details �
 
 ### 🔗 Magic Proxy — SSH tunnels + port forwarding
 
+- **v0.13 server-centric config** — one page per remote server (Server → Service → Instance, ADR-011): connection + SSH-tunnel service (forward instances) + NFS service (mount instances) + OpenVPN (placeholder) in a single view, each service card with one-click detection of what's actually usable on that box (SSH reachability / NFS 2049+exports / OpenVPN presence); old `tunnels[]` configs auto-migrate with server names, keys, mounts and Keychain passwords preserved
 - asyncio HTTP→SOCKS5 proxy with per-request origin binding (keep-alive safe, CONNECT, chunked)
 - **v0.9 multi-active**: one proxy tunnel (`-D`) + any number of forward-only tunnels (`-L`) in parallel — server A as your proxy, server B mapping ports to `127.0.0.1`; independent retry, host-key handling, `forward_autostart` on launch; **per-forward click-to-toggle** (disabled rows hold no port, unconnected sessions never pulled up)
 - Per-rule one-click SSH reachability test (works on unsaved values)
