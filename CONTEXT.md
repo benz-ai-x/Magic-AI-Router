@@ -63,6 +63,10 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 菜单栏与设置窗共用的用户意图执行纪律单一归宿（`services/intents.py`，架构评审 R5）：重连分派（转发会话按 id 守卫重建 / 代理隧道整体重连，guarded=保存流「未连接绝不拉起」、显式=Spec-A 会话存在即重建）、转发会话启停、端口映射行启停写径（事务写 + 守卫重建 + 如实文案）、挂载启停、抓包开关动作半边（端口占用对话与 CA 信任引导等 UI 门控留在 adapter）、打开抓包目录、复制 AI 助手指令（ADR-009 闩锁）。线程纪律独占：慢操作（重连子进程 join ~10s、host-key 首连）daemon 线程后台跑，菜单点击即返回；通知与 dirty 经注入回调。菜单回调（从菜单状态推导意图）与 `_bridge_action`（从显式 action 字符串映射意图）是同一 seam 的两个薄 adapter——一个意图一个家，改一处两边生效。
 
+### 菜单状态语法（Menu State Grammar）
+
+状态栏菜单的状态表达单一语法（UX 第二批，2026-09-25）：**标题永远回答「点按会发生什么」（动词），状态永远由专用通道回答「现在怎么样」**。两类实体两种通道——**A 类运行物**（代理/转发会话、转发行、挂载、AI 路由、抓包、系统代理：有生命周期与健康态）用手绘状态圆点四值（绿=运行 / 黄=进行中 / 黑=未启动 / 红=异常）+ 行尾状态词（文字冗余，glance 与 VoiceOver 共用）；**B 类设置**（防睡眠/登录启动/配置 API：无生命周期）用 macOS 原生 ✓（`NSMenuItem.state`）+ 中性名词标题，不染运行色。动词词表两套按宾语性质走：**启动/停止**（进程与会话）、**开启/关闭**（开关与设置），域动词保留（挂载/卸载）。组标题异常 rollup：默认安静（健康不挂标记），组内有 error 态才挂「⚠ n」——与状态区 ⚠ 计数同源；扫一眼闭合菜单即可判健康。工程事实：状态圆点为**手绘位图**——SF Symbol 图像的 tint 在 NSMenuItem 上两轮真机实测不生效（template 渲染通道按菜单文字色单色渲染，`setTemplate_(False)` 亦无效）；idle 档黑点保持 template 随文字色明暗自适应。
+
 ### 设置窗桥接（Settings Window Bridge）
 
 偏好设置窗（WKWebView）内 JS 与原生 Python 之间的消息协议。单一 `bridge` 通道，消息为 `{type, payload}` JSON。协议核心在 `shellui/bridge_protocol.py`（纯 Python，可单测）；`shellui/webview_window.py` 仅为 ObjC 薄 adapter。

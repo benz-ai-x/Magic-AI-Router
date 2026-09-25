@@ -17,10 +17,10 @@ from capture.resources import CaptureResourcesError, resolve_capture_resources
 
 logger = logging.getLogger("magic-proxy.capture_ctrl")
 
-# menu_title() runs once per UI tick; the `security verify-cert` subprocess
+# hint() runs once per UI tick; the `security verify-cert` subprocess
 # behind the trust check must not spawn every second at idle. 30s staleness
-# is acceptable for a menu label; the toggle path (MagicProxyApp) always does
-# a live check, so gating decisions never read this cache.
+# is acceptable for a menu hint line; the toggle path (MagicProxyApp) always
+# does a live check, so gating decisions never read this cache.
 TRUST_CACHE_TTL = 30.0
 
 
@@ -85,7 +85,7 @@ class CaptureController:
             return False
         self._enabled = True
         self._preflight_error = None
-        self._trust_cache = None  # enabled titles never read trust state
+        self._trust_cache = None  # enabled 状态下 hint 不读信任缓存
         started = self._monitor.start(
             mitmdump_bin=res.mitmdump_bin,
             addon_path=res.addon_path,
@@ -117,23 +117,25 @@ class CaptureController:
         self._trust_cache = (now + TRUST_CACHE_TTL, trusted)
         return trusted
 
-    def menu_title(self):
-        """Derive the capture menu title from state + a live CA-trust check.
-
-        动词式（UX 批次：开关范式统一）——标题是点按将发生的动作。"""
+    def menu_state(self):
+        """状态点四值（菜单状态语法 A 类）：ok=运行 / warn=启动中 /
+        idle=已停止 / err=异常——标题动词不再承载状态（「停止抓包 ●🟡」
+        = 正在启动中、点按即停，无需后缀）。"""
         s = self._monitor.status
         if s == "error":
-            return "开启抓包模式（重试）"
+            return "err"
         if self._enabled and s == "running":
-            return "关闭抓包模式"
+            return "ok"
         if self._enabled:
-            return "关闭抓包模式（启动中…）"
-        if not self._ca_trusted():
-            return "开启抓包模式（需先信任证书）"
-        return "开启抓包模式"
+            return "warn"
+        return "idle"
 
-    def error_hint(self):
-        """Detail line for a crashed mitmdump; None when not applicable."""
+    def hint(self):
+        """hint 行（toggle 下方的引导/详情）：mitmdump 崩溃详情，或首次
+        使用未信任本地根 CA 的引导（信任后消失）。"""
         if self._monitor.status == "error" and self._monitor.error_msg:
             return f"  {_truncate(self._monitor.error_msg, 80)}"
+        if (not self._enabled and self._monitor.status != "error"
+                and not self._ca_trusted()):
+            return "  首次抓包需先信任本地根 CA——启动后按引导操作"
         return None

@@ -15,10 +15,9 @@ def _state(**overrides):
         paused=False,
         stats_snapshot={"active_connections": 0, "rate_down": 0.0, "rate_up": 0.0},
         config={}, sys_proxy_on=False, sys_proxy_error="",
-        capture_menu_title="开始抓包", capture_error_hint=None,
+        capture_enabled=False, capture_state="idle", capture_hint=None,
         suanpan_running=False, suanpan_error="", suanpan_listen_address="",
-        current_tunnel=None, prevent_sleep_title="阻止睡眠",
-        launch_login_title="开机启动",
+        current_tunnel=None,
     )
     base.update(overrides)
     return MenuState(**base)
@@ -35,6 +34,79 @@ class TestStructKey(unittest.TestCase):
                 "active_connections": 5, "rate_down": 1.0, "rate_up": 1.0}),
         ).struct_key()
         self.assertEqual(key_idle, key_busy)
+
+
+class TestStateGrammar(unittest.TestCase):
+    """状态语法矩阵：A 类运行物（标题=动作，状态点=现状）与 B 类设置
+    （中性名词 + 原生 ✓）；组标题异常 rollup（默认安静，异常响亮）。"""
+
+    @staticmethod
+    def _cfg():
+        return TestMultiActiveTunnels._cfg()
+
+    def _build(self, st):
+        app = MagicMock()
+        with unittest.mock.patch("shellui.menu_builder.chromium_proxy.installed_apps",
+                                 return_value=[]):
+            mb = MenuBuilder(app, lambda: st)
+            mb.build()
+        return mb
+
+    def test_router_toggle_title_follows_running(self):
+        mb = self._build(_state(suanpan_running=True,
+                                suanpan_listen_address="127.0.0.1:9527"))
+        titles = [i.title for i in mb.refs["group_router"].values()
+                  if hasattr(i, "title")]
+        self.assertIn("停止路由", titles)
+        self.assertNotIn("启动路由", titles)
+
+    def test_capture_toggle_pure_verbs_with_hint(self):
+        mb = self._build(_state(
+            capture_enabled=False, capture_state="idle",
+            capture_hint="  首次抓包需先信任本地根 CA——启动后按引导操作"))
+        titles = [i.title for i in mb.refs["group_capture"].values()
+                  if hasattr(i, "title")]
+        self.assertIn("启动抓包", titles)          # 标题=纯动作
+        self.assertNotIn("（需先信任证书）", titles[0])  # 状态/引导不进标题
+        self.assertTrue(any("首次抓包" in t for t in titles))  # hint 行
+        mb2 = self._build(_state(capture_enabled=True, capture_state="ok"))
+        titles2 = [i.title for i in mb2.refs["group_capture"].values()
+                   if hasattr(i, "title")]
+        self.assertIn("停止抓包", titles2)
+
+    def test_group_rollup_quiet_when_healthy(self):
+        mb = self._build(_state(
+            ssh_status="connected", config=self._cfg(),
+            forward_states=(ForwardState("t-2", "AWS-ap", "connected"),),
+            mount_states=(MountState("t-1", "a", "data", "mounted", ""),),
+            suanpan_running=True))
+        self.assertEqual(mb.refs["group_proxy"].title, "代 理")
+        self.assertEqual(mb.refs["group_forward"].title, "端口映射")
+        self.assertEqual(mb.refs["group_mount"].title, "远程挂载")
+        self.assertEqual(mb.refs["group_router"].title, "AI 路由")
+        self.assertEqual(mb.refs["group_capture"].title, "抓 包")
+
+    def test_group_rollup_marks_errors(self):
+        mb = self._build(_state(
+            ssh_status="error", config=self._cfg(),
+            forward_states=(ForwardState("t-2", "AWS-ap", "error"),),
+            mount_states=(MountState("t-1", "a", "data", "error", "x"),
+                          MountState("t-1", "a", "ws", "error", "y")),
+            suanpan_error="dep missing", capture_state="err"))
+        self.assertEqual(mb.refs["group_proxy"].title, "代 理 ⚠ 1")
+        self.assertEqual(mb.refs["group_forward"].title, "端口映射 ⚠ 1")
+        self.assertEqual(mb.refs["group_mount"].title, "远程挂载 ⚠ 2")
+        self.assertEqual(mb.refs["group_router"].title, "AI 路由 ⚠ 1")
+        self.assertEqual(mb.refs["group_capture"].title, "抓 包 ⚠ 1")
+
+    def test_status_line_uses_unified_separator(self):
+        mb = self._build(_state(
+            ssh_status="connected", config=self._cfg(),
+            forward_states=(ForwardState("t-2", "AWS-ap", "connected"),),
+            mount_states=(MountState("t-1", "a", "data", "mounted", ""),)))
+        title = mb.refs["proxy_status"].title
+        self.assertIn("1 条转发 · 1 个挂载", title)
+        self.assertNotIn("｜", title)
 
 
 if __name__ == "__main__":
@@ -90,6 +162,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
                        "端口映射": mb._build_forward_submenu,
                        "选 项": mb._build_system_submenu}[title]
             parent = builder()
+        self._mb = mb
         rows = list(parent.values())
         self._titles = [r.title for r in rows if hasattr(r, "title")]
         return parent, [r for r in rows if hasattr(r, "values")]
@@ -181,13 +254,19 @@ class TestMultiActiveTunnels(unittest.TestCase):
         self.assertIn("Aws-eu — 随代理运行 · 启停将重启代理", titles)
         self.assertIn("7001 → 71 · 已映射", titles)
 
-    def test_system_submenu_and_refs(self):
-        _, _subs = self._submenu("选 项")
+    def test_system_submenu_uses_native_checks(self):
+        """B 类设置：中性名词标题 + 原生 ✓（NSMenuItem.state）——
+        状态用母语表达，不染运行色。"""
+        self._submenu("选 项", cfg={"prevent_sleep": True,
+                                    "launch_at_login": False,
+                                    "config_api_enabled": True,
+                                    "tunnels": []})
         titles = self._titles
-        self.assertIn("阻止睡眠", titles)   # fixture 文案（=防睡眠开关）
-        self.assertIn("开机启动", titles)   # fixture 文案（=登录启动开关）
-        # ADR-009：配置 API 服务开关（MenuState 字段缺省 = 待开启）
-        self.assertIn("开启配置 API 服务", titles)
+        self.assertEqual(titles, ["防睡眠", "登录启动", "配置 API 服务"])
+        mb = self._mb
+        self.assertEqual(mb.refs["prevent_sleep"]._menuitem.state(), 1)
+        self.assertEqual(mb.refs["launch_login"]._menuitem.state(), 0)
+        self.assertEqual(mb.refs["config_api"]._menuitem.state(), 1)
 
     def test_status_line_appends_forward_count(self):
         mb = MenuBuilder(MagicMock(), lambda: _state(

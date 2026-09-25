@@ -272,21 +272,13 @@ class MagicProxyApp(rumps.App):
             config=self._config,
             sys_proxy_on=sysp.on,
             sys_proxy_error=sysp.error,
-            capture_menu_title=cap.menu_title(),
-            capture_error_hint=cap.error_hint(),
+            capture_enabled=cap.enabled,
+            capture_state=cap.menu_state(),
+            capture_hint=cap.hint(),
             suanpan_running=sp.running,
             suanpan_error=sp.error,
             suanpan_listen_address=sp.listen_address() if sp.running else "",
             current_tunnel=self._conn.current_tunnel,
-            prevent_sleep_title=("关闭防睡眠"
-                                 if self._config.get("prevent_sleep")
-                                 else "开启防睡眠"),
-            launch_login_title=("关闭登录启动"
-                                if self._config.get("launch_at_login")
-                                else "开启登录启动"),
-            config_api_title=("关闭配置 API 服务"
-                              if self._config.get("config_api_enabled")
-                              else "开启配置 API 服务"),
             forward_states=tuple(self._conn.forward_sessions()),
             mount_states=tuple(self._mounts.mount_states()),
         )
