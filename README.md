@@ -4,9 +4,9 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-[![Release](https://img.shields.io/github/v/release/benz-ai-x/Magic-AI-Router)](../../releases)
-[![Downloads](https://img.shields.io/github/downloads/benz-ai-x/Magic-AI-Router/total)](../../releases)
-[![Stars](https://img.shields.io/github/stars/benz-ai-x/Magic-AI-Router?style=social)](../../stargazers)
+[![Release](https://img.shields.io/github/v/release/benz-ai-x/magic-stack)](../../releases)
+[![Downloads](https://img.shields.io/github/downloads/benz-ai-x/magic-stack/total)](../../releases)
+[![Stars](https://img.shields.io/github/stars/benz-ai-x/magic-stack?style=social)](../../stargazers)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%28Apple%20Silicon%29-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 [![Tests](https://img.shields.io/badge/tests-2000%2B%20%C2%B7%20ADRs%20%C2%B7%20zero%20telemetry-brightgreen)](CONTEXT.md)
@@ -73,8 +73,8 @@ Curators and comparison shoppers, this section is for you:
 **From source / build your own `.app`:**
 
 ```bash
-git clone https://github.com/benz-ai-x/Magic-AI-Router.git
-cd Magic-AI-Router
+git clone https://github.com/benz-ai-x/magic-stack.git
+cd magic-stack
 pip3 install -r requirements-dev.txt && python3 app.py     # run
 # bash build.sh                                            # or package
 ```

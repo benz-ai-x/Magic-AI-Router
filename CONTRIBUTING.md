@@ -7,8 +7,8 @@ Thanks for your interest in contributing! Magic Stack is a pure-Python macOS men
 ## Setup
 
 ```bash
-git clone https://github.com/benz-ai-x/Magic-AI-Router.git
-cd Magic-AI-Router
+git clone https://github.com/benz-ai-x/magic-stack.git
+cd magic-stack
 pip3 install -r requirements-dev.txt
 python3 app.py   # dev mode
 ```
