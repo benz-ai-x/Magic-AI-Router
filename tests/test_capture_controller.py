@@ -134,49 +134,57 @@ class TestEnableDisable(unittest.TestCase):
         self.assertFalse(ctrl.enabled)
 
 
-class TestMenuTitle(unittest.TestCase):
-    def test_running_shows_on(self):
+class TestMenuStateAndHint(unittest.TestCase):
+    """状态语法：状态进点（menu_state 四值）、引导/详情进 hint 行——
+    标题动词不再承载状态。"""
+
+    def test_running_is_ok(self):
         ctrl = _ctrl(status="running")
         ctrl._enabled = True
-        self.assertEqual(ctrl.menu_title(), "关闭抓包模式")
+        self.assertEqual(ctrl.menu_state(), "ok")
+        self.assertIsNone(ctrl.hint())
 
-    def test_starting_shows_transitional(self):
+    def test_starting_is_warn(self):
         ctrl = _ctrl(status="starting")
         ctrl._enabled = True
-        self.assertEqual(ctrl.menu_title(), "关闭抓包模式（启动中…）")
+        self.assertEqual(ctrl.menu_state(), "warn")
 
-    def test_error_shows_warning_even_if_enabled(self):
+    def test_error_is_err_even_if_enabled(self):
         ctrl = _ctrl(status="error")
         ctrl._enabled = True
-        self.assertEqual(ctrl.menu_title(), "开启抓包模式（重试）")
+        self.assertEqual(ctrl.menu_state(), "err")
 
-    def test_off_and_ca_trusted_shows_plain_off(self):
+    def test_off_and_ca_trusted_is_idle_without_hint(self):
         with patch("capture.ca_trust.is_trusted", return_value=True):
-            self.assertEqual(_ctrl(status="stopped").menu_title(), "开启抓包模式")
+            ctrl = _ctrl(status="stopped")
+            self.assertEqual(ctrl.menu_state(), "idle")
+            self.assertIsNone(ctrl.hint())
 
-    def test_off_and_ca_not_trusted_shows_hint(self):
+    def test_off_and_ca_not_trusted_gets_cert_hint(self):
         with patch("capture.ca_trust.is_trusted", return_value=False):
-            self.assertEqual(_ctrl(status="stopped").menu_title(), "开启抓包模式（需先信任证书）")
+            ctrl = _ctrl(status="stopped")
+            self.assertEqual(ctrl.menu_state(), "idle")
+            self.assertIn("信任", ctrl.hint())
 
     def test_does_not_check_ca_trust_while_enabled(self):
         ctrl = _ctrl(status="running")
         ctrl._enabled = True
         with patch("capture.ca_trust.is_trusted") as is_trusted:
-            ctrl.menu_title()
+            ctrl.hint()
         is_trusted.assert_not_called()
 
 
 class TestTrustCaching(unittest.TestCase):
-    """menu_title() runs once per UI tick — the CA-trust subprocess check
+    """hint() runs once per UI tick — the CA-trust subprocess check
     behind it must be TTL-cached so idle state doesn't spawn `security
     verify-cert` every second."""
 
-    def test_repeated_menu_title_checks_trust_once(self):
+    def test_repeated_hint_checks_trust_once(self):
         ctrl = _ctrl(status="stopped")
         with patch("capture.ca_trust.is_trusted", return_value=False) as is_trusted:
-            ctrl.menu_title()
-            ctrl.menu_title()
-            ctrl.menu_title()
+            ctrl.hint()
+            ctrl.hint()
+            ctrl.hint()
         self.assertEqual(is_trusted.call_count, 1)
 
     def test_cache_expires_after_ttl(self):
@@ -184,9 +192,9 @@ class TestTrustCaching(unittest.TestCase):
         with patch("capture.ca_trust.is_trusted", return_value=False) as is_trusted, \
              patch.object(capture_controller.time, "monotonic") as mono:
             mono.return_value = 1000.0
-            ctrl.menu_title()
+            ctrl.hint()
             mono.return_value = 1000.0 + capture_controller.TRUST_CACHE_TTL + 1
-            ctrl.menu_title()
+            ctrl.hint()
         self.assertEqual(is_trusted.call_count, 2)
 
     def test_trust_result_change_reflected_after_expiry(self):
@@ -194,9 +202,9 @@ class TestTrustCaching(unittest.TestCase):
         with patch("capture.ca_trust.is_trusted", side_effect=[False, True]) as is_trusted, \
              patch.object(capture_controller.time, "monotonic") as mono:
             mono.return_value = 0.0
-            self.assertEqual(ctrl.menu_title(), "开启抓包模式（需先信任证书）")
+            self.assertIn("信任", ctrl.hint())
             mono.return_value = capture_controller.TRUST_CACHE_TTL + 1
-            self.assertEqual(ctrl.menu_title(), "开启抓包模式")
+            self.assertIsNone(ctrl.hint())
         self.assertEqual(is_trusted.call_count, 2)
 
     def test_enable_invalidates_cache(self):
@@ -204,30 +212,30 @@ class TestTrustCaching(unittest.TestCase):
         with patch("capture.ca_trust.is_trusted", return_value=False) as is_trusted, \
              patch.object(capture_controller, "resolve_capture_resources",
                           return_value=_res()):
-            ctrl.menu_title()  # populates cache
+            ctrl.hint()  # populates cache
             ctrl.enable()
             ctrl._enabled = False
             ctrl._monitor.status = "stopped"
-            ctrl.menu_title()  # must re-check, not reuse pre-enable cache
+            ctrl.hint()  # must re-check, not reuse pre-enable cache
         self.assertEqual(is_trusted.call_count, 2)
 
 
-class TestErrorHint(unittest.TestCase):
+class TestHint(unittest.TestCase):
     def test_error_with_message_returns_hint(self):
         ctrl = _ctrl(status="error", error_msg="mitmdump exited with code 1")
-        hint = ctrl.error_hint()
+        hint = ctrl.hint()
         self.assertIsNotNone(hint)
         self.assertIn("mitmdump exited with code 1", hint)
 
     def test_non_error_returns_none(self):
-        self.assertIsNone(_ctrl(status="stopped", error_msg="").error_hint())
+        self.assertIsNone(_ctrl(status="stopped", error_msg="").hint())
 
     def test_error_empty_message_returns_none(self):
-        self.assertIsNone(_ctrl(status="error", error_msg="").error_hint())
+        self.assertIsNone(_ctrl(status="error", error_msg="").hint())
 
     def test_long_message_truncated(self):
         ctrl = _ctrl(status="error", error_msg="x" * 200)
-        self.assertLessEqual(len(ctrl.error_hint()), 90)
+        self.assertLessEqual(len(ctrl.hint()), 90)
 
 
 
