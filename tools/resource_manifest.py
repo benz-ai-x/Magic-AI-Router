@@ -36,7 +36,8 @@ RUNTIME_MODULES = [
     "services/config_server.py", "services/suanpan_runtime.py",
     "services/claude_code_setup.py", "services/lifecycle_runtime.py",
     "services/balance_usage.py", "services/authenticated_http.py",
-    "services/sp_config.py",
+    "services/sp_config.py", "services/provider_probe.py",
+    "services/usage_stats.py",
 ]
 
 # 运行时 resource_path 消费的资源名（必须与上面 dest 平铺名一致）

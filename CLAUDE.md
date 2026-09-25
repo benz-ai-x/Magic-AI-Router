@@ -180,9 +180,13 @@ services/ ── 服务
     注册表（ssh/nfs/openvpn 三卡，label + probe 统一签名）+ check_server
     编排（单卡失败不连坐）；probe_inputs（探针输入守卫 + Keychain 取用）
     自 config_server 迁入——test_tunnel/test_forward/NFS 远程操作反向复用
-  balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围，含来源
-    Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）；
-    余额响应归一 = 注册表卡名路由 + 形状嗅探兜底（_BALANCE_PARSERS）
+  balance_usage.py ── 余额 API 单一职责（R5 三刀切）：余额响应归一 =
+    注册表卡名路由 + 形状嗅探兜底（_BALANCE_PARSERS）+ fetch_balance
+  provider_probe.py ── 供应商验证与端点探测（自 balance_usage 拆出）：
+    fetch_models / test_provider（协议分叉最小消息）+ 端点三级探测
+    （存在性/认证/模型清单，ADR-010）+ /v1/models 候选链单一归宿
+  usage_stats.py ── 本地用量多维聚合（自 balance_usage 拆出；CST 范围
+    ——时区口径 shared.defaults.CST，含来源 Agent 维度；纯本地零网络）
 
 suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Messages / OpenAI Chat / Responses（Codex）→ 多家 LLM 后端，直通优先失配才转换）
   config.py ── Pydantic schema + 掩码契约 + null 节归一 + 文法消费

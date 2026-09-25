@@ -37,6 +37,26 @@ class AuthRedirectError(Exception):
         super().__init__(msg)
 
 
+def shape_outbound_error(exc) -> str:
+    """出站失败 → 可行动中文分类（#53；余额与探测共用）。
+
+    防泄漏纪律：只有不含凭证的 errno/reason 类别名进消息，响应体
+    永不进——供应商可能把 API key 回显在错误体里。
+    """
+    import socket
+    import urllib.error
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    if isinstance(reason, socket.timeout) or isinstance(exc, socket.timeout):
+        return "连接超时"
+    if isinstance(reason, ConnectionRefusedError):
+        return "连接被拒绝"
+    if isinstance(reason, socket.gaierror):
+        return "域名解析失败"
+    return type(exc).__name__
+
+
 def _origin_of(url: str):
     parts = urllib.parse.urlsplit(url)
     port = parts.port or _DEFAULT_PORTS.get(parts.scheme.lower())

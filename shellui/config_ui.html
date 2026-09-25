@@ -769,7 +769,7 @@ function providerRefsHint(name,refs){
 // API 保持日期升序（时间序列的自然数据序）；表格展示最新在前。
 function dailyRowsDesc(daily){return[...daily].sort((a,b)=>String(b.date)<String(a.date)?-1:String(b.date)>String(a.date)?1:0);}
 // 每日趋势柱状图指标口径（#3 P2）。input = 输入 token 合计，与缓存命中率
-// 分母（balance_usage._finish_usage 的 billed_input）同口径：纯 input_tokens
+// 分母（usage_stats._finish_usage 的 billed_input）同口径：纯 input_tokens
 // 会漏掉占大头的缓存读，合计更能反映每日真实消耗。
 const DAILY_METRICS={
   input:{label:'输入 token 合计',value:d=>(d.input_tokens||0)+(d.cache_read_tokens||0)+(d.cache_creation_tokens||0)},

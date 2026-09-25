@@ -1,28 +1,30 @@
-"""Provider balance + usage aggregation for the config UI.
+"""供应商余额/配额查询与归一（R5 三刀切后的单一职责半边）。
 
-Extracted from config_server.py to isolate the upstream balance-API calls and
-usage-log aggregation behind one seam. ``fetch_balance`` / ``fetch_usage`` take
-the raw Suanpan config dict (no file I/O) so they unit-test directly — the
-caller owns reading ``~/.suanpan.yaml``.
+Extracted from config_server.py to isolate the upstream balance-API calls
+behind one seam. ``fetch_balance`` takes the raw Suanpan config dict (no
+file I/O) so it unit-tests directly — the caller owns reading
+``~/.suanpan.yaml``.
+
+姊妹模块（同期拆出，一个变更原因一个模块）：
+- services/provider_probe.py — 供应商验证与端点探测（models/test/probe）；
+- services/usage_stats.py — 本地 usage.jsonl 的 CST 聚合。
+时区口径（CST）与出站失败塑形（shape_outbound_error）归 shared/defaults
+与 services/authenticated_http。
 """
 import json
 import logging
-import math
-import os
-import time
-import urllib.error
 import urllib.parse
-import urllib.request
 
 from services.authenticated_http import (
     AuthRedirectError,
     AuthenticatedHttpClient,
+    shape_outbound_error,
 )
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
+from shared.defaults import CST
 from shared.provider_auth import (
     PROVIDER_REGISTRY as _REGISTRY,
-    build_outbound_headers,
     resolve_api_key,
 )
 
@@ -47,16 +49,6 @@ _MONTH_HOURS = 24 * 30
 # Duration in hours for each GLM unit — used for ascending sort of quota windows.
 _UNIT_DURATION_HOURS = {3: 5, 6: _WEEK_HOURS, 5: _MONTH_HOURS}
 _LEVEL_MAP = {"LEVEL_ADVANCED": "Advanced", "LEVEL_PRO": "Pro", "LEVEL_ALLEGRO": "Allegro"}
-CST = timezone(timedelta(hours=8))
-USAGE_RANGES = frozenset({"today", "7d", "month", "all"})
-DEFAULT_USAGE_LOG_PATH = "~/.suanpan/logs/usage.jsonl"
-_TOKEN_FIELDS = (
-    "input_tokens",
-    "output_tokens",
-    "cache_read_tokens",
-    "cache_creation_tokens",
-)
-_USAGE_NUMERIC_FIELDS = (*_TOKEN_FIELDS, "latency_ms", "status")
 
 
 def _fmt_dt(dt):
@@ -292,243 +284,6 @@ def normalize_balance(raw, label, parser=None):
             "secondary": ("响应字段: " + ", ".join(keys)) if keys else "未识别的响应结构"}
 
 
-def fetch_models(sp_raw, name):
-    """Query one provider's model list API. ``sp_raw`` = raw Suanpan config dict.
-
-    Returns ``{"models": [id, ...]}`` or ``{"error": <message>}`` — business
-    failures are data, not exceptions (same convention as ``fetch_balance``).
-    Tries ``{base_url}/v1/models`` first, falls back to ``{base_url}/models``
-    on 404 (mirrors the ``/v1/messages`` URL convention in suanpan/proxy.py).
-    """
-    p = sp_raw.get("providers", {}).get(name)
-    if p is None:
-        return {"error": f"供应商 {name!r} 不存在"}
-    base = p.get("base_url", "").rstrip("/")
-    if not base:
-        return {"error": "未配置 base_url"}
-    key = resolve_api_key(p)
-    if not key:
-        return {"error": "未配置 API Key"}
-    headers = build_outbound_headers({}, key, auth_header=p.get("auth_header"))
-    headers["anthropic-version"] = "2023-06-01"
-
-    def _get(url):
-        return _BALANCE_CLIENT.open_json(url, headers=headers)
-
-    # Candidates: base_url paths first, then origin root — some providers mount
-    # the Messages API under a path prefix (e.g. /anthropic) but only serve
-    # /models at the root.
-    candidates = [f"{base}/v1/models", f"{base}/models"]
-    parts = urllib.parse.urlsplit(base)
-    origin = f"{parts.scheme}://{parts.netloc}"
-    if origin != base:
-        candidates += [f"{origin}/v1/models", f"{origin}/models"]
-
-    try:
-        data = None
-        for url in candidates:
-            try:
-                data = _get(url)
-                break
-            except urllib.error.HTTPError as e:
-                if e.code != 404:
-                    raise
-        if data is None:
-            return {"error": "供应商未提供模型列表接口（均 404）"}
-        ids = [m["id"] for m in data["data"]]
-    except Exception as e:
-        return {"error": f"{type(e).__name__}: {e}"}
-    return {"models": list(dict.fromkeys(ids))}
-
-
-def _http_error_message(e) -> str:
-    """HTTPError → 供应商错误消息（≤120 字符；解析失败回退 HTTP <code>）。"""
-    try:
-        err_body = json.loads(e.read())
-        if isinstance(err_body.get("error"), dict):
-            msg = err_body["error"].get("message", "")
-        else:
-            msg = err_body.get("message", str(e)[:120])
-    except Exception:
-        msg = f"HTTP {e.code}"
-    return msg[:120]
-
-
-def _drain_http_error(e) -> None:
-    """读完并丢弃 HTTPError 响应体（连接卫生）。"""
-    try:
-        e.read()
-    except Exception:  # noqa: BLE001 — 清理失败无关紧要
-        pass
-
-
-def test_provider(sp_raw, name, model=None):
-    """Send a minimal test message to a provider's chat/messages endpoint.
-
-    ADR-010：按 provider.protocol 分叉——anthropic（默认）打
-    ``{base}/v1/messages`` 的最小 Anthropic 消息；openai 打
-    ``{base}/chat/completions`` 的最小 chat 消息（参数名按模型族选
-    max_tokens/max_completion_tokens）。这同时是端点探测的第三级
-    「真实请求确证」，按需调用（有真实费用，虽然 ≈0）。
-
-    Returns {"ok": True, "model": ..., "reply": "..."} on success,
-    or {"error": "<message>"} on failure.
-    """
-    p = sp_raw.get("providers", {}).get(name)
-    if p is None:
-        return {"error": f"供应商 {name!r} 不存在"}
-    base = p.get("base_url", "").rstrip("/")
-    if not base:
-        return {"error": "未配置 base_url"}
-    key = resolve_api_key(p)
-    if not key:
-        return {"error": "未配置 API Key"}
-    models = p.get("models") or []
-    target_model = model or (models[0] if models else "")
-    if not target_model:
-        return {"error": "未配置模型"}
-
-    if (p.get("protocol") or "anthropic") == "openai":
-        from suanpan.compat import openai_max_tokens_field
-        headers = build_outbound_headers({}, key)  # openai 车道恒 Bearer
-        headers["Content-Type"] = "application/json"
-        body = json.dumps({
-            "model": target_model,
-            openai_max_tokens_field(target_model): 32,
-            "messages": [{"role": "user",
-                          "content": "Say hello in one word."}],
-        }).encode()
-        url = f"{base}/chat/completions"
-    else:
-        headers = build_outbound_headers({}, key,
-                                         auth_header=p.get("auth_header"))
-        headers["Content-Type"] = "application/json"
-        headers["anthropic-version"] = "2023-06-01"
-        body = json.dumps({
-            "model": target_model,
-            "max_tokens": 32,
-            "messages": [{"role": "user", "content": "Say hello in one word."}],
-        }).encode()
-        url = f"{base}/v1/messages"
-
-    try:
-        data = AuthenticatedHttpClient(timeout=30).open_json(
-            url, headers=headers, data=body, method="POST", timeout=30)
-        reply = ""
-        if (p.get("protocol") or "anthropic") == "openai":
-            choices = data.get("choices") or []
-            if choices and isinstance(choices[0], dict):
-                reply = str((choices[0].get("message") or {}).get("content")
-                            or "")[:80]
-        else:
-            if isinstance(data.get("content"), list) and data["content"]:
-                reply = data["content"][0].get("text", "")[:80]
-        return {"ok": True, "model": data.get("model", target_model), "reply": reply}
-    except urllib.error.HTTPError as e:
-        return {"error": _http_error_message(e)}
-    except Exception as e:
-        return {"error": f"{type(e).__name__}: {e}"}
-
-
-# ── 端点连通性探测（ADR-010 决策二，三级探测）───────────────────────
-# 探测是免费的（GET 语义）：存在性（GET POST-only 端点看 404/405/401）
-# + 认证（401/403）+ 模型清单（GET /v1/models）。产生真实费用的「最小
-# 请求确证」复用 test_provider，由 UI 按需触发。
-
-def probe_provider(provider):
-    """对单个 provider 形态 dict 的 base_url 按三协议标准路径探测。
-
-    ``provider``：至少含 base_url（可选 api_key/api_key_env/auth_header）。
-    返回 ``{"anthropic": {...}, "openai": {...}, "responses": {...}}``，每协议
-    ``{"reachable", "auth_ok", "latency_ms", "models", "error"}``；业务失败
-    是数据不是异常（fetch_models 同约定）。
-    """
-    base = (provider.get("base_url") or "").rstrip("/")
-    if not base:
-        return {"error": "未配置 base_url"}
-    key = resolve_api_key(provider)
-    headers = build_outbound_headers(
-        {}, key, auth_header=provider.get("auth_header"))
-    out = {}
-    for proto, path in (("anthropic", "/v1/messages"),
-                        ("openai", "/chat/completions"),
-                        ("responses", "/responses")):
-        out[proto] = _probe_endpoint(base, path, headers)
-    return out
-
-
-def _probe_endpoint(base, path, headers):
-    result = {"reachable": False, "auth_ok": None, "latency_ms": None,
-              "models": None, "error": None}
-    client = AuthenticatedHttpClient(timeout=10)
-    started = time.monotonic()
-
-    # 1. 存在性：GET POST-only 端点——404=无；401/403=在但 Key 问题；
-    #    其余（405/400/4xx/5xx）= 服务器路由了该路径，视为存在
-    exists = False
-    try:
-        client.open(f"{base}{path}", headers=headers, method="GET")
-        exists = True  # GET 竟 200：路由在（非严格 POST-only）
-    except urllib.error.HTTPError as e:
-        _drain_http_error(e)
-        if e.code == 404:
-            exists = False
-        else:
-            exists = True
-            if e.code in (401, 403):
-                result["auth_ok"] = False
-                result["error"] = f"Key 无效或无权限（HTTP {e.code}）"
-    except Exception as e:
-        result["error"] = _shape_balance_error(e)
-        return result
-    result["reachable"] = exists
-    result["latency_ms"] = int((time.monotonic() - started) * 1000)
-    if result["auth_ok"] is False:
-        return result
-
-    # 2/3. 认证确证 + 模型清单（GET /v1/models → /models 回退）。
-    # reachable 只由 POST 端点存在性决定——models 接口在不能证明
-    # /v1/messages 在（OpenAI 官方即反例：有 /v1/models 无 /v1/messages）
-    for models_url in (f"{base}/v1/models", f"{base}/models"):
-        try:
-            data = json.loads(client.open(models_url, headers=headers,
-                                          method="GET"))
-            ids = [m.get("id") for m in data.get("data", [])
-                   if isinstance(m, dict) and m.get("id")]
-            result["auth_ok"] = True
-            result["models"] = list(dict.fromkeys(ids))
-            return result
-        except urllib.error.HTTPError as e:
-            _drain_http_error(e)
-            if e.code in (401, 403):
-                result["auth_ok"] = False
-                result["error"] = f"Key 无效或无权限（HTTP {e.code}）"
-                return result
-            continue
-        except Exception:
-            continue
-    if not exists:
-        result["error"] = result["error"] or "端点不存在（404 且无模型接口）"
-    return result
-
-
-def _shape_balance_error(exc) -> str:
-    """#53：余额 API 失败按 reason 分类出可行动中文——防泄漏纪律不变
-    （只有不含凭证的 errno/reason 类别名进消息，响应体永不进）。"""
-    import socket
-    import urllib.error
-    reason = getattr(exc, "reason", None)
-    if isinstance(exc, urllib.error.HTTPError):
-        return f"HTTP {exc.code}"
-    if isinstance(reason, socket.timeout) or isinstance(exc, socket.timeout):
-        return "连接超时"
-    if isinstance(reason, ConnectionRefusedError):
-        return "连接被拒绝"
-    if isinstance(reason, socket.gaierror):
-        return "域名解析失败"
-    return type(exc).__name__
-
-
 def _month_window():
     """本月起止（GLM model-usage 查询窗口）——CST 日历，与 usage 聚合
     的时区口径一致。"""
@@ -572,7 +327,7 @@ def fetch_balance(sp_raw):
                 api_res.append({"label": label, "error": e.msg[:120]})
             except Exception as e:
                 api_res.append({"label": label,
-                                "error": _shape_balance_error(e)})
+                                "error": shape_outbound_error(e)})
         # GLM 月度：model-usage 本月窗口官方统计（注册表
         # model_usage_url = (url, parser)）
         entry = next((e for e in _REGISTRY.values()
@@ -591,156 +346,6 @@ def fetch_balance(sp_raw):
                 api_res.append({"label": "本月用量", "error": e.msg[:120]})
             except Exception as e:
                 api_res.append({"label": "本月用量",
-                                "error": _shape_balance_error(e)})
+                                "error": shape_outbound_error(e)})
         results.append({"provider": name, "supported": True, "apis": api_res})
     return results
-
-
-def _usage_bucket(*, latency=False):
-    bucket = {
-        "calls": 0,
-        **{field: 0 for field in _TOKEN_FIELDS},
-        "errors": 0,
-    }
-    if latency:
-        bucket["latency_sum"] = 0
-    return bucket
-
-
-def _add_usage(bucket, entry):
-    bucket["calls"] += 1
-    for field in _TOKEN_FIELDS:
-        bucket[field] += entry.get(field, 0)
-    if entry.get("status", 0) >= 400:
-        bucket["errors"] += 1
-    if "latency_sum" in bucket:
-        bucket["latency_sum"] += entry.get("latency_ms", 0)
-
-
-def _finish_usage(bucket):
-    billed_input = (
-        bucket["input_tokens"]
-        + bucket["cache_read_tokens"]
-        + bucket["cache_creation_tokens"]
-    )
-    bucket["cache_hit_rate"] = (
-        bucket["cache_read_tokens"] / billed_input if billed_input else None
-    )
-    if bucket.get("calls") and "latency_sum" in bucket:
-        latency_sum = bucket["latency_sum"]
-        calls = bucket["calls"]
-        if isinstance(latency_sum, int):
-            quotient, remainder = divmod(latency_sum, calls)
-            twice_remainder = remainder * 2
-            bucket["avg_latency_ms"] = quotient + int(
-                twice_remainder > calls
-                or (twice_remainder == calls and quotient % 2 == 1)
-            )
-        else:
-            bucket["avg_latency_ms"] = round(latency_sum / calls)
-    return bucket
-
-
-def _entry_cst_date(entry):
-    ts = entry.get("ts")
-    if not isinstance(ts, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=CST)
-    return parsed.astimezone(CST).date()
-
-
-def _valid_usage_entry(entry):
-    if not isinstance(entry, dict):
-        return False
-    for field in ("provider", "scenario", "ts"):
-        if not isinstance(entry.get(field), str) or not entry[field]:
-            return False
-    for field in _USAGE_NUMERIC_FIELDS:
-        if field not in entry:
-            return False
-        value = entry[field]
-        if (isinstance(value, bool) or not isinstance(value, (int, float))
-                or (isinstance(value, float) and not math.isfinite(value))
-                or value < 0):
-            return False
-    return _entry_cst_date(entry) is not None
-
-
-def fetch_usage(sp_raw, usage_range="all"):
-    """Aggregate the Suanpan usage log for a CST calendar range.
-
-    ``sp_raw`` is the raw Suanpan config dict. ``usage_range`` is one of
-    ``today`` / ``7d`` / ``month`` / ``all``; seven days includes today and
-    the preceding six CST calendar dates, month is the current CST calendar
-    month from the 1st through today.
-    """
-    if usage_range not in USAGE_RANGES:
-        raise ValueError(f"invalid usage range: {usage_range!r}")
-    today = datetime.now(CST).date() if usage_range != "all" else None
-    first_day = (
-        today if usage_range == "today"
-        else today - timedelta(days=6) if usage_range == "7d"
-        else today.replace(day=1) if usage_range == "month"
-        else None
-    )
-    path = os.path.expanduser(
-        sp_raw.get("usage_log", {}).get("path", DEFAULT_USAGE_LOG_PATH))
-    total = _usage_bucket(latency=True)
-    if not os.path.exists(path):
-        return {"total": _finish_usage(total), "providers": {},
-                "daily": [], "scenarios": {}, "agents": {}}
-    by_provider = {}
-    by_day = {}
-    by_route_source = {}
-    by_agent = {}
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not _valid_usage_entry(entry):
-                    continue
-                day = _entry_cst_date(entry)
-                if usage_range != "all" and (
-                        day < first_day or day > today):
-                    continue
-                provider = entry["provider"]
-                route_source = entry["scenario"]
-                agent = entry.get("agent") or ""
-                _add_usage(by_provider.setdefault(
-                    provider, _usage_bucket()), entry)
-                _add_usage(by_route_source.setdefault(
-                    route_source, _usage_bucket()), entry)
-                _add_usage(by_agent.setdefault(agent, _usage_bucket()), entry)
-                _add_usage(by_day.setdefault(day, _usage_bucket()), entry)
-                _add_usage(total, entry)
-    except OSError:
-        pass
-    daily = [
-        {"date": day.isoformat(), **_finish_usage(bucket)}
-        for day, bucket in sorted(by_day.items())
-    ]
-    return {
-        "total": _finish_usage(total),
-        "providers": {
-            name: _finish_usage(bucket) for name, bucket in by_provider.items()
-        },
-        "daily": daily,
-        # Public name follows the persisted RouteDecision.scenario field and
-        # Issue #1 API contract; internally these values are route sources.
-        "scenarios": {
-            name: _finish_usage(bucket)
-            for name, bucket in by_route_source.items()
-        },
-        # ADR-010 M5：来源 Agent 维度（User-Agent 判别；空串桶 = 未识别）
-        "agents": {
-            name: _finish_usage(bucket) for name, bucket in by_agent.items()
-        },
-    }

@@ -4,7 +4,7 @@
 
 失败路径韧性（issue #15）：write/rotate 的任何 OSError 都被吞并计数
 （best-effort adapter——业务响应不依赖观测写入成功）。聚合读取方在
-services/balance_usage（全文件扫描，CST 范围过滤）；目录/文件强制
+services/usage_stats（全文件扫描，CST 范围过滤）；目录/文件强制
 0700/0600、拒绝不安全 symlink。
 """
 
