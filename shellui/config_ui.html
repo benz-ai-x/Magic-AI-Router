@@ -40,7 +40,7 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .nav-sub{display:block;font-size:11px;color:var(--muted);font-weight:400;line-height:1.4}
 .nav-item:hover{background:color-mix(in oklch,var(--surface),var(--border) 28%);color:var(--fg)}
 .nav-item[aria-current=page]{background:var(--bg);color:var(--fg);border-color:var(--border);box-shadow:0 1px 2px color-mix(in oklch,var(--fg),transparent 94%)}
-.sidebar-spacer{flex:1}
+#nav-container{flex:1 1 auto;min-height:0;overflow-y:auto}
 .priority-note{margin:16px 4px 0;padding:12px 10px;border-top:1px solid var(--border);color:var(--muted);font-size:13px;line-height:1.6}
 .priority-note strong{display:block;margin-bottom:4px;color:var(--fg);font-weight:550}
 .sidebar-ai-helper{margin:8px 4px 0}
@@ -366,7 +366,6 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
       <div><div class="brand-name">Magic Stack</div><div class="brand-subtitle">设置</div></div>
     </div>
     <div id="nav-container"></div>
-    <div class="sidebar-spacer"></div>
     <div class="priority-note"><strong>保存后生效</strong>隧道变更需菜单「重新连接」；端口转发保存后自动重连；AI 路由保存后自动重载。</div>
     <div class="sidebar-ai-helper"><button class="btn btn-sm btn-ghost" onclick="copyAgentInstructions()">复制 AI 助手指令</button></div>
   </aside>
