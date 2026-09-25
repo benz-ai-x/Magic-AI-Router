@@ -29,10 +29,22 @@ class NfsSession(SshSession):
         )
 
     def _injected_tunnel(self):
-        """用户隧道副本 + 仅含 NFS 的 forwards（见模块头：绝不双进程绑同口）。"""
+        """用户隧道副本 + 仅含 NFS 的 forwards（见模块头：绝不双进程绑同口）。
+
+        v2 回归修复（2026-09-25）：命令构建读 ``services.ssh.forwards``
+        （ssh_launch._forwards），替换必须落在 v2 键上——此前写顶层
+        ``forwards`` 是 v1 残留，v2 形状下覆盖落空，NFS 会话原样复制
+        转发会话的全部 -L，双会话抢绑同口互顶死循环；v1 顶层键一并
+        清空，防读时兼容路径吃到旧行。"""
         tunnel = self._identity_fn()
         if tunnel is None:
             return None
         row = {"local_port": self.local_port, "remote_host": "127.0.0.1",
                "remote_port": NFS_REMOTE_PORT}
-        return {**tunnel, "forwards": [row]}
+        services = dict(tunnel.get("services") or {})
+        ssh_svc = dict(services.get("ssh") or {})
+        return {
+            **tunnel,
+            "forwards": [],
+            "services": {**services, "ssh": {**ssh_svc, "forwards": [row]}},
+        }
