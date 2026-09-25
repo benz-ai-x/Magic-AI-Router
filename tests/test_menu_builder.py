@@ -294,6 +294,21 @@ class TestIconInfrastructure(unittest.TestCase):
         menu_builder._apply_icon(rumps.MenuItem("x", callback=None),
                                  "no-such-key")
 
+    def test_tinted_symbol_must_not_be_template(self):
+        """SF Symbol 默认 template=True——NSMenuItem 按 menu 字色单色
+        渲染 template 图像、tint 被无视（圆点全黑根因，真机实锄）。
+        带 tint 必须 setTemplate_(False)；无 tint 保持 template 随 menu
+        文字色明暗自适应。"""
+        from AppKit import NSColor
+        from shellui import menu_builder
+        tinted = menu_builder._symbol_image(
+            "circle.fill", point_size=8, color=NSColor.systemGreenColor())
+        if tinted is not None:  # 无 AppKit 符号环境（CI）静默跳过
+            self.assertFalse(tinted.isTemplate())
+        plain = menu_builder._symbol_image("circle.fill", point_size=8)
+        if plain is not None:
+            self.assertTrue(plain.isTemplate())
+
     def test_status_color_kinds(self):
         from shellui import menu_builder
         for kind in ("ok", "warn", "err", "idle"):
