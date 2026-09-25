@@ -2,7 +2,12 @@
 import unittest
 
 from suanpan.config import AppConfig, ProviderConfig, RouterConfig
-from suanpan.router import decide_route, first_tier_route, NoRouteMatched
+from suanpan.router import (
+    decide_route,
+    extract_system_text,
+    first_tier_route,
+    NoRouteMatched,
+)
 
 
 def _config(providers=None, router=None, rules=None):
@@ -192,3 +197,24 @@ class TestNonStringModel(unittest.TestCase):
         cfg = _config()
         d = decide_route({"model": ["x"]}, config=cfg)
         self.assertIsNotNone(d)
+
+
+class TestExtractSystemText(unittest.TestCase):
+    """路由输入抽取的新家（R5 自 compat 迁入）：SUBAGENT 标签判定的
+    system 读取单一真源——三形态（纯串/blocks/缺失）。"""
+
+    def test_plain_string(self):
+        self.assertEqual(extract_system_text({"system": "S"}), "S")
+
+    def test_text_blocks_joined(self):
+        self.assertEqual(
+            extract_system_text({"system": [
+                {"type": "text", "text": "A"},
+                {"type": "text", "text": "B"},
+                {"type": "image", "source": {}},
+            ]}),
+            "A\nB")
+
+    def test_missing_or_none_returns_empty(self):
+        self.assertEqual(extract_system_text({}), "")
+        self.assertEqual(extract_system_text({"system": None}), "")

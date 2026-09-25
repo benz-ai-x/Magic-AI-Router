@@ -24,14 +24,13 @@ from mount import remote_setup
 from services import claude_code_setup
 from capture import capture_store
 from mpconf.config import load_config, merge_config, decorate_runtime_state
-from services.balance_usage import (
-    USAGE_RANGES,
-    fetch_balance,
+from services.balance_usage import fetch_balance
+from services.provider_probe import (
     fetch_models,
-    fetch_usage,
     probe_provider,
     test_provider,
 )
+from services.usage_stats import USAGE_RANGES, fetch_usage
 from util import resource_path as _resource_path
 
 logger = logging.getLogger("magic-proxy.config_server")

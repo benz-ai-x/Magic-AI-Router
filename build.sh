@@ -169,6 +169,8 @@ python -m PyInstaller \
     --add-data "services/balance_usage.py:." \
     --add-data "services/sp_config.py:." \
     --add-data "services/authenticated_http.py:." \
+    --add-data "services/provider_probe.py:." \
+    --add-data "services/usage_stats.py:." \
     --add-data "dist-mitmdump/mitmdump:mitmdump" \
     --collect-all suanpan \
     --collect-all tomlkit \

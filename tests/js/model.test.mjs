@@ -42,7 +42,7 @@ test("validateConfig accepts a minimal valid config", () => {
 
 test("validateConfig flags missing server host with index", () => {
   const S = L.normalizeState({ mp: { servers: [{ ssh: { host: "" } }] } });
-  assert.deepEqual(L.validateConfig(S), ["隧道 1: 未填写地址"]);
+  assert.deepEqual(L.validateConfig(S), ["服务器 1: 未填写地址"]);
 });
 
 test("validateConfig flags out-of-range ports", () => {

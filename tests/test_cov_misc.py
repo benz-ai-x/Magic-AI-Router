@@ -1,6 +1,7 @@
-"""Coverage gap tests for balance_usage.py, login_item.py, util.py.
+"""Coverage gap tests for balance_usage.py / provider_probe.py /
+usage_stats.py, login_item.py, util.py.
 
-Targets the specific uncovered lines reported by ``pytest --cov`` so the three
+Targets the specific uncovered lines reported by ``pytest --cov`` so the
 modules reach 100 % line coverage. Uses only public APIs (or module-level
 helpers) and never writes real user config (conftest sandboxes paths).
 """
@@ -11,7 +12,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from services import balance_usage
+from services import balance_usage, provider_probe, usage_stats
 from services.authenticated_http import AuthenticatedHttpClient
 from sysctl import login_item
 import util
@@ -106,17 +107,17 @@ class TestWindowDurationHours(unittest.TestCase):
 
 
 # ===========================================================================
-# balance_usage.fetch_models — line 139 (empty base_url)
+# provider_probe.fetch_models — line 139 (empty base_url)
 # ===========================================================================
 class TestFetchModelsEmptyBaseURL(unittest.TestCase):
     def test_empty_base_url_returns_error(self):
         sp = {"providers": {"p": {"base_url": "", "api_key": "sk-x"}}}
-        r = balance_usage.fetch_models(sp, "p")
+        r = provider_probe.fetch_models(sp, "p")
         self.assertEqual(r, {"error": "未配置 base_url"})
 
 
 # ===========================================================================
-# balance_usage.test_provider — lines 220-221 (HTTPError body not JSON)
+# provider_probe.test_provider — lines 220-221 (HTTPError body not JSON)
 # ===========================================================================
 class TestTestProviderHTTPErrorNonJSON(unittest.TestCase):
     """When the HTTPError body fails JSON parsing, fall back to ``HTTP {code}``."""
@@ -129,7 +130,7 @@ class TestTestProviderHTTPErrorNonJSON(unittest.TestCase):
             "Bad Gateway", {},
             io.BytesIO(b"<html>Bad Gateway</html>"))
         with patch.object(AuthenticatedHttpClient, "open", side_effect=err):
-            r = balance_usage.test_provider(
+            r = provider_probe.test_provider(
                 {"providers": {"p": self._provider}}, "p")
         self.assertEqual(r, {"error": "HTTP 502"})
 
@@ -141,7 +142,7 @@ class TestTestProviderHTTPErrorNonJSON(unittest.TestCase):
         # Replace read() to blow up during json.loads → except Exception path
         err.read = lambda: (_ for _ in ()).throw(ValueError("socket closed"))
         with patch.object(AuthenticatedHttpClient, "open", side_effect=err):
-            r = balance_usage.test_provider(
+            r = provider_probe.test_provider(
                 {"providers": {"p": self._provider}}, "p")
         self.assertEqual(r, {"error": "HTTP 500"})
 
@@ -222,14 +223,14 @@ class TestFetchBalanceMatchedProvider(unittest.TestCase):
 
 
 # ===========================================================================
-# balance_usage.fetch_usage — lines 284-285 (OSError swallowed)
+# usage_stats.fetch_usage — lines 284-285 (OSError swallowed)
 # ===========================================================================
 class TestFetchUsageOSError(unittest.TestCase):
     def test_directory_path_raises_oserror_swallowed(self):
         """``os.path.exists(dir)`` is True but ``open(dir)`` raises
         ``IsADirectoryError`` (subclass of ``OSError``) → swallowed, zeros."""
         with tempfile.TemporaryDirectory() as d:
-            r = balance_usage.fetch_usage({"usage_log": {"path": d}})
+            r = usage_stats.fetch_usage({"usage_log": {"path": d}})
         self.assertEqual(r["total"]["calls"], 0)
         self.assertEqual(r["providers"], {})
 

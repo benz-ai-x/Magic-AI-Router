@@ -26,7 +26,7 @@ from suanpan.compat import (
 from suanpan.config import AppConfig
 from suanpan.router import RouteDecision, strip_marker
 from suanpan.usage_extractor import UsageExtractor
-from suanpan.usage_log import UsageEntry, UsageLogger
+from suanpan.usage_log import UsageEntry, UsageLogger, usage_entry_from_wire
 from shared.provider_auth import build_outbound_headers as _build_headers_openai
 
 _log = logging.getLogger("magic-proxy.suanpan.proxy")
@@ -432,14 +432,11 @@ async def _forward_request_openai(
             converted = openai_chat_response_to_anthropic(
                 payload, model=ctx.target_model)
             usage = converted.get("usage") or {}
-        logger.write(UsageEntry(
+        logger.write(usage_entry_from_wire(
+            usage,
             provider=ctx.provider, source_model=ctx.source_model,
             target_model=ctx.target_model, scenario=ctx.scenario,
             agent=ctx.agent,
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
-            cache_creation_tokens=0,
             latency_ms=int((time.monotonic() - ctx.started) * 1000),
             status=status, error=None))
         return JSONResponse(converted, status_code=status, headers=out_headers)

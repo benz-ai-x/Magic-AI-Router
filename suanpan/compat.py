@@ -14,33 +14,12 @@ from __future__ import annotations
 
 import itertools
 import json
-import re
 from typing import Any
 
+from shared.provider_auth import openai_max_tokens_field
+from suanpan.router import SUBAGENT_RE, extract_system_text
+
 _STREAM_SEQ = itertools.count()
-
-
-def extract_system_text(body: dict[str, Any]) -> str:
-    """Extract the ``system`` prompt as a string, regardless of format.
-
-    Handles three shapes: plain string (returned as-is), content-block
-    array (text blocks joined with newlines), and missing/None ("").
-    This is the single source of truth for "read system from an
-    Anthropic Messages body" — used by routing decisions and by
-    ``_flatten_system`` for provider compatibility.
-    """
-    system = body.get("system")
-    if isinstance(system, str):
-        return system
-    if isinstance(system, list):
-        parts: list[str] = []
-        for item in system:
-            if isinstance(item, dict) and item.get("type") == "text":
-                t = item.get("text")
-                if isinstance(t, str):
-                    parts.append(t)
-        return "\n".join(parts)
-    return ""
 
 
 def normalize_body(body: dict[str, Any], provider: str,
@@ -127,16 +106,8 @@ def _strip_beta_tool_fields(body: dict[str, Any]) -> None:
 # 客户端使用 OpenAI/OpenRouter/通义/硅基流动等 openai 协议厂商。
 # 全部为确定性纯函数/纯状态机——前缀稳定性契约（ADR-004）不适用于
 # openai 车道（cache_control 在请求向被丢弃，OpenAI 协议无此概念）。
-
-# OpenAI 新推理系模型拒绝 max_tokens（要求 max_completion_tokens）；
-# 其余厂商兼容面以 max_tokens 为准（deepseek/qwen/siliconflow 文档口径）
-_NEEDS_COMPLETION_TOKENS = re.compile(r"^(gpt-5|o[134](\b|-))")
-
-
-def openai_max_tokens_field(model: str) -> str:
-    """OpenAI 系端点的最大输出参数名（转换层与测试探针共消费）。"""
-    return ("max_completion_tokens"
-            if _NEEDS_COMPLETION_TOKENS.match(str(model)) else "max_tokens")
+# openai_max_tokens_field（模型族 → max_tokens/max_completion_tokens）是
+# 供应商线格式知识，归 shared.provider_auth（注册表之家），此处消费。
 
 
 def openai_system_text(body: dict[str, Any]) -> str:
@@ -162,7 +133,6 @@ def openai_system_text(body: dict[str, Any]) -> str:
 def openai_strip_subagent_marker(body: dict[str, Any]) -> None:
     """OpenAI Chat body 的 <SUBAGENT-MODEL> 标签剥离（router.strip_marker
     的 openai 形态镜像——改首条 system 消息的字符串内容）。"""
-    from suanpan.router import SUBAGENT_RE
     messages = body.get("messages")
     if not isinstance(messages, list):
         return
@@ -187,7 +157,6 @@ def responses_system_text(body: dict[str, Any]) -> str:
 
 def responses_strip_subagent_marker(body: dict[str, Any]) -> None:
     """Responses body 的 <SUBAGENT-MODEL> 标签剥离（instructions 串）。"""
-    from suanpan.router import SUBAGENT_RE
     instr = body.get("instructions")
     if isinstance(instr, str):
         body["instructions"] = SUBAGENT_RE.sub("", instr)

@@ -180,9 +180,13 @@ services/ ── 服务
     注册表（ssh/nfs/openvpn 三卡，label + probe 统一签名）+ check_server
     编排（单卡失败不连坐）；probe_inputs（探针输入守卫 + Keychain 取用）
     自 config_server 迁入——test_tunnel/test_forward/NFS 远程操作反向复用
-  balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围，含来源
-    Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）；
-    余额响应归一 = 注册表卡名路由 + 形状嗅探兜底（_BALANCE_PARSERS）
+  balance_usage.py ── 余额 API 单一职责（R5 三刀切）：余额响应归一 =
+    注册表卡名路由 + 形状嗅探兜底（_BALANCE_PARSERS）+ fetch_balance
+  provider_probe.py ── 供应商验证与端点探测（自 balance_usage 拆出）：
+    fetch_models / test_provider（协议分叉最小消息）+ 端点三级探测
+    （存在性/认证/模型清单，ADR-010）+ /v1/models 候选链单一归宿
+  usage_stats.py ── 本地用量多维聚合（自 balance_usage 拆出；CST 范围
+    ——时区口径 shared.defaults.CST，含来源 Agent 维度；纯本地零网络）
 
 suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Messages / OpenAI Chat / Responses（Codex）→ 多家 LLM 后端，直通优先失配才转换）
   config.py ── Pydantic schema + 掩码契约 + null 节归一 + 文法消费
@@ -190,10 +194,10 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
   main.py ── FastAPI app factory + 路由 handler
   middleware.py ── APIKey（常量时间比较）+ BodyLimit 中间件
   proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread + 车道共用骨架（_LaneCtx/_send_upstream 幂等探针/_send_lane 发送前置块含 make_502 wire 塑形/_reject_5xx/_lane_out_headers/_stream_response——四车道发送纪律单一归宿）
-  compat.py ── 协议适配唯一归宿（ADR-010）：body 归一化（anthropic_native 旗标）+ 转换 A（Anthropic⇄OpenAI Chat 请求/响应/SSE 翻译器）
+  compat.py ── 协议适配唯一归宿（ADR-010）：body 归一化（anthropic_native 旗标）+ 转换 A（Anthropic⇄OpenAI Chat 请求/响应/SSE 翻译器）；system 读取经 router.extract_system_text、max_tokens 参数名经 shared.provider_auth（R5 迁出）
   usage_extractor.py ── SSE 用量提取
-  router.py ── 路由决策 + parse_route_target 文法所有者 + first_tier_route tier 规则逆查询（CC 角色种子共用前缀语义）+ fallback_from 可感知
-  usage_log.py ── 追加写 JSONL + 轮转
+  router.py ── 路由决策 + extract_system_text system 抽取单一真源（SUBAGENT 判定输入；R5 自 compat 迁入）+ parse_route_target 文法所有者 + first_tier_route tier 规则逆查询（CC 角色种子共用前缀语义）+ fallback_from 可感知
+  usage_log.py ── 追加写 JSONL + 轮转 + usage_entry_from_wire 线格式 usage→UsageEntry 单一转换（proxy 四车道消费）
   prewarmer.py ── 启动预热 best-effort adapter
   __main__.py ── `python3 -m suanpan` 独立启动入口
 ```

@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from suanpan.usage_log import UsageLogger, UsageEntry
+from suanpan.usage_log import (
+    UsageEntry, UsageLogger, usage_entry_from_wire,
+)
 
 
 def _entry(**overrides):
@@ -54,3 +56,33 @@ class TestUsageLoggerExpandUser(unittest.TestCase):
     def test_path_expanded(self):
         logger = UsageLogger(enabled=False, path="~/test.jsonl")
         self.assertNotIn("~", str(logger.path))
+
+
+class TestUsageEntryFromWire(unittest.TestCase):
+    """wire→entry 单一转换归宿（R5）：Anthropic 线格式 usage dict 的键名
+    映射 + 缺键兜底 0；身份字段经 overrides 直传。"""
+
+    def test_wire_keys_mapped(self):
+        e = usage_entry_from_wire(
+            {"input_tokens": 7, "output_tokens": 3,
+             "cache_read_input_tokens": 5, "cache_creation_input_tokens": 2},
+            provider="p", source_model="m", target_model="m2",
+            scenario="default", latency_ms=1, status=200, error=None)
+        self.assertEqual(
+            (e.input_tokens, e.output_tokens,
+             e.cache_read_tokens, e.cache_creation_tokens), (7, 3, 5, 2))
+
+    def test_missing_keys_default_zero(self):
+        e = usage_entry_from_wire(
+            {"input_tokens": 1},
+            provider="p", source_model="m", target_model="m2",
+            scenario="default", latency_ms=1, status=200, error=None)
+        self.assertEqual(e.output_tokens, 0)
+        self.assertEqual(e.cache_read_tokens, 0)
+        self.assertEqual(e.cache_creation_tokens, 0)
+
+    def test_none_usage_is_zero_row(self):
+        e = usage_entry_from_wire(
+            None, provider="p", source_model="m", target_model="m2",
+            scenario="default", latency_ms=1, status=502, error="x")
+        self.assertEqual((e.input_tokens, e.output_tokens), (0, 0))

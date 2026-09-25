@@ -7,13 +7,13 @@ Seams under test: normalize_body(body, provider) → in-place mutation
 import json
 import unittest
 
+from shared.provider_auth import openai_max_tokens_field
 from suanpan.compat import (
     OpenAIChatToAnthropicSSE,
     anthropic_to_openai_request,
     normalize_body,
     openai_chat_response_to_anthropic,
     openai_error_to_anthropic,
-    openai_max_tokens_field,
 )
 from suanpan.usage_extractor import UsageExtractor
 
