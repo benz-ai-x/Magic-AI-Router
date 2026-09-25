@@ -759,12 +759,12 @@ class MagicProxyApp(rumps.App):
         self._open_config_window("")
 
     def show_prefs_forwards(self, _):
-        """端口映射空态深链：偏好设置 → 隧道（转发表）。"""
-        self._open_config_window("#tunnel")
+        """端口映射空态深链：偏好设置 → 服务器（SSH 隧道服务卡转发表）。"""
+        self._open_config_window("#servers")
 
     def show_prefs_mounts(self, _):
-        """远程挂载空态深链：偏好设置 → 远程挂载。"""
-        self._open_config_window("#nfs")
+        """远程挂载空态深链：偏好设置 → 服务器（NFS 服务卡挂载表）。"""
+        self._open_config_window("#servers")
 
     def show_agent_setup(self, _):
         """ADR-010 M5：菜单「配置 Agent…」深链——设置窗直达快速接入向导。"""

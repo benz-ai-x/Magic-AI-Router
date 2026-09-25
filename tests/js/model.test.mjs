@@ -484,7 +484,7 @@ test("viewSnapshot normalizes rendered defaults to avoid false dirty state", () 
   );
 });
 
-test("viewSnapshot detects tunnel edits but treats implicit tunnel defaults equally", () => {
+test("viewSnapshot detects server edits but treats implicit defaults equally", () => {
   const loaded = L.normalizeState({ mp: { servers: [{ ssh: { host: "host" } }] } });
   const rendered = L.normalizeState({
     mp: {
@@ -498,12 +498,12 @@ test("viewSnapshot detects tunnel edits but treats implicit tunnel defaults equa
     },
   });
   assert.equal(
-    L.countChanges(L.viewSnapshot("tunnel", loaded), L.viewSnapshot("tunnel", rendered)),
+    L.countChanges(L.viewSnapshot("servers", loaded), L.viewSnapshot("servers", rendered)),
     0,
   );
   rendered.mp.servers[0].ssh.host = "other";
   assert.equal(
-    L.countChanges(L.viewSnapshot("tunnel", loaded), L.viewSnapshot("tunnel", rendered)),
+    L.countChanges(L.viewSnapshot("servers", loaded), L.viewSnapshot("servers", rendered)),
     1,
   );
 });
@@ -856,7 +856,7 @@ function flowDeps(over = {}) {
     confirmSync: over.confirmSync ?? (async (pv) => { calls.confirmed = pv; return true; }),
     toast: (m, e) => calls.toasts.push({ m, e: !!e }),
     gotoFirstError: (err) => { calls.goto = err; },
-    viewTitle: (v) => ({ tunnel: "代理隧道", proxy: "网络设置", providers: "供应商", rules: "Claude Code 同步" }[v] || v),
+    viewTitle: (v) => ({ servers: "服务器", proxy: "网络设置", providers: "供应商", rules: "Claude Code 同步" }[v] || v),
     commitConfig: (st) => { calls.commitConfig = st; },
     commitRoles: (rl) => { calls.commitRoles = rl; },
     stampSaved: (at) => { calls.stamps.push(at); },
@@ -1077,28 +1077,28 @@ test("validateConfig accepts comma-form router default", () => {
 });
 
 // ── port forwards (ssh -L) ────────────────────────────
-test("viewSnapshot projects tunnel forwards with collect-compatible defaults", () => {
+test("viewSnapshot projects server forwards with collect-compatible defaults", () => {
   const loaded = L.normalizeState({ mp: { servers: [
     { ssh: { host: "h" }, services: { ssh: { forwards: [
       { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000 },
     ] } } }] } });
-  assert.deepEqual(L.viewSnapshot("tunnel", loaded).tunnels[0].forwards, [
+  assert.deepEqual(L.viewSnapshot("servers", loaded).servers[0].forwards, [
     { local_port: 9000, remote_host: "127.0.0.1", remote_port: 8000,
       enabled: true },
   ]);
-  assert.equal(L.viewSnapshot("tunnel", loaded).tunnels[0].autostart, false,
+  assert.equal(L.viewSnapshot("servers", loaded).servers[0].autostart, false,
     "services.ssh.autostart 入快照（用户可编辑）；is_proxy/forward_running 不入");
   // 缺省口径：空端口=0、空地址=127.0.0.1——collect 填回后不产生假 dirty
-  const bare = L.viewSnapshot("tunnel",
+  const bare = L.viewSnapshot("servers",
     L.normalizeState({ mp: { servers: [
       { ssh: { host: "h" }, services: { ssh: { forwards: [{}] } } }] } }));
-  assert.deepEqual(bare.tunnels[0].forwards, [
+  assert.deepEqual(bare.servers[0].forwards, [
     { local_port: 0, remote_host: "127.0.0.1", remote_port: 0,
       enabled: true },
   ]);
-  const noKey = L.viewSnapshot("tunnel",
+  const noKey = L.viewSnapshot("servers",
     L.normalizeState({ mp: { servers: [{ ssh: { host: "h" } }] } }));
-  const emptyList = L.viewSnapshot("tunnel",
+  const emptyList = L.viewSnapshot("servers",
     L.normalizeState({ mp: { servers: [
       { ssh: { host: "h" }, services: { ssh: { forwards: [] } } }] } }));
   assert.equal(L.countChanges(noKey, emptyList), 0,
@@ -1203,8 +1203,8 @@ test("validateConfig hardens forward row shape like prepare (direct-state edges)
     "数字形态 remote_host 不得抛 TypeError");
 });
 
-// ── 代理角色显式化：角色切换是隧道页的一个可计数变更（经 setProxyTunnel）──
-test("viewSnapshot counts an explicit proxy-role switch as one tunnel-page change", () => {
+// ── 代理角色显式化：角色切换是服务器页的一个可计数变更（经 setProxyServer）──
+test("viewSnapshot counts an explicit proxy-role switch as one servers-page change", () => {
   const mk = cid => L.normalizeState({ mp: {
     proxy_server_id: cid,
     servers: [
@@ -1214,10 +1214,10 @@ test("viewSnapshot counts an explicit proxy-role switch as one tunnel-page chang
   const base = mk("t-a"), changed = mk("t-b");
   const p = L.dirtyProjection(base, changed, {}, {});
   assert.equal(p.total, 1);
-  assert.deepEqual([...p.views], ["tunnel"]);
+  assert.deepEqual([...p.views], ["servers"]);
   assert.equal(
-    L.countChanges(L.viewSnapshot("tunnel", base).tunnels,
-                   L.viewSnapshot("tunnel", changed).tunnels),
+    L.countChanges(L.viewSnapshot("servers", base).servers,
+                   L.viewSnapshot("servers", changed).servers),
     0,
     "角色切换只动 proxy_server_id，服务器本体零变更",
   );
@@ -1235,9 +1235,9 @@ test("proxyIndexOf: id 真相优先，悬空/缺省回退首条（与服务端 m
   assert.equal(L.proxyIndexOf(mk("t-c", ts.slice(1))), 1);
 });
 
-// ── NFS view snapshot (ADR-007) ────────────────────────
-test("viewSnapshot('nfs') treats default nfs node as no change", () => {
-  // merge 给每条隧道填默认 nfs（enabled=false/无挂载/12049）——视图
+// ── NFS face inside the merged servers snapshot (ADR-007 → v0.13.0) ──
+test("viewSnapshot('servers') treats default nfs node as no change", () => {
+  // merge 给每条服务器填默认 nfs（enabled=false/无挂载/12049）——视图
   // 切换与保存不得因此产生假 dirty
   const loaded = L.normalizeState({ mp: { servers: [{ id: "t1", ssh: { host: "h" } }] } });
   const collected = L.normalizeState({
@@ -1245,19 +1245,19 @@ test("viewSnapshot('nfs') treats default nfs node as no change", () => {
       services: { nfs: { enabled: false, local_port: 12049, squash_to_ssh_user: false, mounts: [] } } }] },
   });
   assert.equal(
-    L.countChanges(L.viewSnapshot("nfs", loaded), L.viewSnapshot("nfs", collected)),
+    L.countChanges(L.viewSnapshot("servers", loaded), L.viewSnapshot("servers", collected)),
     0,
   );
 });
 
-test("viewSnapshot('nfs') counts mount edits as changes", () => {
+test("viewSnapshot('servers') counts mount edits as changes", () => {
   const base = L.normalizeState({
     mp: { servers: [{ id: "t1", services: { nfs: { enabled: false, local_port: 12049, mounts: [] } } }] },
   });
   const edited = L.normalizeState({
     mp: { servers: [{ id: "t1", services: { nfs: { enabled: true, local_port: 13000, mounts: [{ name: "data", remote_path: "/data", local_dir: "", auto_mount: true }] } } }] },
   });
-  const diff = L.countChanges(L.viewSnapshot("nfs", base), L.viewSnapshot("nfs", edited));
+  const diff = L.countChanges(L.viewSnapshot("servers", base), L.viewSnapshot("servers", edited));
   // 新增挂载行按设计算 1 项（countChanges 语义）+ enabled + 端口 = 3
   assert.equal(diff, 3);
 });
@@ -1271,13 +1271,13 @@ test("nfsProjection normalizes missing/malformed rows defensively", () => {
   assert.equal(q.mounts[1].name, "a");
 });
 
-test("viewSnapshot('nfs') ignores runtime decorations", () => {
+test("viewSnapshot('servers') ignores runtime decorations", () => {
   const a = L.normalizeState({ mp: { servers: [{ id: "t1" }] } });
   const b = L.normalizeState({
     mp: { servers: [{ id: "t1", nfs_states: { data: "mounted" } }] },
   });
   assert.equal(
-    L.countChanges(L.viewSnapshot("nfs", a), L.viewSnapshot("nfs", b)),
+    L.countChanges(L.viewSnapshot("servers", a), L.viewSnapshot("servers", b)),
     0,
   );
 });
@@ -1344,7 +1344,7 @@ test("viewSnapshot preserves explicit disabled forwards", () => {
     { ssh: { host: "h" }, services: { ssh: { forwards: [
       { local_port: 9000, remote_port: 80, enabled: false },
     ] } } }] } });
-  assert.equal(L.viewSnapshot("tunnel", loaded).tunnels[0].forwards[0].enabled,
+  assert.equal(L.viewSnapshot("servers", loaded).servers[0].forwards[0].enabled,
     false);
 });
 

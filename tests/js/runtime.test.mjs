@@ -80,11 +80,18 @@ function makeRuntime() {
     querySelector() { return null; },
     addEventListener() {},
   };
+  // servers 视图的 enter 会启动 nfsPollLoop（自续 5s 定时器）——测试进程
+  // 不得被它拖住：unref 后句柄不阻止进程退出。
+  const unrefSetTimeout = (fn, ms, ...args) => {
+    const t = setTimeout(fn, ms, ...args);
+    if (t && typeof t.unref === "function") t.unref();
+    return t;
+  };
   const context = vm.createContext({
     console,
     URL,
     URLSearchParams,
-    setTimeout,
+    setTimeout: unrefSetTimeout,
     clearTimeout,
     structuredClone,
     location: { search: "", port: "9528" },
@@ -153,11 +160,11 @@ test("a clean read-only page advertises refresh, not save", () => {
   assert.equal(rt.elements.get("shortcut-hint").textContent, "⌘R 刷新");
 });
 
-test("zero tunnels render a real empty state without a fake Server 1 editor", () => {
+test("zero servers render a real empty state without a fake Server 1 editor", () => {
   const rt = makeRuntime();
-  const html = rt.run("S=normalizeState({mp:{servers:[]}});activeTunnel=0;tunnelHTML()");
-  assert.match(html, /0 个隧道/);
-  assert.match(html, /添加第一个隧道/);
+  const html = rt.run("S=normalizeState({mp:{servers:[]}});activeTunnel=0;serversHTML()");
+  assert.match(html, /0 台服务器/);
+  assert.match(html, /添加第一台服务器/);
   assert.doesNotMatch(html, /Server 1/);
   assert.doesNotMatch(html, /data-tf=/);
 });
@@ -201,7 +208,7 @@ test("typing then clearing an SSH password restores the masked baseline", () => 
       ssh:{user:'',host:'h',port:22,auth_type:'password',ssh_key:'',compression:true},
       services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
-    activeView='tunnel';activeTunnel=0;recomputeDirty();
+    activeView='servers';activeTunnel=0;recomputeDirty();
     const fields={name:{value:'t1'},addr:{value:'h'},ssh_port:{value:'22'},
       auth:{value:'password'},key:{value:''}};
     window.__pw={value:''};
@@ -213,7 +220,7 @@ test("typing then clearing an SSH password restores the masked baseline", () => 
       return null;
     },querySelectorAll:function(){return[];}};
     document.querySelector=function(sel){
-      return sel.includes('detail-body')?window.__detail:null;
+      return sel.includes('.md-detail')?window.__detail:null;
     };
   `);
 
@@ -226,14 +233,14 @@ test("typing then clearing an SSH password restores the masked baseline", () => 
     "cleared password must not leave a phantom value for the keychain write");
 });
 
-test("collectTunnel reads forward rows into the active tunnel", () => {
+test("collectServers reads forward rows into the active server", () => {
   const rt = makeRuntime();
   rt.run(`
     S=normalizeState({mp:{servers:[{name:'t1',
       ssh:{user:'u',host:'h',port:22,auth_type:'key',ssh_key:'',compression:true},
       services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
-    activeView='tunnel';activeTunnel=0;recomputeDirty();
+    activeView='servers';activeTunnel=0;recomputeDirty();
     const fields={name:{value:'t1'},addr:{value:'u@h'},ssh_port:{value:'22'},
       auth:{value:'key'},key:{value:''}};
     const row=vals=>({querySelector:function(sel){
@@ -251,10 +258,10 @@ test("collectTunnel reads forward rows into the active tunnel", () => {
       return sel.includes('data-fwr')?rows:[];
     }};
     document.querySelector=function(sel){
-      return sel.includes('detail-body')?window.__detail:null;
+      return sel.includes('.md-detail')?window.__detail:null;
     };
   `);
-  rt.run("collectTunnel();recomputeDirty()");
+  rt.run("collectServers();recomputeDirty()");
   // vm 跨 realm 对象不走 deepEqual（原型不同）——JSON 字符串钉形状
   assert.equal(rt.run("JSON.stringify(S.mp.servers[0].services.ssh.forwards)"),
     JSON.stringify([
@@ -263,18 +270,18 @@ test("collectTunnel reads forward rows into the active tunnel", () => {
       { local_port: 0, remote_host: "127.0.0.1", remote_port: 0,
         enabled: true },
     ]), "行序即数组序；空白地址 trim 后缺省 127.0.0.1，空端口为 0，"
-    + "无开关（缺省）行为启用");
+      + "无开关（缺省）行为启用");
   assert.equal(rt.run("dirty"), true, "新增转发行必须点亮保存按钮");
 });
 
-test("collectTunnel reads the forward_autostart switch", () => {
+test("collectServers reads the forward_autostart switch", () => {
   const rt = makeRuntime();
   rt.run(`
     S=normalizeState({mp:{servers:[{name:'t1',
       ssh:{user:'',host:'h',port:22,auth_type:'key',ssh_key:'',compression:true},
       services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
-    activeView='tunnel';activeTunnel=0;recomputeDirty();
+    activeView='servers';activeTunnel=0;recomputeDirty();
     const fields={name:{value:'t1'},addr:{value:'h'},ssh_port:{value:'22'},
       auth:{value:'key'},key:{value:''},
       fw_autostart:{getAttribute:()=> 'true'}};
@@ -282,28 +289,63 @@ test("collectTunnel reads the forward_autostart switch", () => {
       const m=sel.match(/data-tf="(\\w+)"/);
       if(m&&m[1]==='compress')return{getAttribute:()=>'true'};
       if(m&&m[1]==='fw_autostart')return fields.fw_autostart;
-      if(m&&fields[m[1].replace('fw_','')])return fields[m[1]];
+      if(m&&fields[m[1]])return fields[m[1]];
       return null;
     },querySelectorAll:function(){return[];}};
     document.querySelector=function(sel){
-      return sel.includes('detail-body')?window.__detail:null;
+      return sel.includes('.md-detail')?window.__detail:null;
     };
   `);
-  rt.run("collectTunnel();recomputeDirty()");
+  rt.run("collectServers();recomputeDirty()");
   assert.equal(rt.run("S.mp.servers[0].services.ssh.autostart"), true,
     "autostart 开关经 collect 读回（services.ssh.autostart）");
   assert.equal(rt.run("dirty"), true, "开关翻转点亮保存按钮");
 });
 
-// ── proxy role：查看 ≠ 切换——隐式写已删，角色只经 setProxyTunnel 显式变更 ──
-function setupTunnelForm(rt, { role = "t-a", active = 0 } = {}) {
+test("an nfs-only edit lands on the single servers page in the pending bar", () => {
+  // v0.13.0 服务器单视图：ssh/forwards/nfs 合并进一个 'servers' 投影——
+  // NFS 编辑不再出现在独立的「远程挂载」页签
+  const rt = makeRuntime();
+  rt.run(`
+    S=normalizeState({mp:{servers:[{id:'t1',name:'n',
+      ssh:{user:'',host:'h',port:22,auth_type:'key',ssh_key:'',compression:true},
+      services:{ssh:{forwards:[],autostart:false}}}]}});
+    baselineState=cloneData(S);baselineRoles={};ccRoles={};
+    activeView='servers';activeTunnel=0;recomputeDirty();
+    const fields={name:{value:'n'},addr:{value:'h'},ssh_port:{value:'22'},
+      auth:{value:'key'},key:{value:''}};
+    const nf={enabled:{getAttribute:()=>'true'},squash:{getAttribute:()=>'false'}};
+    window.__detail={querySelector:function(sel){
+      const m=sel.match(/data-tf="(\\w+)"/);
+      if(m&&m[1]==='compress')return{getAttribute:()=>'true'};
+      if(m&&m[1]==='fw_autostart')return{getAttribute:()=>'false'};
+      if(m&&fields[m[1]])return fields[m[1]];
+      const n=sel.match(/data-nf="(\\w+)"/);
+      if(n&&nf[n[1]])return nf[n[1]];
+      if(n&&n[1]==='port')return{value:'13000'};
+      return null;
+    },querySelectorAll:function(){return[];}};
+    document.querySelector=function(sel){
+      return sel.includes('.md-detail')?window.__detail:null;
+    };
+  `);
+  rt.run("collectAndRecompute()");
+  assert.equal(rt.run("dirty"), true);
+  assert.equal(rt.run("S.mp.servers[0].services.nfs.enabled"), true,
+    "NFS 启用开关经单一 collectServers 读回");
+  assert.match(rt.elements.get("pending-items").innerHTML, /服务器 · 2 项/,
+    "enabled 翻转 + 端口变更都记在「服务器」一页（nfsProjection 缺省不产生假 dirty）");
+});
+
+// ── 代理角色：查看 ≠ 切换——隐式写已删，角色只经 setProxyServer 显式变更 ──
+function setupServerForm(rt, { role = "t-a", active = 0 } = {}) {
   const name = active === 0 ? "A" : "B", addr = active === 0 ? "a" : "b";
   rt.run(`
     S=normalizeState({mp:{proxy_server_id:'${role}',servers:[
       {id:'t-a',name:'A',ssh:{user:'',host:'a',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}},
       {id:'t-b',name:'B',ssh:{user:'',host:'b',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
-    activeView='tunnel';activeTunnel=${active};recomputeDirty();
+    activeView='servers';activeTunnel=${active};recomputeDirty();
     const fields={name:{value:'${name}'},addr:{value:'${addr}'},ssh_port:{value:'22'},
       auth:{value:'key'},key:{value:''}};
     window.__detail={querySelector:function(sel){
@@ -314,39 +356,39 @@ function setupTunnelForm(rt, { role = "t-a", active = 0 } = {}) {
       return null;
     },querySelectorAll:function(){return[];}};
     document.querySelector=function(sel){
-      return sel.includes('detail-body')?window.__detail:null;
+      return sel.includes('.md-detail')?window.__detail:null;
     };
     document.querySelectorAll=function(){return[];};
     document.getElementById('viewport').firstElementChild={classList:{add(){}}};
   `);
 }
 
-test("viewing another tunnel must not silently switch the proxy role", () => {
+test("viewing another server must not silently switch the proxy role", () => {
   const rt = makeRuntime();
-  setupTunnelForm(rt, { role: "t-a", active: 1 });
-  // 保存路径的精确复现：用户停留在隧道页查看 B（activeTunnel=1）时按下保存
+  setupServerForm(rt, { role: "t-a", active: 1 });
+  // 保存路径的精确复现：用户停留在服务器页查看 B（activeTunnel=1）时按下保存
   rt.run("collect(true);recomputeDirty()");
   assert.equal(rt.run("S.mp.proxy_server_id"), "t-a",
     "collect 只读表单——正在查看的服务器绝不能被隐式写成代理服务器");
-  assert.equal(rt.run("dirty"), false, "单纯查看另一条隧道不得伪造待保存项");
+  assert.equal(rt.run("dirty"), false, "单纯查看另一台服务器不得伪造待保存项");
 });
 
-test("setProxyTunnel marks the role switch as one tracked, reversible change", () => {
+test("setProxyServer marks the role switch as one tracked, reversible change", () => {
   const rt = makeRuntime();
-  setupTunnelForm(rt, { role: "t-a", active: 1 });
-  assert.match(rt.run("tunnelHTML()"), /设为代理服务器/,
+  setupServerForm(rt, { role: "t-a", active: 1 });
+  assert.match(rt.run("serversHTML()"), /设为代理服务器/,
     "非已保存服务器的详情栏必须暴露显式角色动作");
-  rt.run("setProxyTunnel()");
+  rt.run("setProxyServer()");
   assert.equal(rt.run("S.mp.proxy_server_id"), "t-b");
   assert.equal(rt.run("dirty"), true);
   assert.equal(rt.run("totalDirtyCount()"), 1, "只有角色一个叶子计入待保存");
-  assert.match(rt.run("tunnelHTML()"), /fw-badge[^>]*>代理服务器</,
+  assert.match(rt.run("serversHTML()"), /fw-badge[^>]*>✓ 当前代理服务器</,
     "当前代理服务器渲染徽标而非按钮");
   rt.run("discardAll()");
   assert.equal(rt.run("S.mp.proxy_server_id"), "t-a", "放弃更改恢复已保存的角色");
 });
 
-test("deleting a tunnel keeps the proxy role on the same tunnel", () => {
+test("deleting a server keeps the proxy role on the same server", () => {
   const rt = makeRuntime();
   rt.run(`
     S=normalizeState({mp:{proxy_server_id:'t-c',servers:[
@@ -354,53 +396,65 @@ test("deleting a tunnel keeps the proxy role on the same tunnel", () => {
       {id:'t-b',name:'B',ssh:{user:'',host:'b',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}},
       {id:'t-c',name:'C',ssh:{user:'',host:'c',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
-    activeView='tunnel';activeTunnel=2;recomputeDirty();
+    activeView='servers';activeTunnel=2;recomputeDirty();
     document.querySelector=function(){return null;};
     document.querySelectorAll=function(){return[];};
     document.getElementById('viewport').firstElementChild={classList:{add(){}}};
   `);
-  rt.run("removeTunnel(0)");
+  rt.run("removeServer(0)");
   assert.equal(rt.run("S.mp.proxy_server_id"), "t-c",
     "删掉代理前面的服务器后，角色 id 纹丝不动——不再依赖下标");
   assert.equal(rt.run("proxyIndexOf(S)"), 1, "解析下标指向同一条服务器");
   assert.equal(rt.run("S.mp.servers[proxyIndexOf(S)].id"), "t-c");
-  rt.run("removeTunnel(1)");
+  rt.run("removeServer(1)");
   assert.equal(rt.run("S.mp.servers.length"), 1);
   assert.equal(rt.run("S.mp.proxy_server_id"), "",
     "删掉代理自身后清空 id 真相，交由首条兜底回落");
   assert.equal(rt.run("proxyIndexOf(S)"), 0);
 });
 
-// ── NFS 远程挂载视图（ADR-007 master-detail 重构）──────────
-test("nfs view renders master-detail mirroring the tunnel view", () => {
+// ── 服务器单视图（v0.13.0）：master 标签 + 服务卡渲染 ──────────
+test("servers view renders master-detail with proxy badge, service tags and mount rows", () => {
   const rt = makeRuntime();
   const html = rt.run(`
     S=normalizeState({mp:{servers:[
       {id:'t-1',name:'srv-a',ssh:{user:'u',host:'a.example',port:22},
-       services:{nfs:{enabled:true,local_port:12049,squash_to_ssh_user:false,
+       services:{ssh:{forwards:[{local_port:9000,remote_host:'127.0.0.1',remote_port:80,enabled:true},
+                                {local_port:9001,remote_host:'127.0.0.1',remote_port:81,enabled:false}]},
+                  nfs:{enabled:true,local_port:12049,squash_to_ssh_user:false,
             mounts:[{name:'data',remote_path:'/data',local_dir:'',auto_mount:true}]}},
        nfs_states:{data:'mounted'}},
       {id:'t-2',name:'srv-b',ssh:{user:'u',host:'b.example',port:22},
        services:{nfs:{enabled:false,local_port:12049,squash_to_ssh_user:false,mounts:[]}}},
     ]}});
-    activeTunnel=0;nfsHTML();
+    activeTunnel=0;serversHTML();
   `);
-  // master：服务器列表 + 启用态圆点 + 挂载数徽标
+  // master：服务器列表 + 代理徽标 + 转发 n/m + NFS ×n 标签
   assert.match(html, /class="md-master"/);
-  assert.match(html, /selectNfsTunnel\(1\)/);
-  assert.match(html, /1 挂载中/);
-  // detail：操作在 detail-bar，启用开关/端口/squash 在挂载选项区
+  assert.match(html, /selectServer\(1\)/);
+  assert.match(html, /tag proxy">代理</);
+  assert.match(html, /转发 1\/2</);
+  assert.match(html, /NFS ×1</);
+  // detail：连接区 + SSH 隧道服务卡（转发表 + 探针区）+ NFS 服务卡（挂载行 + 即时操作）
   assert.match(html, /class="md-detail"/);
-  assert.match(html, /nfsCheckRemote\(this\)/);
+  assert.match(html, /data-tf="addr"/);
+  assert.match(html, /SSH 隧道服务/);
+  assert.match(html, /id="probe-ssh"/);
+  assert.match(html, /data-tf="fw_autostart"/);
+  assert.match(html, /data-fwf="local_port"/);
   assert.match(html, /data-nf="enabled"/);
   assert.match(html, /data-nf="port"/);
   assert.match(html, /data-nf="squash"/);
-  // 挂载行：状态徽标 + 即时操作
   assert.match(html, /已挂载/);
   assert.match(html, /nfsMountAction\(this,0,'mount'\)/);
+  assert.match(html, /nfsCheckRemote\(this\)/);
+  // OpenVPN 占位卡：禁用态 + 即将支持 + 探针区占位
+  assert.match(html, /OpenVPN 服务/);
+  assert.match(html, /即将支持/);
+  assert.match(html, /id="probe-vpn"/);
 });
 
-test("nfs view follows the shared activeTunnel selection", () => {
+test("servers view follows the shared activeTunnel selection", () => {
   const rt = makeRuntime();
   rt.run(`
     S=normalizeState({mp:{servers:[
@@ -409,31 +463,25 @@ test("nfs view follows the shared activeTunnel selection", () => {
     ]}});
     activeTunnel=0;
   `);
-  assert.match(rt.run("nfsHTML()"),
-    /is-selected" onclick="selectNfsTunnel\(0\)"/);
-  rt.run("renderView=()=>undefined;selectNfsTunnel(1)");
+  assert.match(rt.run("serversHTML()"),
+    /is-selected" onclick="selectServer\(0\)"/);
+  rt.run("renderView=()=>undefined;selectServer(1)");
   assert.equal(rt.run("activeTunnel"), 1);
-  assert.match(rt.run("nfsHTML()"),
-    /is-selected" onclick="selectNfsTunnel\(1\)"/);
-  assert.doesNotMatch(rt.run("nfsHTML()"),
-    /is-selected" onclick="selectNfsTunnel\(0\)"/);
-});
-
-test("nfs view empty state without tunnels", () => {
-  const rt = makeRuntime();
-  const html = rt.run("S=normalizeState({mp:{servers:[]}});nfsHTML()");
-  assert.match(html, /还没有配置隧道/);
+  assert.match(rt.run("serversHTML()"),
+    /is-selected" onclick="selectServer\(1\)"/);
+  assert.doesNotMatch(rt.run("serversHTML()"),
+    /is-selected" onclick="selectServer\(0\)"/);
 });
 
 
-test("collectTunnel reads per-row enabled switches", () => {
+test("collectServers reads per-row enabled switches", () => {
   const rt = makeRuntime();
   rt.run(`
     S=normalizeState({mp:{servers:[{name:'t1',
       ssh:{user:'u',host:'h',port:22,auth_type:'key',ssh_key:'',compression:true},
       services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
-    activeView='tunnel';activeTunnel=0;recomputeDirty();
+    activeView='servers';activeTunnel=0;recomputeDirty();
     const fields={name:{value:'t1'},addr:{value:'u@h'},ssh_port:{value:'22'},
       auth:{value:'key'},key:{value:''}};
     const row=(vals,sw)=>({querySelector:function(sel){
@@ -444,7 +492,7 @@ test("collectTunnel reads per-row enabled switches", () => {
     const rows=[row({local_port:{value:'9000'},remote_host:{value:'x'},
       remote_port:{value:'80'}},{getAttribute:()=>'true'}),
       row({local_port:{value:'9001'},remote_host:{value:'x'},
-      remote_port:{value:'81'}},{getAttribute:()=>'false'})];
+        remote_port:{value:'81'}},{getAttribute:()=>'false'})];
     window.__detail={querySelector:function(sel){
       const m=sel.match(/data-tf="(\\w+)"/);
       if(m&&fields[m[1]])return fields[m[1]];
@@ -454,10 +502,10 @@ test("collectTunnel reads per-row enabled switches", () => {
       return sel.includes('data-fwr')?rows:[];
     }};
     document.querySelector=function(sel){
-      return sel.includes('detail-body')?window.__detail:null;
+      return sel.includes('.md-detail')?window.__detail:null;
     };
   `);
-  rt.run("collectTunnel();recomputeDirty()");
+  rt.run("collectServers();recomputeDirty()");
   assert.equal(rt.run("JSON.stringify(S.mp.servers[0].services.ssh.forwards)"),
     JSON.stringify([
       { local_port: 9000, remote_host: "x", remote_port: 80, enabled: true },
