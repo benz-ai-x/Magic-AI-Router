@@ -309,6 +309,17 @@ class TestIconInfrastructure(unittest.TestCase):
         if plain is not None:
             self.assertTrue(plain.isTemplate())
 
+    def test_status_dot_image_template_semantics(self):
+        """手绘状态圆点（着色唯一可靠通道）：idle=template（随菜单文字
+        色明暗自适应），彩色档=非模板（固定色渲染）。"""
+        from shellui import menu_builder
+        idle = menu_builder._status_dot_image("idle", 8)
+        if idle is not None:
+            self.assertTrue(idle.isTemplate())
+        ok = menu_builder._status_dot_image("ok", 8)
+        if ok is not None:
+            self.assertFalse(ok.isTemplate())
+
     def test_status_color_kinds(self):
         from shellui import menu_builder
         for kind in ("ok", "warn", "err", "idle"):
