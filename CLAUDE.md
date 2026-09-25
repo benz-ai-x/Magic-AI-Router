@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues live as GitHub issues in `benz-ai-x/Magic-AI-Router` (via `gh` CLI). See `docs/agents/issue-tracker.md`.
+Issue / PR operations and wayfinder maps go through `docs/agents/issue-tracker.md` (GitHub issues, `gh` CLI).
 
 ### Triage labels
 
@@ -16,7 +16,7 @@ Single-context repo: `CONTEXT.md` + `docs/adr/` at the root. See `docs/agents/do
 
 ## 概述
 
-Magic AI Router — macOS 菜单栏应用（壳），承载两个独立产品：Magic Proxy（SSH 隧道 HTTP→SOCKS5 代理 + TLS 抓包）和 Suanpan（AI 请求路由网关）。纯 Python 3 实现，可打包为原生 .app。
+Magic AI Router — macOS 菜单栏应用（壳），承载两个独立产品：Magic Proxy 与 Suanpan（领域定义见 `CONTEXT.md`「产品结构」）。
 
 > **模块清单、菜单结构等易过期信息以代码为准**（`tests/test_docs_drift.py` 做防漂移守卫）；版本号见 `build.sh`。
 
@@ -194,9 +194,9 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
 
 **线程模型：** 主线程跑 rumps NSRunLoop（菜单栏）。后台 daemon 线程跑：asyncio 事件循环（代理服务 ProxyRuntime）、Suanpan 网关（uvicorn）、config server（http.server）。
 
-**菜单结构（六组）：** 状态区（着色圆点 + 流量行 + 转发/挂载计数 + ⚠ 异常计数）→ 代 理 ▸（-D 会话：启停/系统代理/角色单选/经代理启动）→ 端口映射 ▸（-L 多活会话 + 逐条转发启停行；单隧道拍平一级直达；行结构恒定——状态由 `_refresh_forward_rows` 就地刷新不重建）→ 远程挂载 ▸（NFS 挂载项启停/打开目录，ADR-007；同款就地刷新）→ AI 路由 ▸ → 抓 包 ▸ → 选 项 ▸（防睡眠/登录启动/配置 API 服务，ADR-009）→ 页脚（偏好/日志/复制 AI 助手指令/关于/退出）；**菜单状态语法**：A 类运行物（会话/转发/挂载/路由/抓包/系统代理）= 标题动词 + 手绘状态点（绿=运行/黄=进行中/黑=未启动/红=异常）+ 行尾状态词；B 类设置（防睡眠/登录启动/配置 API）= 中性名词 + 原生 ✓（`NSMenuItem.state`）；组标题异常 rollup（⚠ n，正常静默）；空态行深链偏好设置（`#tunnel`/`#nfs`）；状态圆点为手绘位图（SF Symbol tint 在 NSMenuItem 上不生效，两轮真机实锄）；菜单项图标走 SF Symbols（带 a11y description，旧系统静默降级）
+**菜单：** 六组结构（状态区 / 代 理 / 端口映射 / 远程挂载 / AI 路由 / 抓 包 / 选 项 ＋ 页脚）以 `shellui/menu_builder.py` 为准；**菜单状态语法**（A 类运行物 = 动词标题 + 状态点四值 + 状态词；B 类设置 = 中性名词 + 原生 ✓；组标题仅异常挂 ⚠；状态圆点为手绘位图）见 `CONTEXT.md`「菜单状态语法」；菜单项图标走 SF Symbols（旧系统静默降级）
 
-**偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 远程挂载 / 网络设置）+ AI 路由（快速接入 / 供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。同一页面可浏览器直开（输 token 登录）——依赖原生 bridge 的操作在该场景逐项降级：重连/转发启停 toast 提示需在应用设置窗内用，「复制 AI 助手指令」经认证 `GET /api/agent-instructions`（文本取 `agent_instructions()` 单一归宿）回退 + Clipboard API 写剪贴板。配置服务端口生命周期（ADR-009）：默认**不常驻**监听 :9528——设置窗开着 / 「复制 AI 助手指令」会话闩锁 / `config_api_enabled` 常驻开关（选 项 ▸ 菜单 + UI 系统页）三持有者任一在场才监听，全离场即释放（app 经 `_set_config_holders` 唯一写口变更即收敛；Docker 形态不受影响，恒常驻）。
+**偏好设置：** 菜单「偏好设置…」打开 WKWebView 窗口（`http://127.0.0.1:9528/`）。侧边栏分组：代理（隧道 / 远程挂载 / 网络设置）+ AI 路由（快速接入 / 供应商 / Claude Code 同步 / 运行统计 / 余额速览）+ 系统（系统选项）。同一页面可浏览器直开（输 token 登录）——依赖原生 bridge 的操作在该场景逐项降级（重连/转发启停给 toast 提示；「复制 AI 助手指令」经认证 `GET /api/agent-instructions` 回退）。:9528 生命周期（ADR-009）：默认**不常驻**——三持有者（设置窗开着 / 复制指令会话闩锁 / `config_api_enabled` 常驻开关）任一在场才监听（细节见 `CONTEXT.md`「服务生命周期」）。
 
 ## 配置
 
