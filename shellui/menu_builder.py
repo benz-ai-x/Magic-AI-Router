@@ -149,13 +149,15 @@ def _proxy_tunnel_index(config):
 
 
 def _status_color(kind):
-    """状态点着色（动态系统色，明暗模式自适应）。"""
+    """状态点着色（动态系统色，明暗模式自适应）。idle=未启动用
+    labelColor（浅色模式黑/深色模式白）——用户拍板的二元语义：运行绿、
+    未启动黑；黄只留给进行中（connecting/mounting），红只留给异常。"""
     try:
         from AppKit import NSColor
         return {"ok": NSColor.systemGreenColor(),
                 "warn": NSColor.systemYellowColor(),
                 "err": NSColor.systemRedColor(),
-                "idle": NSColor.systemGrayColor()}[kind]
+                "idle": NSColor.labelColor()}[kind]
     except Exception:
         return None
 
@@ -554,12 +556,14 @@ class MenuBuilder:
                     continue
                 lp, rp = f.get("local_port"), f.get("remote_port")
                 enabled = f.get("enabled") is not False
-                if not enabled:
-                    title, kind, desc = f"{lp} → {rp} · 已停用", "idle", "已停用"
-                elif session_up:
+                # 二元着色（用户拍板）：已映射=绿；未连接/已停用都是
+                # 「没启动」=黑（idle/labelColor）
+                if enabled and session_up:
                     title, kind, desc = f"{lp} → {rp} · 已映射", "ok", "已映射"
+                elif enabled:
+                    title, kind, desc = f"{lp} → {rp} · 未连接", "idle", "未连接"
                 else:
-                    title, kind, desc = f"{lp} → {rp} · 未连接", "warn", "未连接"
+                    title, kind, desc = f"{lp} → {rp} · 已停用", "idle", "已停用"
                 if row.title != title:
                     row.title = title
                     _apply_icon(row, "circle", point_size=8,
