@@ -571,11 +571,12 @@ function validateConfig(S){
   if(S&&S.sp&&S.sp._load_error)errors.push('Suanpan 配置装载失败，已阻止保存以防覆盖：'+S.sp._load_error);
   if(S&&S.mp&&S.mp._load_error)errors.push('Magic Proxy 配置装载失败，已阻止保存以防覆盖：'+S.mp._load_error);
   (S.mp.servers||[]).forEach((t,i)=>{
-    if(!sshOf(t).host)errors.push(`隧道 ${i+1}: 未填写地址`);
-    if(sshOf(t).port&&(sshOf(t).port<1||sshOf(t).port>65535))errors.push(`隧道 ${i+1}: SSH 端口无效`);
-    // 端口转发行：范围 + 同隧道重复 + remote_host 文法（镜像 prepare 的
-    // 中文文案——prepare 是 422 兜底，这里是保存前第一道）
-    const tn=t.name||sshOf(t).host||(`隧道 ${i+1}`);
+    if(!sshOf(t).host)errors.push(`服务器 ${i+1}: 未填写地址`);
+    if(sshOf(t).port&&(sshOf(t).port<1||sshOf(t).port>65535))errors.push(`服务器 ${i+1}: SSH 端口无效`);
+    // 端口转发行：范围 + 同服务器重复 + remote_host 文法（镜像 prepare 的
+    // 中文文案——prepare 是 422 兜底，这里是保存前第一道；v2 模型是
+    // 服务器，文案随 Python 侧同轴）
+    const tn=t.name||sshOf(t).host||(`服务器 ${i+1}`);
     const fwSeen={};
     forwardsOf(t).forEach(f=>{
       // 与 prepare 同口径：端口须整数（拦小数），remote_host 字串化
@@ -620,7 +621,7 @@ function validateConfig(S){
   // 转发本地端口全局唯一（多活 v0.9：任意隧道可并行，抢同端口会让两条
   // ssh 在 ExitOnForwardFailure 下互顶）；镜像 prepare 同一判定
   (S.mp.servers||[]).forEach(t=>{
-    const tn=t.name||sshOf(t).host||'隧道';
+    const tn=t.name||sshOf(t).host||'服务器';
     forwardsOf(t).forEach(f=>{
       const lp=f.local_port;
       const ref=`${tn} 端口转发本地端口`;
@@ -640,7 +641,7 @@ function validateConfig(S){
     if(!(n.enabled===true||(n.mounts&&n.mounts.length)))return;
     const np=n.local_port;
     if(!Number.isInteger(np)||np<1||np>65535)return;  // 形状归行级校验
-    const tn=t.name||sshOf(t).host||'隧道';
+    const tn=t.name||sshOf(t).host||'服务器';
     const ref=`${tn} NFS 本地端口`;
     if(seen[np])errors.push(`端口冲突：${seen[np]} 与 ${ref} 同为 ${np}`);
     else seen[np]=ref;
@@ -1881,7 +1882,7 @@ function validatePort(el){
 }
 // 保存失败定位：按错误文案前缀映射页面，跳转后聚焦第一个无效端口（#3——
 // 错误不再只靠 Toast，跨隐藏页面的错误也能一键到达）。
-const ERROR_VIEW_MAP=[[/^隧道/,'servers'],[/^(SOCKS5|HTTP|抓包|配置服务|路由网关|端口冲突)/,'proxy'],[/^供应商/,'providers']];
+const ERROR_VIEW_MAP=[[/^服务器/,'servers'],[/^(SOCKS5|HTTP|抓包|配置服务|路由网关|端口冲突)/,'proxy'],[/^供应商/,'providers']];
 function gotoFirstError(firstError){
   const hit=ERROR_VIEW_MAP.find(([re])=>re.test(firstError));
   if(!hit)return;
