@@ -48,6 +48,8 @@ HOP_HEADERS = frozenset({
 # - capture/ai_capture_addon.identify()——在 mitmdump 子进程内独立运行
 #   （零仓内 import 是资源契约的一部分），且其知识是抓包专属的端点
 #   变体（chat/completions vs responses 等），与账户/路由知识不同域。
+#   该 fork 的分叉关系由 tests/test_capture_host_mirror.py 钉住：新增
+#   厂商/host 须在报警测试白名单显式决定 capture 是否识别。
 # - suanpan/compat.normalize_body——已由 anthropic_native 旗标驱动
 #   （配置态数据，非供应商名硬编码）。
 PROVIDER_REGISTRY = {

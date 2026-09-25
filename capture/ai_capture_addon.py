@@ -26,43 +26,73 @@ MAX_CAPTURE_FLOW_BYTES = 5 * 1024 * 1024
 MAX_CAPTURE_TEXT_CHARS = 1_000_000
 
 
+# ── 厂商 host 表（表驱动真相；drift 由 tests/test_capture_host_mirror.py 钉住）──
+# 与 shared/provider_auth.PROVIDER_REGISTRY 的 hosts 刻意分叉（frozen mitmdump
+# 子进程零仓内 import 是资源契约；本表是抓包域知识），分叉关系须在漂移报警
+# 测试的白名单里显式声明——两侧任何一边新增厂商/host 未挂号即红。
+# 键序即匹配优先序（现无交叠，防将来新增时静默换序）。
+# doubao 的额外 ``"ark" in host`` 约束见 match_provider（方舟 API 子域，
+# console.volces.com 等非 API 子域不抓）。
+CAPTURE_HOST_SUFFIXES = {
+    "openai": ("api.openai.com",),
+    "anthropic": ("api.anthropic.com",),
+    "deepseek": ("api.deepseek.com",),
+    "doubao": ("volces.com",),
+    "qwen": ("dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"),
+    "minimax": ("api.minimaxi.com", "api.minimax.io", "api.minimax.chat"),
+}
+
+
+def match_provider(host):
+    """host → capture 厂商键（None = 非 AI 域，放行）。
+
+    后缀匹配（对子域/区域站稳健）；表驱动自 CAPTURE_HOST_SUFFIXES。
+    """
+    host = (host or "").lower()
+    for provider, suffixes in CAPTURE_HOST_SUFFIXES.items():
+        if any(host.endswith(s) for s in suffixes):
+            if provider == "doubao" and "ark" not in host:
+                continue
+            return provider
+    return None
+
+
 def identify(host, path):
     """Map (host, path) to (provider, variant), or None to pass through.
 
     Host matched by suffix (robust to sub-domains / regions); path pins the
     chat endpoint so non-chat calls (embeddings / images / models) pass through.
     """
-    host = (host or "").lower()
+    provider = match_provider(host)
+    if provider is None:
+        return None
     path = (path or "").split("?", 1)[0].split("#", 1)[0]
 
-    def ends(*suffixes):
-        return any(host.endswith(s) for s in suffixes)
-
-    if ends("api.openai.com"):
+    if provider == "openai":
         if path == "/v1/chat/completions":
             return ("openai", "chat.completions")
         if path == "/v1/responses":
             return ("openai", "responses")
         return None
-    if ends("api.anthropic.com"):
+    if provider == "anthropic":
         if path == "/v1/messages":
             return ("anthropic", "messages")
         return None
-    if ends("api.deepseek.com"):
+    if provider == "deepseek":
         if path.endswith("/chat/completions"):
             return ("deepseek", "chat.completions")
         return None
-    if ends("volces.com") and "ark" in host:
+    if provider == "doubao":
         if path == "/api/v3/chat/completions":
             return ("doubao", "chat.completions")
         return None
-    if ends("dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"):
+    if provider == "qwen":
         if path == "/compatible-mode/v1/chat/completions":
             return ("qwen", "chat.completions")
         if path == "/api/v1/services/aigc/text-generation/generation":
             return ("qwen", "dashscope.native")
         return None
-    if ends("api.minimaxi.com", "api.minimax.io", "api.minimax.chat"):
+    if provider == "minimax":
         if path == "/v1/text/chatcompletion_v2":
             return ("minimax", "chat.completions")
         if path == "/v1/text/chatcompletion_pro":
