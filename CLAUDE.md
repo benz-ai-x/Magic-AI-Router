@@ -78,12 +78,14 @@ shared/ ── 跨域叶子层（零域知识，被多域共用的原语；P1 �
     _server 单 seam 透传——三参穿三层塌缩为一）
 
 mpconf/ ── 配置栈
-  config.py ── 配置 I/O + merge/migrate（http_listen_port 读时兼容旧串；
-    代理角色双表示：current_tunnel_id 稳定 id 真相 + current_tunnel
-    下标兼容投影，解析序 id→下标→首条，resolve_proxy_tunnel 单一判定）
-    + decorate_runtime_state /api/state 运行态装饰单一归宿（只写
+  config.py ── 配置 I/O + merge/migrate（schema v2 服务器中心：servers[]
+    + ssh 节 + services.{ssh,nfs}，v1 tunnels[] 自动迁移保稳定 id——
+    Keychain 槽位 tunnel:{id} 保值；proxy_server_id 单一真相取代
+    current_tunnel 双表示；servers 形状访问器单一归宿 servers/
+    server_by_id/proxy_server/server_forwards/server_nfs）+
+    decorate_runtime_state /api/state 运行态装饰单一归宿（只写
     RUNTIME_DECORATED_FIELDS 声明键，strip 名单同源派生）+
-    forward_row(s)/toggle_forward_row 转发行读写纯函数（翻转意图共用）
+    forward_row(s)/toggle_forward_row 转发实例读写纯函数（翻转意图共用）
   validate.py ── mp 分域校验器（顶层数值 + 隧道级行[forwards/nfs] + 全局端口/挂载点冲突；prepare 的校验半边）
   config_state.py ── ConfigStateStore 事务边界：load 四态 / prepare
     分域校验 orchestrator / commit（journal+MP+SP+Keychain+回调次序）/
@@ -202,7 +204,7 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
 
 ### Magic Proxy — `~/.magic-proxy.json`
 
-支持多隧道，`auth_type` 为 `key`（默认）或 `password`（需 `sshpass`）。密码走 macOS Keychain。监听地址存 `http_listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-002）。每条隧道可配 `nfs` 节（NFSv4 挂载：enabled / local_port / squash_to_ssh_user / mounts[{name, remote_path, local_dir, auto_mount}]，见 ADR-007；远程 sudo 密码存 Keychain 独立 `nfs-sudo:` 账户槽）。
+schema v2（服务器中心模型，ADR-011）：`servers[]`（Server→Service→Instance——每台服务器 `ssh` 节持连接参数（auth_type key/password，密码走 Keychain），`services.ssh` 持转发实例（forwards + autostart），`services.nfs` 持 NFS 挂载（enabled / local_port / squash_to_ssh_user / mounts，见 ADR-007；远程 sudo 密码存 Keychain 独立 `nfs-sudo:` 账户槽）；`proxy_server_id` 指定代理服务器。v1 `tunnels[]` 自动迁移保 id。监听地址存 `http_listen_port`（整型端口；旧 `"host:port"` 字符串读时兼容，见 ADR-002）。
 
 ### Suanpan AI 路由 — `~/.suanpan.yaml`
 
