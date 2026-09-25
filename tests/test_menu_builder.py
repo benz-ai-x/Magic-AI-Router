@@ -262,17 +262,29 @@ class TestMultiActiveTunnels(unittest.TestCase):
 
     def test_system_submenu_uses_native_checks(self):
         """B 类设置：中性名词标题 + 原生 ✓（NSMenuItem.state）——
-        状态用母语表达，不染运行色。"""
+        状态用母语表达，不染运行色。语言子菜单（ADR-012）随组尾。"""
         self._submenu("选 项", cfg={"prevent_sleep": True,
                                     "launch_at_login": False,
                                     "config_api_enabled": True,
                                     "servers": []})
         titles = self._titles
-        self.assertEqual(titles, ["防睡眠", "登录启动", "配置 API 服务"])
+        self.assertEqual(titles, ["防睡眠", "登录启动", "配置 API 服务", "语言"])
         mb = self._mb
         self.assertEqual(mb.refs["prevent_sleep"]._menuitem.state(), 1)
         self.assertEqual(mb.refs["launch_login"]._menuitem.state(), 0)
         self.assertEqual(mb.refs["config_api"]._menuitem.state(), 1)
+
+    def test_language_submenu_marks_current_preference(self):
+        """选项 ▸「语言」：✓ 跟随磁盘偏好值（auto 是一等选项）。"""
+        parent, _ = self._submenu("选 项", cfg={"servers": [],
+                                                "language": "en"})
+        lang_sub = [r for r in parent.values()
+                    if getattr(r, "title", "") == "语言"][0]
+        states = {r.title: r._menuitem.state()
+                  for r in lang_sub.values() if hasattr(r, "_menuitem")}
+        self.assertEqual(states["English"], 1)
+        self.assertEqual(states["自动（跟随系统）"], 0)
+        self.assertEqual(states["简体中文"], 0)
 
     def test_status_line_appends_forward_count(self):
         mb = MenuBuilder(MagicMock(), lambda: _state(

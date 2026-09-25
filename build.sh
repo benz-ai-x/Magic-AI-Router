@@ -120,6 +120,8 @@ python -m PyInstaller \
     --name "Magic Stack" \
     --add-data "build_time.txt:." \
     --add-data "shellui/config_ui.html:." \
+    --add-data "shared/locales/zh-CN.json:." \
+    --add-data "shared/locales/en.json:." \
     --add-data "docs/agent.md:." \
     --add-data "docs/examples/suanpan.example.yaml:." \
     --add-data "capture/ai_capture_addon.py:." \

@@ -59,6 +59,10 @@ DEFAULT_CONFIG = {
     # 打开期间/复制 AI 助手指令手势按需起停；True=随应用常驻（浏览器
     # 直开与 AI agent 随时可连）。Docker 形态不走此键（恒常驻）。
     "config_api_enabled": False,
+    # 界面语言（ADR-012）：auto=跟随系统（AppleLanguages）/zh-CN/en。
+    # 值不校验（validate/JS 镜像零新增规则）——i18n.resolve 全兜底，
+    # 坏值落缺省 zh-CN
+    "language": "zh-CN",
 }
 
 

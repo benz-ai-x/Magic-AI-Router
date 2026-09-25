@@ -4,6 +4,10 @@
 RESOURCE_MANIFEST = [
     # (src 相对仓库根, dest 相对 bundle 根)
     ("shellui/config_ui.html", "."),
+    # i18n 双语 catalog（ADR-012）：shared/i18n 平铺查找（dev 包内 /
+    # frozen _MEIPASS 根）
+    ("shared/locales/zh-CN.json", "."),
+    ("shared/locales/en.json", "."),
     ("docs/agent.md", "."),
     ("docs/examples/suanpan.example.yaml", "."),
     ("capture/ai_capture_addon.py", "."),

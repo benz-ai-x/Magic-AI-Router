@@ -93,6 +93,10 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 设置窗 JS `validateConfig`（第一道闸）手抄镜像 Python 分域校验器（prepare 422 兜底）——双层拦是既定约定，但镜像无单一真相，历史两次实际漂移（NFS 端口漏计、五端口 falsy-0 漏检）。报警器：`tests/test_validation_mirror.py` + `tests/js/validate_mirror.mjs` 同一语料两侧同跑（JS 侧经 extract.mjs 取随包发布的 LAYER 1），镜像族断言「同错同净」，单侧族（py_only：挂载点冲突/挂载行形状/数值范围/base_url origin；js_only：供应商空名）显式白名单——新增单侧规则必须挂号，静默漂移变显式决策。
 
+### 界面国际化（i18n，ADR-012）
+
+用户可见文案的中英双语单一归宿：语义键 → `shared/locales/{zh-CN,en}.json`，取词唯一口 `shared/i18n.t(key, **params)`（叶子层零域知识，**不得 import util**——同层不同域）。语言偏好存 mp 配置顶层 `language`（auto/zh-CN/en，缺省 zh-CN，值不校验 resolve 全兜底）；`auto` 经 plistlib 读 AppleLanguages。切换即时生效：`MenuState.language`（resolved 值）进 `struct_key()` 走既有整树重建——菜单刷新按稳定 ref_key 不按标题（PR #100 前的标题字典键坑对语言切换免疫）；写径三处（启动 / 菜单 update_mp / UI 保存回调）汇聚 `app._apply_language()`。纪律四道闸在 `tests/test_i18n.py`：键位奇偶 + 占位符一致、en 全译（值无汉字）、取词守卫（**调用点必须字面键，动态键禁止**——状态词表存键名）、汉字字面量守卫（产品 .py 字符串 AST 扫描，docstring/logging 子树豁免；未迁移文件 `_HAN_WHITELIST` 挂号，M4 清零）。日志与代码注释中文直写不进 catalog（D6）。
+
 ### 服务生命周期（LifecycleRuntime）
 
 后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内；tick 网关健康对账（watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建，用户停止/崩溃绝不拉起）——对账**策略**（节奏/连失配阈值/失败退避/忙位）单一归宿在 `services/gateway_watchdog.GatewayWatchdog`，Docker 形态喂同一策略（R5：此前容器侧手抄丢了阈值，合法 reload 的端口空窗会误判僵尸态触发 stop/start 竞态）。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。:9528 持有者（设置窗/复制指令闩锁/常驻开关）经 app 的 `_set_config_holders` 唯一写口变更即收敛；**Docker 形态恒常驻**（不受持有者状态机影响）；config_server 的 API 面是路由表 dispatch（一个端点一行声明，index 隧道解析 `_saved_tunnel_by_index` 单一归宿）。
