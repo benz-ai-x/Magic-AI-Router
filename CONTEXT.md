@@ -91,7 +91,7 @@ per-tunnel 的 SSH 本地端口转发（`ssh -L`）：把远程服务器可达�
 
 ### 服务生命周期（LifecycleRuntime）
 
-后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内；tick 网关健康对账（watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建，用户停止/崩溃绝不拉起）——对账**策略**（节奏/连失配阈值/失败退避/忙位）单一归宿在 `services/gateway_watchdog.GatewayWatchdog`，Docker 形态喂同一策略（R5：此前容器侧手抄丢了阈值，合法 reload 的端口空窗会误判僵尸态触发 stop/start 竞态）。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。:9528 持有者（设置窗/复制指令闩锁/常驻开关）经 app 的 `_set_config_holders` 唯一写口变更即收敛；config_server 的 API 面是路由表 dispatch（一个端点一行声明，index 隧道解析 `_saved_tunnel_by_index` 单一归宿）。
+后台服务的单一编排点（`services/lifecycle_runtime.py`）：构造五条服务线（Suanpan 网关 / 抓包 / 系统代理 / 防睡眠 / 配置服务）并持有启停顺序契约——`start_all()`（实例锁单胜守卫 → 端口占用报告 → 配置服务 → 网关自启）与 `quit(ssh_stop)`（系统代理恢复 → SSH 停止 → 服务线 → 配置服务，SSH 停止以回调注入）。「抓包正在运行」在此持有单一投影，对 SystemProxyController（元组）与 ConfigServer（布尔）内部适配；Suanpan 保存后的 reload 链内化于模块内；tick 网关健康对账（watchdog：running 旗标 vs 端口真相，僵尸态 worker 重建，用户停止/崩溃绝不拉起）——对账**策略**（节奏/连失配阈值/失败退避/忙位）单一归宿在 `services/gateway_watchdog.GatewayWatchdog`，Docker 形态喂同一策略（R5：此前容器侧手抄丢了阈值，合法 reload 的端口空窗会误判僵尸态触发 stop/start 竞态）。app.py 经属性面（`suanpan` / `capture_ctrl` / `sys_proxy` / `capture` / `config_server`）引用子模块。:9528 持有者（设置窗/复制指令闩锁/常驻开关）经 app 的 `_set_config_holders` 唯一写口变更即收敛；**Docker 形态恒常驻**（不受持有者状态机影响）；config_server 的 API 面是路由表 dispatch（一个端点一行声明，index 隧道解析 `_saved_tunnel_by_index` 单一归宿）。
 
 ### 认证出站（AuthenticatedHttpClient）
 
