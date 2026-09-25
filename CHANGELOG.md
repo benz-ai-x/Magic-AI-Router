@@ -15,6 +15,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 - **服务卡一键检测框架**（#108，M2）：`services/server_check.SERVICE_CARDS` 服务注册表（新增服务类型 = 加一张卡，对齐 PROVIDER_REGISTRY 模式）+ `POST /api/server-check` 聚合端点——SSH 复用 probe（可达性+延迟）/ NFS 复用 check_remote（发行版/2049 监听/导出表）/ **OpenVPN 新探针**（`command -v openvpn`，占位卡「检测服务」已激活）；探针输入归一单一归宿（probe_inputs 迁入 server_check，keychain 参数化）
 
 ### Changed
+- **图标体系：Lucide 线性单笔触语言内联**（v0.462.0 几何，ISC）——`ICONS` 注册表 + `icon()` 单一归宿（24×24 / currentColor / stroke 1.6 / round cap-join，颜色随宿主自动明暗），侧边栏 / 服务 tab / 能力徽标 / 区块头 / 空态五档布点（尺寸阶梯 16/14/12/28），密码可见性与复制等功能图标统一过同一语言——真机验收反馈「高级感」
 - 消费面九类随 schema 换轴（validate→`server_rows_errors`、校验文案 隧道→服务器、两协调器 `current_server`/`proxy_server_id`、菜单角色单选按 id、设置窗 JS 访问器 sshOf/forwardsOf/nfsOf 单一归宿）；`/api/test-tunnel` 等 agent 契约端点语义不变；docs/agent.md API 表补 `/api/server-check`
 
 ## [v0.12.0] — 2026-09-24 — 端口转发逐条启停 + 网关自愈 + 架构评审落地
