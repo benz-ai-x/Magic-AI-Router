@@ -66,6 +66,8 @@ Curators and comparison shoppers, this section is for you:
 
 ![Settings — server view (port mapping tab)](assets/docs/settings-servers-v0130.png)
 
+![Settings — server view (NFS tab)](assets/docs/settings-nfs-v0130.png)
+
 ## Install
 
 **macOS (recommended):** grab the signed + notarized `.dmg` from [Releases](../../releases), drag to `Applications`. That's it — ⚫ appears in the menu bar.
