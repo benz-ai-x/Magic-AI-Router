@@ -64,7 +64,7 @@ rules:
 
 **差异在闭环，不在单层**——看不见流量的路由器是盲飞，看得见流量的代理不会路由。
 
-![设置窗——隧道与端口转发](assets/docs/settings-tunnel-v091.png)
+![设置窗——服务器视图（端口映射 tab）](assets/docs/settings-servers-v0130.png)
 
 ## 安装
 

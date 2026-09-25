@@ -64,7 +64,7 @@ Curators and comparison shoppers, this section is for you:
 
 **The differentiator is the loop, not any single layer** — routers that can't see traffic are flying blind; proxies that can see traffic can't route.
 
-![Settings — tunnel & port forwarding](assets/docs/settings-tunnel-v091.png)
+![Settings — server view (port mapping tab)](assets/docs/settings-servers-v0130.png)
 
 ## Install
 
