@@ -133,7 +133,7 @@ class _ConfigWindowDelegate(NSObject):
             logger.exception("key-file picker failed")
 
 
-def show_config_window(url, title="Magic AI Router 设置", on_action=None,
+def show_config_window(url, title="Magic Stack 设置", on_action=None,
                        auth_headers=None, on_close=None):
     """Open (or focus) the config webview window.
 

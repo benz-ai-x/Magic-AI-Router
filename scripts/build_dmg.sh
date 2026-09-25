@@ -1,12 +1,12 @@
 #!/bin/bash
-# Package dist/Magic AI Router.app into a distributable .dmg
+# Package dist/Magic Stack.app into a distributable .dmg
 # Run AFTER build.sh. VERSION is read from build.sh so there's one source.
-# Produces: dist/Magic AI Router-<VERSION>.dmg (with an Applications symlink
+# Produces: dist/Magic Stack-<VERSION>.dmg (with an Applications symlink
 # so the user can drag-to-install).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Magic AI Router"
+APP_NAME="Magic Stack"
 APP="$ROOT/dist/$APP_NAME.app"
 
 VERSION=$(grep -E '^VERSION=' "$ROOT/build.sh" | head -1 | sed -E 's/VERSION="([^"]*)"/\1/')

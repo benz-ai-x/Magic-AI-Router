@@ -1,4 +1,4 @@
-"""Magic AI Router — AI capture mitmproxy addon (ADR-001 Task 3).
+"""Magic Stack — AI capture mitmproxy addon (ADR-001 Task 3).
 
 Loaded read-only into a frozen ``mitmdump`` via ``-s ai_capture_addon.py``.
 Identifies AI chat traffic (OpenAI / Anthropic / DeepSeek / Doubao / Qwen /

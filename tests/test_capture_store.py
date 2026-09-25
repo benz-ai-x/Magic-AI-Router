@@ -8,7 +8,7 @@ def test_refuses_existing_unmarked_custom_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(capture_store, "_home_dir", lambda: os.path.realpath(tmp_path))
     existing = tmp_path / "Documents"
     existing.mkdir(mode=0o755)
-    with pytest.raises(OSError, match="非 Magic AI Router"):
+    with pytest.raises(OSError, match="非 Magic Stack"):
         capture_store.prepare(str(existing))
     assert os.stat(existing).st_mode & 0o777 == 0o755
 
@@ -84,7 +84,7 @@ def test_clean_refuses_unmarked_foreign_dir(tmp_path, monkeypatch):
     home = _isolated_home(tmp_path, monkeypatch)
     foreign = home / "Documents"
     foreign.mkdir(mode=0o755)
-    with pytest.raises(OSError, match="非 Magic AI Router"):
+    with pytest.raises(OSError, match="非 Magic Stack"):
         capture_store.clean(str(foreign))
 
 

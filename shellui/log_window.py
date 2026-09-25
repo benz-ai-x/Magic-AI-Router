@@ -1,4 +1,4 @@
-"""Real-time log window for Magic AI Router (requirement 4).
+"""Real-time log window for Magic Stack (requirement 4).
 
 Two pieces:
 
@@ -149,7 +149,7 @@ class LogWindow(NSObject):
              | NSWindowStyleMaskResizable),
             2, False,
         )
-        win.setTitle_("Magic AI Router — 实时日志")
+        win.setTitle_("Magic Stack — 实时日志")
         win.setReleasedWhenClosed_(False)
         win.setDelegate_(self)
         self._window = win

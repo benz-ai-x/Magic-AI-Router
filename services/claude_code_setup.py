@@ -631,7 +631,7 @@ def _codex_apply(plan: dict) -> None:
     if doc.get("model_providers") is None:
         doc["model_providers"] = tomlkit.table()
     tbl = tomlkit.table()
-    tbl["name"] = "Magic AI Router"
+    tbl["name"] = "Magic Stack"
     tbl["base_url"] = plan["base_url"]
     tbl["wire_api"] = "responses"
     tbl["experimental_bearer_token"] = plan["token"]
@@ -748,7 +748,7 @@ def _opencode_plan(options: dict | None) -> dict:
         options.get("models") or _sp_default_models())
     if not models:
         raise ValueError("models 清单为空（供应商未配置模型清单）")
-    target = {"npm": npm, "name": "Magic AI Router",
+    target = {"npm": npm, "name": "Magic Stack",
               "options": {"baseURL": base_url, "apiKey": token},
               "models": models}
 
@@ -794,7 +794,7 @@ def _zcode_plan(options: dict | None) -> dict:
     if not models:
         raise ValueError("models 清单为空（供应商未配置模型清单）")
     target = {
-        "name": "Magic AI Router", "kind": "anthropic",
+        "name": "Magic Stack", "kind": "anthropic",
         "options": {"baseURL": _gateway_url(), "apiKey": token},
         "enabled": True, "source": "custom",
         "models": {m: {"name": m} for m in models if isinstance(m, str)},

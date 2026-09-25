@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sign + notarize + staple Magic AI Router (.app AND .dmg) for distribution.
+# Sign + notarize + staple Magic Stack (.app AND .dmg) for distribution.
 # One-shot: codesign the app → notarize it → staple → rebuild the dmg from the
 # signed app → notarize the dmg → staple → Gatekeeper assess.
 # Run AFTER build.sh.
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="Magic AI Router"
+APP_NAME="Magic Stack"
 APP="$ROOT/dist/$APP_NAME.app"
 KEYCHAIN_PROFILE="magic-proxy-notary"
 NOTARY_TMP="$(mktemp -d -t magicproxy-notary)"

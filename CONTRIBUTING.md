@@ -1,6 +1,6 @@
-# Contributing to Magic AI Router
+# Contributing to Magic Stack
 
-Thanks for your interest in contributing! Magic AI Router is a pure-Python macOS menu-bar app hosting an SSH tunnel proxy (HTTP→SOCKS5), a TLS capture mode (mitmproxy), and the Suanpan AI routing gateway (Anthropic Messages API → multi-LLM backends).
+Thanks for your interest in contributing! Magic Stack is a pure-Python macOS menu-bar app hosting an SSH tunnel proxy (HTTP→SOCKS5), a TLS capture mode (mitmproxy), and the Suanpan AI routing gateway (Anthropic Messages API → multi-LLM backends).
 
 [English](CONTRIBUTING.md) · 欢迎中文交流（issue / PR 中文均可）
 

@@ -77,7 +77,7 @@ def _parse_proxy(output):
 
 
 def snapshot():
-    """Capture proxy state for active services before Magic AI Router changes it.
+    """Capture proxy state for active services before Magic Stack changes it.
 
     The caller owns this in-memory snapshot and passes it to ``restore``. We
     intentionally do not touch a service whose state cannot be read: blindly

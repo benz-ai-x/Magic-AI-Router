@@ -33,7 +33,7 @@ class TestLaunchAtLoginLaunchAgent(unittest.TestCase):
 
     def test_enable_writes_valid_plist_without_loading(self):
         login_item.FROZEN = True
-        exe = "/Applications/Magic AI Router.app/Contents/MacOS/Magic AI Router"
+        exe = "/Applications/Magic Stack.app/Contents/MacOS/Magic Stack"
         with tempfile.TemporaryDirectory() as d:
             plist_path = os.path.join(d, "login.plist")
             with patch.object(login_item.sys, "executable", exe), \

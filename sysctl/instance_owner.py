@@ -1,7 +1,7 @@
 """InstanceOwnership（issue #3）：进程所有权的可验证记录.
 
 端口占用只是**发现线索**，不是所有权证明——只有锁记录（pid / 进程启动
-时间 / exe 路径 / nonce）能证明一个 PID 属于 Magic AI Router。启动时间
+时间 / exe 路径 / nonce）能证明一个 PID 属于 Magic Stack。启动时间
 入锁抵抗 PID 复用：同号 PID 但启动时间不同 = 别的进程，永远不发信号。
 
 锁经 O_EXCL 原子创建；并发启动只有一个成功，失败方不触碰成功方的锁。
@@ -18,7 +18,7 @@ logger = logging.getLogger("magic-proxy.instance")
 
 # 锁记录默认位置：macOS 应用支持目录（产品 macOS-only；测试经构造参数重定向）。
 DEFAULT_LOCK_PATH = os.path.join(
-    os.path.expanduser("~/Library/Application Support/Magic AI Router"),
+    os.path.expanduser("~/Library/Application Support/Magic Stack"),
     "instance.json")
 
 

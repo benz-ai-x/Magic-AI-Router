@@ -1,4 +1,4 @@
-"""Menu bar UI builder for Magic AI Router.
+"""Menu bar UI builder for Magic Stack.
 
 Constructs rumps menu trees from a frozen state snapshot + a callback
 namespace.  Owns menu refs, status icon cache, and struct-key tracking.
@@ -797,7 +797,7 @@ class MenuBuilder:
         _apply_icon(item, "clipboard")
         app.menu.add(item)
         app.menu.add(None)
-        item = rumps.MenuItem("关于 Magic AI Router", callback=a.about)
+        item = rumps.MenuItem("关于 Magic Stack", callback=a.about)
         _apply_icon(item, "about")
         app.menu.add(item)
         item = rumps.MenuItem("退出", callback=a.quit_app, key="q")

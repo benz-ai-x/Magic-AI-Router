@@ -82,7 +82,7 @@ class HostKeyFlow:
                 message=(
                     f"服务器：{(tunnel.get('ssh') or {}).get('host')}:{(tunnel.get('ssh') or {}).get('port', 22)}\n\n"
                     f"SHA256 指纹：\n{fingerprints}\n\n"
-                    "请通过可信渠道核对指纹。确认后，Magic AI Router 将严格固定此主机密钥。"
+                    "请通过可信渠道核对指纹。确认后，Magic Stack 将严格固定此主机密钥。"
                 ),
                 ok="信任并连接", cancel="取消",
             )

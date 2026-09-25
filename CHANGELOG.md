@@ -3,7 +3,9 @@
 All notable changes to Magic-AI-Router are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
-## [v0.13.0] — 2026-09-25 — 服务器中心配置模型：Server → Service → Instance
+## [v0.13.0] — 2026-09-25 — 更名 Magic Stack + 服务器中心配置模型
+
+**产品更名 Magic AI Router → Magic Stack**——「Router」只命名了三层闭环（接入/路由/审计）里的一层，Stack 如实命名整套本地 AI 网络栈。用户可见面全量替换（应用名/bundle/菜单/通知/设置窗/文案/文档）；兼容契约一律不动：`~/.magic-proxy.json` 配置路径、Keychain 服务名与密码槽、日志文件名、内部代码标识（magic-proxy/算盘 Suanpan 子品牌）——老用户配置与密钥零迁移。
 
 大版本换轴（ADR-011）：配置从「连接中心的 tunnels[]」重构为「服务器中心的 servers[]」——一台远程服务器一页配完（连接 + 全部服务），服务卡一键检测这台机器上有什么可以用。四批落地：
 

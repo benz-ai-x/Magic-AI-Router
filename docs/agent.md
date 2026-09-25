@@ -1,4 +1,4 @@
-# Magic AI Router
+# Magic Stack
 
 > macOS menu bar app. Two products in one: SSH tunnel HTTP→SOCKS5 proxy + AI routing gateway.
 

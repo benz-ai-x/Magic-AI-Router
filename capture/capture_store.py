@@ -39,7 +39,7 @@ def prepare(path=None):
             raise OSError("抓包目录所有者不正确")
         marker = os.path.join(requested, MARKER)
         if requested != os.path.abspath(DEFAULT_CAPTURE_DIR) and not os.path.isfile(marker):
-            raise OSError("拒绝修改非 Magic AI Router 创建的现有目录")
+            raise OSError("拒绝修改非 Magic Stack 创建的现有目录")
     else:
         os.makedirs(requested, mode=0o700)
     os.chmod(requested, 0o700)

@@ -61,7 +61,7 @@ def _make_app(config=None):
         get_capture_dir=lambda: a._config.get(
             "capture_dir", "~/captures"),
         alert=lambda message: app.rumps.alert(
-            title="Magic AI Router", message=message),
+            title="Magic Stack", message=message),
         hold_copy_latch=lambda: a._set_config_holders(copy_latch=True),
         get_agent_instructions=lambda: a._config_server.agent_instructions(),
     )
