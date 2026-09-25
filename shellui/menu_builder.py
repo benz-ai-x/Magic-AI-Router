@@ -62,7 +62,7 @@ _ICON = {
     "router": "cpu", "capture": "eye", "system": "gearshape",
     # 代理区
     "connect": "play.fill", "cancel": "stop.fill", "pause": "pause.fill",
-    "refresh": "arrow.clockwise", "sysproxy": "globe",
+    "refresh": "arrow.clockwise",
     "tunnel_row": "server.rack", "launch": "arrow.up.right.square",
     # 端口映射区 / 挂载区
     "fw_start": "play.circle", "fw_stop": "stop.circle",
@@ -190,6 +190,16 @@ def _apply_check(item, on):
         item._menuitem.setState_(1 if on else 0)
     except Exception:
         pass
+
+
+def _error_counts(st):
+    """转发/挂载的 error 计数——状态行 ⚠ 与组标题 rollup 的同源单一
+    推导（两处手写会漂移）。"""
+    fw_bad = sum(1 for f in (st.forward_states or ())
+                 if f.status == "error")
+    mounts_bad = sum(1 for entry in (st.mount_states or ())
+                     if entry.status == "error")
+    return fw_bad, mounts_bad
 
 
 def _proxy_tunnel_index(config):
@@ -625,10 +635,6 @@ class MenuBuilder:
                     row.title = title
                     _apply_status_dot(row, kind, point_size=8)
 
-    def _set_title_ref(self, row, text):
-        if row is not None and row.title != text:
-            row.title = text
-
     def _build_mount_submenu(self):
         """远程挂载 ▸ —— NFS over SSH 挂载项（ADR-007）：跨隧道列出所有
         配置了 NFS 挂载的项，每项启停 + 打开挂载目录。NFS 走独立专用
@@ -837,12 +843,9 @@ class MenuBuilder:
             proxy_text += f" · {mounts_up} 个挂载"
         # 故障可见性（UX 批次）：异常不数成功、顶部无感知的时代结束——
         # 转发/挂载的 error 态在状态行立即可见，不必逐层展开子菜单
-        fw_bad = sum(1 for f in (st.forward_states or ())
-                     if f.status == "error")
+        fw_bad, mounts_bad = _error_counts(st)
         if fw_bad:
             proxy_text += f" · ⚠ {fw_bad} 转发异常"
-        mounts_bad = sum(1 for entry in (st.mount_states or ())
-                         if entry.status == "error")
         if mounts_bad:
             proxy_text += f" · ⚠ {mounts_bad} 挂载异常"
         self._set_title("proxy_status", proxy_text)
@@ -882,12 +885,9 @@ class MenuBuilder:
 
     def _refresh_group_rollups(self, st):
         """组标题异常 rollup（状态语法）：闭合菜单一眼判健康——组内有
-        error 态才挂「⚠ n」，正常无任何标记（六个绿组标题是噪音）。
-        与状态行的 ⚠ 计数同一来源（forward/mount error）。"""
-        fw_bad = sum(1 for f in (st.forward_states or ())
-                     if f.status == "error")
-        mounts_bad = sum(1 for entry in (st.mount_states or ())
-                         if entry.status == "error")
+        error 态才挂「⚠ n」，正常无任何标记（组级绿点是噪音）。异常
+        计数与状态行 ⚠ 计数经 _error_counts 同源。"""
+        fw_bad, mounts_bad = _error_counts(st)
         rollups = (
             ("group_proxy", "代 理", 1 if st.ssh_status == "error" else 0),
             ("group_forward", "端口映射", fw_bad),

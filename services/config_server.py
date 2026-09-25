@@ -722,7 +722,7 @@ class ConfigServer:
         # Docker 形态恒常驻，无需该提示
         hint = (
             "\n（复制本指令时配置 API 已自动开启；若稍后连接失败，请让用户"
-            "在菜单 系 统 ▸ 打开「配置 API 服务」）"
+            "在菜单 选 项 ▸ 打开「配置 API 服务」）"
             if self._bind_host == "127.0.0.1" else "")
         return (
             "我在用 Magic AI Router（macOS 菜单栏应用）。\n"

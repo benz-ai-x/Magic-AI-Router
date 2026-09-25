@@ -85,7 +85,7 @@ class CaptureController:
             return False
         self._enabled = True
         self._preflight_error = None
-        self._trust_cache = None  # enabled titles never read trust state
+        self._trust_cache = None  # enabled 状态下 hint 不读信任缓存
         started = self._monitor.start(
             mitmdump_bin=res.mitmdump_bin,
             addon_path=res.addon_path,
