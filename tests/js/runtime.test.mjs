@@ -505,10 +505,10 @@ test("svcCheck probes the saved server per card and renders probe results", asyn
     { url: "/api/server-check", method: "POST", body: { index: 0, only: "ssh" } },
     { url: "/api/server-check", method: "POST", body: { index: 0, only: "openvpn" } },
   ]);
-  assert.equal(rt.elements.get("probe-ssh").textContent, "✓ SSH 可达 · 87ms");
+  assert.equal(rt.elements.get("probe-ssh").textContent, "✅ SSH 可达 · 87ms");
   assert.equal(
     rt.elements.get("probe-vpn").textContent,
-    "✗ 未安装（安装后此处将显示可用入口）");
+    "❌ 未安装（安装后此处将显示可用入口）");
 });
 
 test("svcCheck renders connection failure from the card probe", async () => {
@@ -531,7 +531,7 @@ test("svcCheck renders connection failure from the card probe", async () => {
       return btn;
     })()
   `);
-  assert.equal(rt.elements.get("probe-vpn").textContent, "✗ 连接超时");
+  assert.equal(rt.elements.get("probe-vpn").textContent, "❌ 连接超时");
   assert.equal(rt.elements.get("probe-vpn").style.color, "var(--danger)");
 });
 

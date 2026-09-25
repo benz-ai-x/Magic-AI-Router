@@ -801,6 +801,20 @@ class TestServerCheckEndpoint(unittest.TestCase):
         self.assertFalse(json.loads(data)["ok"])
         cs.assert_not_called()
 
+    def test_non_string_only_returns_400(self):
+        """only 为 dict/list 等恶形不得打崩 handler 线程（评审实锄）。"""
+        tunnel = {"ssh": {"host": "h"}}
+        for bad in ('{"index": 0, "only": {"a": 1}}',
+                    '{"index": 0, "only": ["ssh"]}',
+                    '{"index": 0, "only": 42}'):
+            with patch.object(config_server, "_read_mp",
+                              return_value={"servers": [tunnel]}), \
+                 patch.object(config_server.server_check, "check_server") as cs:
+                status, data = self._post(bad)
+            self.assertEqual(status, 400, bad)
+            self.assertFalse(json.loads(data)["ok"])
+        cs.assert_not_called()
+
     def test_index_body_delegates_with_only(self):
         tunnel = {"ssh": {"host": "example.com", "user": "u", "port": 22}}
         results = {"ssh": {"ok": True, "error": "", "latency_ms": 12}}

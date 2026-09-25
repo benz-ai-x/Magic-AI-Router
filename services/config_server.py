@@ -516,7 +516,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": error})
             return
         only = data.get("only")
-        if only is not None and only not in server_check.SERVICE_CARDS:
+        if only is not None and (not isinstance(only, str)
+                                  or only not in server_check.SERVICE_CARDS):
             self._json(400, {"ok": False, "error": "无效的检测类型"})
             return
         self._json(200, {"ok": True, "results": server_check.check_server(

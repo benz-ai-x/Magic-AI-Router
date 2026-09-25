@@ -1571,12 +1571,12 @@ async function svcCheck(kind,btn){
     const res=d&&d.results&&d.results[kind];
     if(!res)_setProbeResult(pid,'❌ '+(d.error||'检测失败'),'var(--danger)');
     else if(kind==='openvpn'){
-      if(!res.ok)_setProbeResult(pid,'✗ '+(res.error||'检测失败'),'var(--danger)');
-      else if(res.installed)_setProbeResult(pid,'✓ 已安装 · '+(res.version||''),'var(--ok)');
-      else _setProbeResult(pid,'✗ 未安装（安装后此处将显示可用入口）','var(--muted)');
+      if(!res.ok)_setProbeResult(pid,'❌ '+(res.error||'检测失败'),'var(--danger)');
+      else if(res.installed)_setProbeResult(pid,'✅ 已安装 · '+(res.version||''),'var(--ok)');
+      else _setProbeResult(pid,'❌ 未安装（安装后此处将显示可用入口）','var(--muted)');
     }else{
-      if(res.ok)_setProbeResult(pid,'✓ SSH 可达'+(res.latency_ms!=null?' · '+res.latency_ms+'ms':''),'var(--ok)');
-      else _setProbeResult(pid,'✗ '+(res.error||'检测失败'),'var(--danger)');
+      if(res.ok)_setProbeResult(pid,'✅ SSH 可达'+(res.latency_ms!=null?' · '+res.latency_ms+'ms':''),'var(--ok)');
+      else _setProbeResult(pid,'❌ '+(res.error||'检测失败'),'var(--danger)');
     }
     restore();
   }catch(e){_setProbeResult(pid,'❌ 请求失败: '+e.message,'var(--danger)');restore();}
