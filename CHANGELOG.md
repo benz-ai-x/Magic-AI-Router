@@ -3,6 +3,24 @@
 All notable changes to Magic-AI-Router are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [SemVer](https://semver.org/).
 
+## [v0.14.0] — 2026-09-25 — 产品国际化（中英双语）+ NFS 挂载回归修复
+
+**产品国际化落地（ADR-012，M0–M2）**——菜单栏与设置窗全量中英双语，一处切换即时生效。自研语义键 catalog（`shared/locales/{zh-CN,en}.json` 单一真相，非 gettext）+ `shared/i18n` 叶子模块；语言偏好 auto/zh-CN/en（auto 经 AppleLanguages 跟随系统），存 mp 配置顶层 `language`，缺省中文。
+
+### Added
+- **M0 地基**：双语 catalog + i18n 模块（`t()`/resolve/catalog，语言键不校验全兜底）+ 五道守卫（键位奇偶+占位符一致 / en 全译无汉字 / 取词守卫——动态键禁止、状态表存键名 / 汉字字面量 AST 扫描（未迁移文件白名单挂号，M4 清零）/ HTML 渲染层残留零容忍）
+- **M1 菜单栏双语（#114）**：六组菜单、弹窗、关于对话框全量取词；「选项 ▸ 语言」子菜单（自动/中文/English，✓ 跟随磁盘偏好）；切换即时生效——`MenuState.language` 进 `struct_key()` 走既有整树重建（PR #100 前的标题字典键坑免疫）
+- **M2 设置窗双语（#116）**：整页 `tt()` 键化 ~490 键（LAYER 1 校验消息同样走键——node 测试经真实 catalog 构建的 tt 求值，中文断言零改动）；config_server serve 时注入 `window.__I18N__`（浏览器直开同路径）；系统选项页语言选择器（PUT baseline+language 后**原地重渲染不 reload**，未保存表单不丢）；登录页按语言渲染
+
+### Fixed
+- **NFS 挂载 v2 schema 回归（#115，v0.13.0 真机事故）**：`_injected_tunnel` 仍写 v1 顶层 `forwards` 落空 → 连接会话与 NFS 会话双 spawn 抢绑同口 → 重试死循环、NFS 本地端口无监听。改为 v2 `services.ssh.forwards` 投影 + 命令级回归测试（原测试全 v1 形状掩盖回归）
+- **设置窗侧边栏溢出**：侧边栏内容 880px > 默认视口 852px——默认尺寸即溢出，「复制 AI 助手指令」被窗口下缘裁掉；导航区改内部滚动（矮窗口优雅降级）+ 侧边栏垂直压缩（导航项/组距/提示卡 133→97px），默认窗口零滚动
+- **全页面双语审查五项（#116，真实渲染 24 截图 + DOM 实测驱动）**：快速接入页 `tt()` 字面量渲染；页头副标题英文态全中文；pending 脏状态条按钮残留中文；登录页四文案假拼接（`ui.login.*` 键缺失，一并补齐）；服务器页导语与全宽面板错位 + 侧边栏副标题折行（nowrap+省略号兜底）
+- **R5 遗留清偿（#113）**：capture 状态漂移跨语言报警 + 状态文案换轴、余额页三刀切（来源 Agent 维度/端点探测态/时区边界）、网关缝卫生
+
+### Docs
+- README SEO 深度重写（痛点开场+关键词前置，172→134 行）；v0.13.0 服务器视图真机截图（端口映射/NFS tab，隐私脱敏）；仓库 URL 随更名同步 magic-stack
+
 ## [v0.13.0] — 2026-09-25 — 更名 Magic Stack + 服务器中心配置模型
 
 **产品更名 Magic AI Router → Magic Stack**——「Router」只命名了三层闭环（接入/路由/审计）里的一层，Stack 如实命名整套本地 AI 网络栈。用户可见面全量替换（应用名/bundle/菜单/通知/设置窗/文案/文档）；兼容契约一律不动：`~/.magic-proxy.json` 配置路径、Keychain 服务名与密码槽、日志文件名、内部代码标识（magic-proxy/算盘 Suanpan 子品牌）——老用户配置与密钥零迁移。
