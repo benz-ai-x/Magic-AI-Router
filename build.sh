@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Magic AI Router.app with PyInstaller (bundles mitmdump for capture mode)
+# Build Magic Stack.app with PyInstaller (bundles mitmdump for capture mode)
 set -e
 
 # Version. Bump this when cutting a new release; also tag git with v$VERSION.
@@ -70,7 +70,7 @@ build_mitmdump() {
     echo "mitmdump build complete: dist-mitmdump/mitmdump/mitmdump"
 }
 
-echo "=== Building Magic AI Router.app v${VERSION} ==="
+echo "=== Building Magic Stack.app v${VERSION} ==="
 
 # Clean previous build (main app only -- mitmdump's dist-mitmdump/
 # build-mitmdump are cleaned inside build_mitmdump so the two steps don't
@@ -81,7 +81,7 @@ build_mitmdump
 
 # Build main app, bundling mitmdump's onedir output at Resources/mitmdump/
 # (matches app.py's _resolve_mitmdump_bin() frozen-mode lookup).
-echo "--- Building Magic AI Router.app ---"
+echo "--- Building Magic Stack.app ---"
 
 # Main app venv: 从带 hashes 的 requirements-lock.txt 安装（issue #14）——
 # dev requirements 不决定发布成品；lock 已是主构建依赖的完整超集
@@ -117,7 +117,7 @@ date +%m%d%H%M > build_time.txt
 # 分析）import——必须显式收集，否则包内 Codex 配置缺依赖（ADR-010）
 python -m PyInstaller \
     --windowed \
-    --name "Magic AI Router" \
+    --name "Magic Stack" \
     --add-data "build_time.txt:." \
     --add-data "shellui/config_ui.html:." \
     --add-data "docs/agent.md:." \
@@ -183,7 +183,7 @@ rm -f build_time.txt
 
 # Patch Info.plist: LSUIElement (menu bar only) + version strings.
 # Delete-then-Add handles keys PyInstaller may or may not have set.
-PLIST="dist/Magic AI Router.app/Contents/Info.plist"
+PLIST="dist/Magic Stack.app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Delete :LSUIElement" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$PLIST"
 /usr/libexec/PlistBuddy -c "Delete :CFBundleShortVersionString" "$PLIST" 2>/dev/null || true
@@ -199,15 +199,15 @@ PLIST="dist/Magic AI Router.app/Contents/Info.plist"
 # not just the outer .app (verified empirically in the Task 1 spike against
 # a nested PyInstaller binary -- see progress/backend-dev.md).
 # (notarize.sh later re-signs with a Developer ID identity, superseding this.)
-codesign --force --deep --sign - "dist/Magic AI Router.app"
+codesign --force --deep --sign - "dist/Magic Stack.app"
 
 # ---------------------------------------------------------------------------
 # 打包冒烟（issue #2）：执行 bundled app 二进制的 smoke 钩子——在
 # _MEIPASS 内跑资源契约解析并实际 spawn bundled mitmdump 加载 bundled
 # addon。判据单一归宿在 capture/resources.py（SMOKE_* 常量）。
 # ---------------------------------------------------------------------------
-APP_BUNDLE="dist/Magic AI Router.app"
-if ! MAGIC_PROXY_SMOKE_TEST=1 "$APP_BUNDLE/Contents/MacOS/Magic AI Router"; then
+APP_BUNDLE="dist/Magic Stack.app"
+if ! MAGIC_PROXY_SMOKE_TEST=1 "$APP_BUNDLE/Contents/MacOS/Magic Stack"; then
     echo "ERROR: frozen capture smoke failed (see stderr above)" >&2
     exit 1
 fi
@@ -215,6 +215,6 @@ echo "Smoke OK: frozen contract + bundled mitmdump loaded bundled addon"
 
 echo ""
 echo "=== Build complete ==="
-echo "App: dist/Magic AI Router.app"
+echo "App: dist/Magic Stack.app"
 echo ""
-echo "To install: cp -R 'dist/Magic AI Router.app' /Applications/"
+echo "To install: cp -R 'dist/Magic Stack.app' /Applications/"

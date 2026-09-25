@@ -1,4 +1,4 @@
-"""Shared config I/O for Magic AI Router.
+"""Shared config I/O for Magic Stack.
 
 Reads, writes, migrates, and validates ~/.magic-proxy.json.
 Imported by app.py and config_server.py — no circular dependency.

@@ -49,17 +49,17 @@ jobs:
       - name: Build app and DMG
         run: |
           MAIN_PYTHON_BIN=python MITM_PYTHON_BIN=python bash build.sh
-          test -x "dist/Magic AI Router.app/Contents/Resources/mitmdump/mitmdump"
-          "dist/Magic AI Router.app/Contents/Resources/mitmdump/mitmdump" --version
+          test -x "dist/Magic Stack.app/Contents/Resources/mitmdump/mitmdump"
+          "dist/Magic Stack.app/Contents/Resources/mitmdump/mitmdump" --version
           VERSION=$(grep -E '^VERSION=' build.sh | head -1 | sed -E 's/VERSION="([^"]*)"/\1/')
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 'dist/Magic AI Router.app/Contents/Info.plist')" = "$VERSION"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' 'dist/Magic AI Router.app/Contents/Info.plist')" = "true"
-          codesign --verify --strict --deep "dist/Magic AI Router.app"
-          MAGIC_PROXY_SMOKE_TEST=1 "dist/Magic AI Router.app/Contents/MacOS/Magic AI Router"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' 'dist/Magic Stack.app/Contents/Info.plist')" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' 'dist/Magic Stack.app/Contents/Info.plist')" = "true"
+          codesign --verify --strict --deep "dist/Magic Stack.app"
+          MAGIC_PROXY_SMOKE_TEST=1 "dist/Magic Stack.app/Contents/MacOS/Magic Stack"
           bash scripts/build_dmg.sh
       - uses: actions/upload-artifact@v4
         with:
           name: mage-ai-router-unsigned-arm64
           path: |
-            dist/Magic AI Router.app
-            dist/Magic AI Router-*.dmg
+            dist/Magic Stack.app
+            dist/Magic Stack-*.dmg

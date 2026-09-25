@@ -1,7 +1,7 @@
 """Lightweight config server for the web-based settings UI.
 
 Serves a single-page HTML config panel + JSON API for reading/writing both
-Magic AI Router (~/.magic-proxy.json) and Suanpan (~/.suanpan.yaml) configs.
+Magic Stack (~/.magic-proxy.json) and Suanpan (~/.suanpan.yaml) configs.
 Uses stdlib http.server — no FastAPI/uvicorn dependency. Runs on 127.0.0.1:9528
 in a daemon thread, always available while the app is running.
 
@@ -47,7 +47,7 @@ _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _LOGIN_HTML = """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Magic AI Router — 登录</title>
+<title>Magic Stack — 登录</title>
 <style>
 body{font-family:-apple-system,system-ui,sans-serif;background:#f5f5f7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .card{background:#fff;border-radius:12px;padding:32px;box-shadow:0 4px 24px rgba(0,0,0,.08);width:320px}
@@ -57,7 +57,7 @@ button{width:100%;padding:10px;background:#007aff;color:#fff;border:0;border-rad
 button:disabled{background:#ccc;cursor:default}.err{color:#ff3b30;font-size:13px;margin-top:8px;display:none}
 </style></head><body>
 <div class="card">
-<h1>Magic AI Router</h1>
+<h1>Magic Stack</h1>
 <p>输入配置页面的访问 token（Docker 版用 <code>suanpan.sh config-ui</code> 查看）</p>
 <input id="tok" type="password" placeholder="token" autocomplete="off" autofocus>
 <button id="go">进入</button>
@@ -720,7 +720,7 @@ class ConfigServer:
             "在菜单 选 项 ▸ 打开「配置 API 服务」）"
             if self._bind_host == "127.0.0.1" else "")
         return (
-            "我在用 Magic AI Router（macOS 菜单栏应用）。\n"
+            "我在用 Magic Stack（macOS 菜单栏应用）。\n"
             f"请先读 {self.url}agent.md 了解产品功能和配置方法。\n"
             "当前配置 API（需要 token）：\n"
             f'  curl -H "Authorization: Bearer {self.token}" {self.url}api/state\n'

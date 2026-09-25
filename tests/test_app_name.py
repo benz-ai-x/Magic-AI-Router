@@ -1,4 +1,4 @@
-"""App-name guard — the user-visible product name is "Magic AI Router".
+"""App-name guard — the user-visible product name is "Magic Stack".
 
 Commit 65f0bae renamed the app with a typo ("Mage" for "Magic") that
 then propagated into packaging, CI and docs (c38c210, f6910f6).
@@ -13,14 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Built by concatenation so this file itself never contains the phrase.
 _TYPO = "Mage" + " AI Router"
-CANONICAL = "Magic AI Router"
+CANONICAL = "Magic Stack"
 
 # Packaging/release surfaces that must spell the product name exactly.
 _PACKAGING_PINS = {
-    "app.py": 'name="Magic AI Router"',
-    "build.sh": '--name "Magic AI Router"',
-    "scripts/build_dmg.sh": 'APP_NAME="Magic AI Router"',
-    "scripts/notarize.sh": 'APP_NAME="Magic AI Router"',
+    "app.py": 'name="Magic Stack"',
+    "build.sh": '--name "Magic Stack"',
+    "scripts/build_dmg.sh": 'APP_NAME="Magic Stack"',
+    "scripts/notarize.sh": 'APP_NAME="Magic Stack"',
 }
 
 

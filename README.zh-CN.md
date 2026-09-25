@@ -1,4 +1,4 @@
-# Magic AI Router
+# Magic Stack
 
 **住进菜单栏的本地 AI 网络栈：路由 Claude Code 到任意模型、走自己的隧道、亲眼看见 AI 应用到底发了什么。**
 
@@ -13,7 +13,7 @@
 
 ![菜单栏](assets/docs/menu-bar-v091.png)
 
-路由器只管转发，代理只搬字节——**Magic AI Router 把闭环装进一个原生 macOS 应用**：接入层（你自己的 SSH 隧道）、路由层（讲你 Agent 协议的本地网关——Anthropic / OpenAI Chat / Responses）、观测层（AI 流量 TLS 解密）三层齐备。改一条路由规则，**同一应用里**就能看到真实的成本、延迟与返回变化。密钥永不出你的机器。
+路由器只管转发，代理只搬字节——**Magic Stack 把闭环装进一个原生 macOS 应用**：接入层（你自己的 SSH 隧道）、路由层（讲你 Agent 协议的本地网关——Anthropic / OpenAI Chat / Responses）、观测层（AI 流量 TLS 解密）三层齐备。改一条路由规则，**同一应用里**就能看到真实的成本、延迟与返回变化。密钥永不出你的机器。
 
 | 层 | 你得到什么 |
 |---|---|
@@ -52,7 +52,7 @@ rules:
 
 给比较型用户和清单维护者：
 
-| | **Magic AI Router** | claude-code-router / LiteLLM | OpenRouter（SaaS） | 手动 ssh + 配置 |
+| | **Magic Stack** | claude-code-router / LiteLLM | OpenRouter（SaaS） | 手动 ssh + 配置 |
 |---|---|---|---|---|
 | 运行位置 | **本地优先**（菜单栏 / Docker） | 本地或自建服务 | 别人的云 | 你的终端 |
 | 密钥与提示词 | **绝不出本机** | 自建则你的 | 发给服务方 | 你的 |
@@ -149,7 +149,7 @@ Linux：算盘网关有 Docker 镜像。菜单栏壳、SSH 隧道与抓包为 ma
 
 ## 给清单维护者的一句话
 
-> **Magic AI Router** — 开源 macOS 菜单栏应用：把 Claude Code / Codex 等 Agent（Anthropic / OpenAI 协议）经本地优先的网关路由到 GLM/DeepSeek/Kimi/Qwen/OpenAI 等，内置 SSH 隧道/端口转发管理与 TLS 层 AI 流量观测。MIT。
+> **Magic Stack** — 开源 macOS 菜单栏应用：把 Claude Code / Codex 等 Agent（Anthropic / OpenAI 协议）经本地优先的网关路由到 GLM/DeepSeek/Kimi/Qwen/OpenAI 等，内置 SSH 隧道/端口转发管理与 TLS 层 AI 流量观测。MIT。
 
 ## 文档
 

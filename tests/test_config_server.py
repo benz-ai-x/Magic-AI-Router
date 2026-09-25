@@ -945,12 +945,12 @@ class TestCaptureCleanEndpoint(unittest.TestCase):
     def test_clean_oserror_surfaces_message(self):
         with patch.object(config_server, "_read_mp", return_value={}), \
              patch.object(config_server.capture_store, "clean",
-                          side_effect=OSError("拒绝修改非 Magic AI Router 创建的现有目录")):
+                          side_effect=OSError("拒绝修改非 Magic Stack 创建的现有目录")):
             status, data = self._post()
         self.assertEqual(status, 200)
         parsed = json.loads(data)
         self.assertFalse(parsed["ok"])
-        self.assertIn("Magic AI Router", parsed["error"])
+        self.assertIn("Magic Stack", parsed["error"])
 
 
 if __name__ == "__main__":

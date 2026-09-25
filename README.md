@@ -1,4 +1,4 @@
-# Magic AI Router
+# Magic Stack
 
 **The local AI network stack in your menu bar: route Claude Code to any model, ride your own tunnel, and actually *see* what your AI apps send.**
 
@@ -13,7 +13,7 @@
 
 ![Menu bar](assets/docs/menu-bar-v091.png)
 
-Routing tools forward requests. Proxies move bytes. **Magic AI Router closes the loop**: one native macOS app holds all three layers — access (your own SSH tunnels), routing (a local gateway that speaks your agent's protocol — Anthropic, OpenAI Chat, or Responses), and observability (TLS decryption of AI traffic). Change a routing rule, and watch the *real* cost, latency, and responses change in the same app. Keys never leave your machine.
+Routing tools forward requests. Proxies move bytes. **Magic Stack closes the loop**: one native macOS app holds all three layers — access (your own SSH tunnels), routing (a local gateway that speaks your agent's protocol — Anthropic, OpenAI Chat, or Responses), and observability (TLS decryption of AI traffic). Change a routing rule, and watch the *real* cost, latency, and responses change in the same app. Keys never leave your machine.
 
 | Layer | What you get |
 |---|---|
@@ -52,7 +52,7 @@ Type `provider/model` (e.g. `DeepSeek/deepseek-chat`) anywhere a model is expect
 
 Curators and comparison shoppers, this section is for you:
 
-| | **Magic AI Router** | claude-code-router / LiteLLM | OpenRouter (SaaS) | 手动 ssh + 配置文件 |
+| | **Magic Stack** | claude-code-router / LiteLLM | OpenRouter (SaaS) | 手动 ssh + 配置文件 |
 |---|---|---|---|---|
 | Where it runs | **Local-first** (menu bar / Docker) | Local or self-host server | Their cloud | Your terminal |
 | Keys & prompts | **Never leave your machine** | Yours (self-host) | Sent to service | Yours |
@@ -149,7 +149,7 @@ Linux: the Suanpan gateway ships as a Docker image. Menu-bar shell, SSH tunnels 
 
 ## For curators (one-liner)
 
-> **Magic AI Router** — open-source macOS menu-bar app that routes Claude Code, Codex and other agents (Anthropic/OpenAI protocols) to GLM/DeepSeek/Kimi/Qwen/OpenAI through a local-first gateway, bundled with SSH tunnel/port-forwarding management and TLS-level AI traffic observability. MIT.
+> **Magic Stack** — open-source macOS menu-bar app that routes Claude Code, Codex and other agents (Anthropic/OpenAI protocols) to GLM/DeepSeek/Kimi/Qwen/OpenAI through a local-first gateway, bundled with SSH tunnel/port-forwarding management and TLS-level AI traffic observability. MIT.
 
 ## Documentation
 

@@ -16,11 +16,11 @@ Single-context repo: `CONTEXT.md` + `docs/adr/` at the root. See `docs/agents/do
 
 ## 概述
 
-Magic AI Router — macOS 菜单栏应用（壳），承载两个独立产品：Magic Proxy 与 Suanpan（领域定义见 `CONTEXT.md`「产品结构」）。
+Magic Stack — macOS 菜单栏应用（壳），承载两个独立产品：Magic Proxy 与 Suanpan（领域定义见 `CONTEXT.md`「产品结构」）。
 
 > **模块清单、菜单结构等易过期信息以代码为准**（`tests/test_docs_drift.py` 做防漂移守卫）；版本号见 `build.sh`。
 
-> 用户可见名是 **Magic AI Router**（见 `build.sh` / `app.py`）；内部代码和历史文档中常称 Magic Proxy / Magic-AI-Router。
+> 用户可见名是 **Magic Stack**（见 `build.sh` / `app.py`）；内部代码和历史文档中常称 Magic Proxy / Magic-AI-Router。
 
 ## Tech Stack
 
@@ -40,7 +40,7 @@ python3 -m pytest tests/
 
 # 打包 .app
 bash build.sh
-cp -R "dist/Magic AI Router.app" /Applications/
+cp -R "dist/Magic Stack.app" /Applications/
 
 # 发布分发（签名 + 公证）
 bash scripts/notarize.sh

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Magic AI Router — macOS menu bar app for HTTP→SOCKS5 over SSH tunnel."""
+"""Magic Stack — macOS menu bar app for HTTP→SOCKS5 over SSH tunnel."""
 import logging
 import logging.handlers
 import os
@@ -97,7 +97,7 @@ class MagicProxyApp(rumps.App):
             # 迁移可行动错误（显式重复 id）：绝不带病运行——弹窗给出
             # 处置指引后退出，原配置文件未被动过
             rumps.alert(
-                "Magic AI Router",
+                "Magic Stack",
                 f"配置包含重复的隧道 id，无法安全启动。\n\n{exc}\n\n"
                 "请打开配置文件修正重复 id 后重启应用。")
             raise SystemExit(1)
@@ -173,7 +173,7 @@ class MagicProxyApp(rumps.App):
             get_capture_dir=lambda: self._config.get(
                 "capture_dir", DEFAULT_CAPTURE_DIR),
             alert=lambda message: rumps.alert(
-                title="Magic AI Router", message=message),
+                title="Magic Stack", message=message),
             hold_copy_latch=lambda: self._set_config_holders(
                 copy_latch=True),
             get_agent_instructions=self._config_server.agent_instructions,
@@ -185,8 +185,8 @@ class MagicProxyApp(rumps.App):
         if not self._lifecycle.start_all():
             # 单实例守卫失败（issue #3）：用户可见的清晰错误，绝不以
             # 僵尸实例形态继续起菜单。
-            rumps.alert("Magic AI Router",
-                        "已有 Magic AI Router 实例在运行。\n\n"
+            rumps.alert("Magic Stack",
+                        "已有 Magic Stack 实例在运行。\n\n"
                         "本次启动已退出——请通过菜单栏使用现有实例，"
                         "或先退出它再重新启动。")
             raise SystemExit(0)
@@ -196,7 +196,7 @@ class MagicProxyApp(rumps.App):
             self, self._make_menu_state)
 
         super().__init__(
-            name="Magic AI Router",
+            name="Magic Stack",
             title="⚫",
             quit_button=None,
         )
@@ -343,16 +343,16 @@ class MagicProxyApp(rumps.App):
             return
         self._relaunch_waiter = None
         if action == "timeout":
-            rumps.alert(title="Magic AI Router",
+            rumps.alert(title="Magic Stack",
                         message=f"{w.name} 未能及时退出，请手动退出后重试。")
             return
         ok, err = chromium_proxy.launch(w.path, payload)
         if not ok:
-            rumps.alert(title="Magic AI Router",
+            rumps.alert(title="Magic Stack",
                         message=f"启动失败：\n\n{err}")
             return
         rumps.alert(
-            title="Magic AI Router",
+            title="Magic Stack",
             message=(f"已经代理启动 {w.name}（→ {payload}）。\n\n"
                      "• 仅本次启动的实例走代理；从 Dock 直接开的不算\n"
                      f"• Magic-Proxy 未运行时 {w.name} 将联网失败、不会直连"),
@@ -375,7 +375,7 @@ class MagicProxyApp(rumps.App):
             result = self._config_store.update_mp(mutate)
         except IdentityMigrationError as exc:
             rumps.alert(
-                "Magic AI Router",
+                "Magic Stack",
                 f"配置包含重复的隧道 id，无法保存本次更改。\n\n{exc}\n\n"
                 "请打开配置文件修正重复 id 后重试。")
             return False
@@ -390,7 +390,7 @@ class MagicProxyApp(rumps.App):
         return True
 
     def _notify(self, subtitle, message=""):
-        rumps.notification("Magic AI Router", subtitle, message)
+        rumps.notification("Magic Stack", subtitle, message)
 
     def _on_mp_saved(self):
         """UI 保存 MP 段后的内存副本收敛（配置服务线程调用）。
@@ -442,7 +442,7 @@ class MagicProxyApp(rumps.App):
             from PyObjCTools import AppHelper
             AppHelper.callAfter(
                 rumps.alert,
-                "Magic AI Router",
+                "Magic Stack",
                 f"配置包含重复的隧道 id，已保持现有连接。\n\n{exc}\n\n"
                 "请打开配置文件修正重复 id 后重试。")
             return
@@ -594,7 +594,7 @@ class MagicProxyApp(rumps.App):
         enabled = not (cfg or {}).get("launch_at_login", False)
         ok, err = login_item.set_launch_at_login(enabled)
         if not ok:
-            rumps.alert(title="Magic AI Router", message=f"无法设置登录启动：\n\n{err}")
+            rumps.alert(title="Magic Stack", message=f"无法设置登录启动：\n\n{err}")
             self._dirty()
             return
         if not self._update_mp_config(
@@ -660,7 +660,7 @@ class MagicProxyApp(rumps.App):
 
     def about(self, _):
         rumps.alert(
-            title="Magic AI Router",
+            title="Magic Stack",
             message=(
                 f"版本 v{self.VERSION_DISPLAY}\n"
                 "住进菜单栏的本地 AI 网络栈——路由它，隧道它，看见它。\n"
@@ -698,12 +698,12 @@ class MagicProxyApp(rumps.App):
         name = entry["name"]
         path = entry.get("path") or chromium_proxy.app_path(entry)
         if not path:
-            rumps.alert(title="Magic AI Router", message=f"未找到 {name}.app")
+            rumps.alert(title="Magic Stack", message=f"未找到 {name}.app")
             return
         http_listen = netloc.format_listen("127.0.0.1", int(self._config["http_listen_port"]))
         if chromium_proxy.is_running(path):
             resp = rumps.alert(
-                title="Magic AI Router",
+                title="Magic Stack",
                 message=(f"{name} 已在运行。需先退出、再经代理重新启动才生效。\n\n"
                          "是否退出并经代理重开？"),
                 ok="退出并重开", cancel="取消",
@@ -718,10 +718,10 @@ class MagicProxyApp(rumps.App):
             return
         ok, err = chromium_proxy.launch(path, http_listen)
         if not ok:
-            rumps.alert(title="Magic AI Router", message=f"启动失败：\n\n{err}")
+            rumps.alert(title="Magic Stack", message=f"启动失败：\n\n{err}")
             return
         rumps.alert(
-            title="Magic AI Router",
+            title="Magic Stack",
             message=(f"已经代理启动 {name}（→ {http_listen}）。\n\n"
                      "• 仅本次启动的实例走代理；从 Dock 直接开的不算\n"
                      f"• Magic-Proxy 未运行时 {name} 将联网失败、不会直连"),
@@ -736,11 +736,11 @@ class MagicProxyApp(rumps.App):
             return True
         msg = (f"{label} 端口 {port} 被占用:\n\n"
                f"{owner.name} (PID {owner.pid})\n{owner.cmd[:120]}\n\n是否 Kill 它？")
-        if rumps.alert(title="Magic AI Router", message=msg, ok="是，Kill", cancel="否") != 1:
+        if rumps.alert(title="Magic Stack", message=msg, ok="是，Kill", cancel="否") != 1:
             return False
         ok, err = port_check.kill(owner.pid)
         if not ok:
-            rumps.alert(title="Magic AI Router", message=f"Kill 失败: {err}")
+            rumps.alert(title="Magic Stack", message=f"Kill 失败: {err}")
             return False
         return True
 
@@ -781,7 +781,7 @@ class MagicProxyApp(rumps.App):
                 # 启动失败：服务未在听——刻意只清位不收敛（收敛无益，
                 # 常驻开关持有者的收敛交给下一个自然事件）
                 self._config_window_open = False
-                rumps.alert(title="Magic AI Router", message="配置服务端口被占用，无法打开设置。")
+                rumps.alert(title="Magic Stack", message="配置服务端口被占用，无法打开设置。")
                 return
             show_config_window(
                 self._config_server.url + fragment, on_action=self._bridge_action,
@@ -793,7 +793,7 @@ class MagicProxyApp(rumps.App):
             # 服务可能已在听——清位必须收敛（R2-4 修复点：曾漏收敛，
             # 零持有者时 :9528 常驻到下一个偶然事件）
             self._set_config_holders(window_open=False)
-            rumps.alert(title="Magic AI Router", message=f"打开设置失败:\n\n{e!r}")
+            rumps.alert(title="Magic Stack", message=f"打开设置失败:\n\n{e!r}")
 
     def _on_config_window_closed(self):
         """设置窗真关闭（webview_window windowWillClose）→ 释放持有者。"""
@@ -892,7 +892,7 @@ class MagicProxyApp(rumps.App):
 
 if __name__ == "__main__":
     if os.environ.get("MAGIC_PROXY_SMOKE_TEST") == "1":
-        logger.info("Magic AI Router smoke import OK: v%s", VERSION)
+        logger.info("Magic Stack smoke import OK: v%s", VERSION)
         # mount 域（ADR-007）依赖分析守卫：app.py 顶层 import 会让
         # PyInstaller 把 mount 包编进 PYZ——这里真导入一次，漏收集在
         # 打包冒烟即红，而非装到 /Applications 后首挂载才炸

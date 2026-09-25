@@ -1,4 +1,4 @@
-"""Explicit SSH host-key enrollment for Magic AI Router."""
+"""Explicit SSH host-key enrollment for Magic Stack."""
 import os
 import fcntl
 import re
@@ -22,9 +22,9 @@ def _ensure_storage():
     os.makedirs(APP_SECURITY_DIR, mode=0o700, exist_ok=True)
     info = os.lstat(APP_SECURITY_DIR)
     if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
-        raise OSError("Magic AI Router 安全目录不是普通目录")
+        raise OSError("Magic Stack 安全目录不是普通目录")
     if info.st_uid != os.getuid():
-        raise OSError("Magic AI Router 安全目录所有者不正确")
+        raise OSError("Magic Stack 安全目录所有者不正确")
     os.chmod(APP_SECURITY_DIR, 0o700)
 
 

@@ -45,7 +45,7 @@ def set_launch_at_login(enabled):
     app). Disable does a best-effort ``unload`` before removing the file.
     """
     if not FROZEN:
-        return False, "登录启动仅在打包后的 Magic AI Router.app 内可用，开发模式不支持。"
+        return False, "登录启动仅在打包后的 Magic Stack.app 内可用，开发模式不支持。"
     exe = sys.executable
     if not exe or not os.path.exists(exe):
         return False, f"无法定位应用可执行文件：{exe!r}"

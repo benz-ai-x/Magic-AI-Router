@@ -185,7 +185,7 @@ class LifecycleRuntime:
         服务，返回 False——由编排器（app.py）转为用户可见错误后退出。
         """
         if not self._owner.acquire():
-            logger.error("已有 Magic AI Router 实例在运行（实例锁被持有）——"
+            logger.error("已有 Magic Stack 实例在运行（实例锁被持有）——"
                          "本次启动不接管服务")
             return False
         # 跨文件提交崩溃恢复（issue #6）：journal 残留则幂等重放补齐
