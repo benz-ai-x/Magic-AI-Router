@@ -101,6 +101,7 @@ macOS 首次运行：偏好设置 → **代理 → 隧道** 填 SSH 信息 → �
 
 ### 🔗 Magic Proxy — SSH 隧道 + 端口转发
 
+- **v0.13 服务器中心配置**——一台远程服务器一页配完（Server → Service → Instance，ADR-011）：连接 + SSH 隧道服务（转发实例）+ NFS 服务（挂载实例）+ OpenVPN（占位）同视图，每张服务卡可一键检测这台机器上实际可用什么（SSH 可达 / NFS 2049+导出 / OpenVPN 装没装）；旧 `tunnels[]` 配置自动迁移，服务器名/密钥/挂载/Keychain 密码原样保留
 - asyncio HTTP→SOCKS5 代理，逐请求归属绑定（keep-alive 安全、CONNECT、chunked）
 - **v0.9 多活**：一条代理隧道（`-D`）+ 任意多条纯转发隧道（`-L`）并行——服务器 A 当代理、服务器 B 映射端口到 `127.0.0.1`；独立重试、独立 host-key 处理、`forward_autostart` 随启动恢复；**转发行逐条点击启停**（停用不占端口，未运行的会话绝不拉起）
 - 每条规则一键 SSH 可达性测试（未保存的值也能测）

@@ -22,6 +22,10 @@ macOS 全局代理设置（networksetup）。开启后系统内所有应用自�
 
 针对单个 Chromium 应用的代理（如 ChatGPT/Claude/Discord）。通过 `--proxy-server` 启动参数实现，不修改系统设置，仅影响该次启动的实例。
 
+### 服务器与服务（Server & Services）
+
+v0.13.0 配置模型（ADR-011）：`servers[]` 为中心的 **Server → Service → Instance** 三层——服务器（`ssh` 节持连接参数）承载 1:n 服务（`services.ssh` 隧道服务 / `services.nfs` 挂载服务 / OpenVPN 占位），每服务承载 1:n 实例（转发行/挂载行）。设置窗「服务器」单视图（master-detail + 服务卡）是配置面；菜单保持功能分组（操作面）。服务卡「检测服务」经 `POST /api/server-check` 聚合探测（SERVICE_CARDS 注册表——新增服务类型 = 加一张卡）。代理角色 = `proxy_server_id` 单一真相。
+
 ### 隧道（Tunnel）
 
 一条 SSH 连接配置。**v0.9 起多活**：代理隧道 + 任意多条转发会话可并行（此前单活——切换=停旧起新）。
