@@ -104,6 +104,13 @@ def _symbol_image(name, point_size=None, color=None, description=None):
             cfgs[i] = cfgs[i - 1].configByApplyingConfiguration_(cfgs[i])
         if cfgs:
             img = img.imageWithSymbolConfiguration_(cfgs[-1])
+        if color is not None:
+            # SF Symbol 默认 template=True——NSMenuItem 对 template 图像
+            # 按菜单文字色单色渲染，tint 配置被无视（菜单里所有圆点一直
+            # 显示黑色的根因，真机截图实锄）。带 tint 显式关掉 template
+            # 让颜色生效（动态系统色自带明暗适配）；无 tint 的动作图标
+            # 保持 template，随菜单文字色自动适配明暗。
+            img.setTemplate_(False)
         return img
     except Exception:
         return None
@@ -459,9 +466,11 @@ class MenuBuilder:
                 _apply_icon(ctx, "circle", point_size=9)
                 self.refs[("fw_ctx", tid)] = ctx
                 host.add(ctx)
-            elif not is_proxy:
+            self._add_forward_rows(host, a, tid, forwards)
+            if not is_proxy:
+                # 逐条转发行在前、会话动作在后（v0.12 既定行序）
+                host.add(None)
                 if forwards:
-                    host.add(None)
                     action = rumps.MenuItem(
                         f"__fw_action_{tid}__",
                         callback=a.toggle_forward_session(tid))
@@ -473,12 +482,10 @@ class MenuBuilder:
                     _apply_icon(item, "refresh")
                     host.add(item)
                 else:
-                    host.add(None)
                     item = rumps.MenuItem(
                         "添加转发规则…", callback=a.show_prefs_forwards)
                     _apply_icon(item, "forward_menu")
                     host.add(item)
-            self._add_forward_rows(host, a, tid, forwards)
             if not single:
                 parent.add(host)
                 parent.add(None)
