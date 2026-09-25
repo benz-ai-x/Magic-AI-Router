@@ -203,7 +203,7 @@ class MagicProxyApp(rumps.App):
         self._install_edit_menu()
         self._menu_builder.build()
 
-        if cfg is None or not self._config.get("tunnels"):
+        if cfg is None or not self._config.get("servers"):
             self.show_preferences(None)
         else:
             self.check_both_ports()
@@ -278,7 +278,7 @@ class MagicProxyApp(rumps.App):
             suanpan_running=sp.running,
             suanpan_error=sp.error,
             suanpan_listen_address=sp.listen_address() if sp.running else "",
-            current_tunnel=self._conn.current_tunnel,
+            current_server=self._conn.current_server,
             forward_states=tuple(self._conn.forward_sessions()),
             mount_states=tuple(self._mounts.mount_states()),
         )
@@ -460,24 +460,18 @@ class MagicProxyApp(rumps.App):
     def toggle_system_proxy(self, _):
         self._sys_proxy.toggle()
 
-    def make_switch_tunnel(self, idx):
+    def make_switch_server(self, sid):
+        """切换代理服务器（v2：proxy_server_id 单一真相）。"""
         def switch(_):
-            tunnels = self._config.get("tunnels", [])
-            tunnel = tunnels[idx] if 0 <= idx < len(tunnels) else None
-            if tunnel is None:
+            target = next((t for t in self._config.get("servers", [])
+                           if isinstance(t, dict) and t.get("id") == sid), None)
+            if target is None:
                 return
-            if tunnel is self._conn.current_tunnel \
+            if target is self._conn.current_server \
                     and self._conn.ssh.status == "connected":
                 return
-            # 角色写双字段：id 是真相；下标投影供旧版本读兼容（磁盘侧
-            # tunnels 均已经 load 赋过 id）
-            tid = tunnel.get("id") or ""
-            def _switch_role(c):
-                ts = [t for t in c.get("tunnels", []) if isinstance(t, dict)]
-                i = next((k for k, t in enumerate(ts) if t.get("id") == tid),
-                         min(idx, max(0, len(ts) - 1)))
-                return {**c, "current_tunnel_id": tid, "current_tunnel": i}
-            if not self._update_mp_config(_switch_role):
+            if not self._update_mp_config(
+                    lambda c: {**c, "proxy_server_id": sid}):
                 return
             self.reconnect(None)
         return switch
@@ -516,10 +510,11 @@ class MagicProxyApp(rumps.App):
     def make_open_mount_dir(self, tunnel_id, name):
         """菜单「打开挂载目录」：Finder 中打开（不存在则先建目录）。"""
         def act(_):
-            for t in self._config.get("tunnels", []):
+            for t in self._config.get("servers", []):
                 if not (isinstance(t, dict) and t.get("id") == tunnel_id):
                     continue
-                for row in ((t.get("nfs") or {}).get("mounts") or []):
+                for row in ((((t.get("services") or {}).get("nfs") or {})
+                             .get("mounts")) or []):
                     if isinstance(row, dict) and row.get("name") == name:
                         d = resolve_mount_dir(row)
                         try:

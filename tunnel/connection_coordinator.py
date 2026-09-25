@@ -42,13 +42,14 @@ from shared.stats import Stats
 logger = logging.getLogger("magic-proxy.connection")
 
 
-def has_enabled_forwards(tunnel):
-    """该隧道是否有 ≥1 条启用中的转发行（会话可存在性的单一口径）。
+def has_enabled_forwards(server):
+    """该服务器是否有 ≥1 条启用中的转发实例（会话可存在性的单一口径）。
 
     enabled=False 的行不进 -L 集合（_forward_args 同口径）——全部停用
-    的隧道等价于"无转发规则"：start 拒、check 收敛停、autostart 跳过。
+    的服务器等价于"无转发规则"：start 拒、check 收敛停、autostart 跳过。
     """
-    for f in (tunnel or {}).get("forwards") or []:
+    forwards = ((server or {}).get("services") or {}).get("ssh", {}).get("forwards") or []
+    for f in forwards:
         if isinstance(f, dict) and f.get("enabled") is not False:
             return True
     return False
@@ -90,11 +91,11 @@ class ConnectionCoordinator:
         self._get_tunnel_password = get_tunnel_password
         self._host_key = HostKeyFlow(
             ssh_monitor=self._ssh,
-            get_tunnel=lambda: self.current_tunnel,
+            get_tunnel=lambda: self.current_server,
             get_socks5_port=lambda: self.socks5_port,
             get_password=lambda: (
-                self._get_tunnel_password(self.current_tunnel)
-                if self.current_tunnel else ""
+                self._get_tunnel_password(self.current_server)
+                if self.current_server else ""
             ),
             on_connect=self._start_proxy_ssh,
             on_reconnect=self.start_ssh,
@@ -114,28 +115,22 @@ class ConnectionCoordinator:
         return self._get_config()
 
     @property
-    def current_tunnel(self):
-        """代理隧道（按角色解析）：id 是唯一真相，旧下标兼容，末路回首条。
+    def current_server(self):
+        """代理服务器（v2 schema：proxy_server_id 唯一真相，首条回退）。
 
-        配置通常已经 merge_config 解析过（id/下标自洽）；属性内保留完整
-        解析序是为了对未经 merge 的裸配置（测试/手编）也给出稳定答案。
+        配置通常已经 merge_config 解析过；属性内保留回退序是为了对未经
+        merge 的裸配置（测试/手编）也给出稳定答案。
         """
-        tunnels = [t for t in self._config.get("tunnels", [])
-                   if isinstance(t, dict)]
-        if not tunnels:
+        rows = [t for t in self._config.get("servers", [])
+                if isinstance(t, dict)]
+        if not rows:
             return None
-        cid = self._config.get("current_tunnel_id") or ""
+        cid = self._config.get("proxy_server_id") or ""
         if cid:
-            for t in tunnels:
+            for t in rows:
                 if t.get("id") == cid:
                     return t
-        try:
-            idx = int(self._config.get("current_tunnel", 0))
-        except (TypeError, ValueError):
-            idx = 0
-        if 0 <= idx < len(tunnels):
-            return tunnels[idx]
-        return tunnels[0]
+        return rows[0]
 
     @property
     def socks5_port(self):
@@ -170,8 +165,8 @@ class ConnectionCoordinator:
                    for s in self._forward_sessions.values())
 
     @property
-    def proxy_tunnel_id(self):
-        t = self.current_tunnel
+    def proxy_server_id(self):
+        t = self.current_server
         return t.get("id") if t else None
 
     def forward_sessions(self):
@@ -228,7 +223,7 @@ class ConnectionCoordinator:
         try:
             for tunnel_id in list(self._forward_sessions):
                 session = self._forward_sessions[tunnel_id]
-                tunnel = self._tunnel_by_id(tunnel_id)
+                tunnel = self._server_by_id(tunnel_id)
                 if tunnel is None or not has_enabled_forwards(tunnel):
                     del self._forward_sessions[tunnel_id]
                     session.stop()
@@ -240,7 +235,7 @@ class ConnectionCoordinator:
             self._lifecycle_lock.release()
 
     def _tunnel_by_id(self, tunnel_id):
-        for t in self._config.get("tunnels", []):
+        for t in self._config.get("servers", []):
             if isinstance(t, dict) and t.get("id") == tunnel_id:
                 return t
         return None
@@ -254,13 +249,13 @@ class ConnectionCoordinator:
         的 forwards 随其代理会话一起跑）。
         """
         with self._lifecycle_lock:
-            tunnel = self._tunnel_by_id(tunnel_id)
+            tunnel = self._server_by_id(tunnel_id)
             if tunnel is None:
-                return False, "隧道不存在"
-            if tunnel_id == self.proxy_tunnel_id:
-                return False, "代理隧道自身随「连接代理」启动"
+                return False, "服务器不存在"
+            if tunnel_id == self.proxy_server_id:
+                return False, "代理服务器自身随「连接代理」启动"
             if not has_enabled_forwards(tunnel):
-                return False, "该隧道没有启用中的端口转发规则"
+                return False, "该服务器没有启用中的端口转发规则"
             if tunnel_id in self._forward_sessions:
                 session = self._forward_sessions[tunnel_id]
                 if session.monitor.status in ("stopped", "error"):
@@ -268,10 +263,10 @@ class ConnectionCoordinator:
                 return True, ""
             session = SshSession(
                 self._ssh_log_sink,
-                identity_fn=lambda tid=tunnel_id: self._tunnel_by_id(tid),
+                identity_fn=lambda tid=tunnel_id: self._server_by_id(tid),
                 password_fn=self._get_tunnel_password,
                 probe_port_fn=lambda tid=tunnel_id:
-                    first_forward_port(self._tunnel_by_id(tid)))
+                    first_forward_port(self._server_by_id(tid)))
             self._forward_sessions[tunnel_id] = session
             session.connect()
             logger.info("转发会话启动：%s", tunnel.get("name", tunnel_id))
@@ -300,7 +295,7 @@ class ConnectionCoordinator:
                 return False
             session.stop()
             reload_config_fn()
-            tunnel = self._tunnel_by_id(tunnel_id)
+            tunnel = self._server_by_id(tunnel_id)
             if tunnel is None or not has_enabled_forwards(tunnel):
                 del self._forward_sessions[tunnel_id]
                 return True
@@ -342,11 +337,11 @@ class ConnectionCoordinator:
 
     def apply_autostarts(self):
         """按 forward_autostart 收敛补启（app 启动与配置重载后调用）。"""
-        for t in self._config.get("tunnels", []):
-            if not (isinstance(t, dict) and t.get("forward_autostart")):
+        for t in self._config.get("servers", []):
+            if not (isinstance(t, dict) and (t.get("services") or {}).get("ssh", {}).get("autostart")):
                 continue
             tid = t.get("id")
-            if tid and tid != self.proxy_tunnel_id \
+            if tid and tid != self.proxy_server_id \
                     and tid not in self._forward_sessions \
                     and has_enabled_forwards(t):
                 self.start_forward(tid)
@@ -392,7 +387,7 @@ class ConnectionCoordinator:
             self.start_ssh()
             # 旧代理隧道降级续跑：有 forwards 转 0-D 会话；无则清干净
             if old_proxy_id and old_proxy_id != self.proxy_tunnel_id:
-                old_tunnel = self._tunnel_by_id(old_proxy_id)
+                old_tunnel = self._server_by_id(old_proxy_id)
                 if old_tunnel and has_enabled_forwards(old_tunnel):
                     if old_proxy_id not in self._forward_sessions:
                         self.start_forward(old_proxy_id)

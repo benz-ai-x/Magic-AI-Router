@@ -90,12 +90,13 @@ class MountCoordinator:
 
     @staticmethod
     def _nfs_of(tunnel):
-        nfs = (tunnel or {}).get("nfs")
+        svc = ((tunnel or {}).get("services") or {})
+        nfs = svc.get("nfs")
         return nfs if isinstance(nfs, dict) else {}
 
     def _tunnels_by_id(self):
         cfg = self._get_config() or {}
-        return {t.get("id"): t for t in cfg.get("tunnels", [])
+        return {t.get("id"): t for t in cfg.get("servers", [])
                 if isinstance(t, dict) and t.get("id")}
 
     def _find_row(self, tunnel, name):
@@ -115,7 +116,7 @@ class MountCoordinator:
                 nfs = self._nfs_of(tunnel)
                 if not (nfs.get("enabled") or nfs.get("mounts")):
                     continue
-                tname = tunnel.get("name") or tunnel.get("ssh_host") or tid
+                tname = tunnel.get("name") or (tunnel.get("ssh") or {}).get("host") or tid
                 for row in nfs.get("mounts") or []:
                     if not isinstance(row, dict) or not row.get("name"):
                         continue

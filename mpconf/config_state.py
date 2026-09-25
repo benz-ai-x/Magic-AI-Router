@@ -117,7 +117,7 @@ class ConfigStateStore:
 
         if mp_c is not None:
             errors += _mp_validate.numeric_errors(mp_c)
-            errors += _mp_validate.tunnel_rows_errors(mp_c)
+            errors += _mp_validate.server_rows_errors(mp_c)
         if sp_c is not None:
             from suanpan import validate as _sp_validate
             errors += _sp_validate.sp_errors(sp_c)
@@ -160,33 +160,35 @@ class ConfigStateStore:
                 old_tok = old_mp.get(_lt_field)
                 if old_tok:
                     mp_c[_lt_field] = old_tok
-            new_ids = {t.get("id") for t in mp_c.get("tunnels") or []
+            new_ids = {t.get("id") for t in mp_c.get("servers") or []
                        if isinstance(t, dict)}
-            for t in old_mp.get("tunnels") or []:
+            for t in old_mp.get("servers") or []:
                 if isinstance(t, dict) and t.get("id") and t["id"] not in new_ids:
                     kc_dels.append(("all", t))
-            for t in mp_c.get("tunnels") or []:
+            for t in mp_c.get("servers") or []:
                 for deco in READONLY_DECORATED_FIELDS:
                     t.pop(deco, None)
                 pw = t.pop("password", None)
+                _ssh = t.get("ssh") if isinstance(t.get("ssh"), dict) else {}
+                _auth = _ssh.get("auth_type")
                 if pw:
                     kc_sets.append((dict(t), pw))
-                elif (t.get("auth_type") == "password" and t.get("id")
+                elif (_auth == "password" and t.get("id")
                       and self._keychain is not None):
                     # issue #8 re-pin——只在 id==当前身份哈希时读 legacy：
-                    # 身份编辑过的隧道 id 与地址已脱钩，legacy 账户可能
+                    # 身份编辑过的服务器 id 与地址已脱钩，legacy 账户可能
                     # 属于别的实体（Y 改址到 X 旧地址会串走 X 的密码），
                     # 绝不猜测归属。收敛：写入 id 账户 + legacy-only 删除。
-                    from mpconf.config import stable_tunnel_id
-                    if t["id"] == stable_tunnel_id(
-                            t.get("ssh_user", ""), t.get("ssh_host", ""),
-                            t.get("ssh_port", 22)):
-                        legacy = {k: v for k, v in t.items() if k != "id"}
+                    from mpconf.config import stable_server_id
+                    if t["id"] == stable_server_id(
+                            _ssh.get("user", ""), _ssh.get("host", ""),
+                            _ssh.get("port", 22)):
+                        legacy = {"ssh": dict(_ssh)}
                         old_pw = self._keychain.get_password(legacy)
                         if old_pw:
                             kc_sets.append((dict(t), old_pw))
                             kc_dels.append(("legacy-only", legacy))
-                elif "auth_type" in t and t.get("auth_type") != "password":
+                elif "auth_type" in _ssh and _auth != "password":
                     kc_dels.append(dict(t))
         return CommitPlan(True, [], mp_c, sp_c, kc_sets, kc_dels)
 
@@ -335,7 +337,7 @@ class ConfigStateStore:
             for tunnel, pw in plan.keychain_sets:
                 if not self._keychain.set_password(tunnel, pw):
                     keychain_errors.append(
-                        f"隧道 {tunnel.get('name', '?')} 的密码保存到钥匙串失败")
+                        f"服务器 {tunnel.get('name', '?')} 的密码保存到钥匙串失败")
                     break
             if not keychain_errors:
                 for entry in plan.keychain_dels:
@@ -355,7 +357,7 @@ class ConfigStateStore:
                         ok = self._keychain.delete_legacy_password(tunnel)
                     if not ok:
                         keychain_errors.append(
-                            f"隧道 {tunnel.get('name', tunnel.get('ssh_host', '?'))} 的旧密码清理失败")
+                            f"服务器 {tunnel.get('name', (tunnel.get('ssh') or {}).get('host', '?'))} 的旧密码清理失败")
         if keychain_errors:
             self._rollback(payload)  # 文件回到旧内容：不暴露部分新状态
             return SaveResult(False, "keychain", keychain_errors)

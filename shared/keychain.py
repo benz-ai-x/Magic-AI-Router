@@ -22,26 +22,36 @@ logger = logging.getLogger("magic-proxy.keychain")
 SERVICE = "com.magic-proxy"
 
 
-def _account(tunnel: dict) -> str:
+# v2 服务器形状（ADR-011）：连接参数在 ``ssh`` 节。账户名字符串是
+# Keychain 里已落盘的兼容契约——**逐字节不变**（tunnel:{id} 与
+# user@host:port），只换字段读取路径。
+
+def _ssh_host(node: dict) -> str:
+    ssh = node.get("ssh") if isinstance(node.get("ssh"), dict) else {}
+    return ssh.get("host", "")
+
+
+def _account(server: dict) -> str:
     """凭证账户名：优先稳定 id（issue #8）；无 id 时为 legacy 推导。"""
-    stable_id = tunnel.get("id")
+    stable_id = server.get("id")
     if stable_id:
         return f"tunnel:{stable_id}"
-    return _legacy_account(tunnel)
+    return _legacy_account(server)
 
 
-def _legacy_account(tunnel: dict) -> str:
-    user = tunnel.get("ssh_user", "")
-    host = tunnel.get("ssh_host", "")
-    port = tunnel.get("ssh_port", 22)
+def _legacy_account(server: dict) -> str:
+    ssh = server.get("ssh") if isinstance(server.get("ssh"), dict) else {}
+    user = ssh.get("user", "")
+    host = ssh.get("host", "")
+    port = ssh.get("port", 22)
     return f"{user}@{host}:{port}"
 
 
-def _base_query(tunnel: dict, account: str | None = None) -> dict:
+def _base_query(server: dict, account: str | None = None) -> dict:
     return {
         Security.kSecClass: Security.kSecClassGenericPassword,
         Security.kSecAttrService: SERVICE,
-        Security.kSecAttrAccount: account or _account(tunnel),
+        Security.kSecAttrAccount: account or _account(server),
     }
 
 
@@ -66,16 +76,16 @@ def set_password(tunnel: dict, password: str) -> bool:
         return False
 
 
-def get_password(tunnel: dict) -> str:
-    if not tunnel.get("ssh_host"):
+def get_password(server: dict) -> str:
+    if not _ssh_host(server):
         return ""
-    accounts = [_account(tunnel)]
-    legacy = _legacy_account(tunnel)
+    accounts = [_account(server)]
+    legacy = _legacy_account(server)
     if legacy not in accounts:
         accounts.append(legacy)  # 迁移期回退读（issue #8）
     try:
         for account in accounts:
-            query = _base_query(tunnel, account)
+            query = _base_query(server, account)
             query[Security.kSecReturnData] = True
             query[Security.kSecMatchLimit] = Security.kSecMatchLimitOne
             status, data = Security.SecItemCopyMatching(query, None)
@@ -86,26 +96,26 @@ def get_password(tunnel: dict) -> str:
     return ""
 
 
-def delete_legacy_password(tunnel: dict) -> bool:
+def delete_legacy_password(server: dict) -> bool:
     """仅清 legacy 账户（user@host:port）——re-pin 收敛用，不动 id 账户。"""
     try:
-        Security.SecItemDelete(_base_query(tunnel, _legacy_account(tunnel)))
+        Security.SecItemDelete(_base_query(server, _legacy_account(server)))
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("Keychain legacy delete failed: %s", type(e).__name__)
         return False
 
 
-def delete_password(tunnel: dict) -> bool:
-    """删除隧道密码。返回是否成功（条目本就不存在视为成功）。"""
-    if not tunnel.get("ssh_host"):
+def delete_password(server: dict) -> bool:
+    """删除服务器 SSH 密码。返回是否成功（条目本就不存在视为成功）。"""
+    if not _ssh_host(server):
         return True
     ok = True
     try:
-        for account in {_account(tunnel), _legacy_account(tunnel)}:
+        for account in {_account(server), _legacy_account(server)}:
             # 区分状态码（#69 R7）：NotFound（条目本就不存在）视为成功；
             # 其他非零状态（真实失败）如实上报，不恒报 True
-            status = Security.SecItemDelete(_base_query(tunnel, account))
+            status = Security.SecItemDelete(_base_query(server, account))
             if status not in (0, getattr(Security, "errSecItemNotFound", -25300)):
                 logger.warning("Keychain delete status %s", status)
                 ok = False
@@ -119,17 +129,17 @@ def delete_password(tunnel: dict) -> bool:
 # 密钥登录的隧道没有 ssh 密码可复用——UI 显式输入一次后存独立账户槽，
 # 与隧道登录密码互不混淆。
 
-def _sudo_account(tunnel: dict) -> str:
-    return f"nfs-sudo:{_account(tunnel)}"
+def _sudo_account(server: dict) -> str:
+    return f"nfs-sudo:{_account(server)}"
 
 
-def set_sudo_password(tunnel: dict, password: str) -> bool:
-    if not tunnel.get("ssh_host"):
+def set_sudo_password(server: dict, password: str) -> bool:
+    if not _ssh_host(server):
         return False
     try:
-        account = _sudo_account(tunnel)
-        Security.SecItemDelete(_base_query(tunnel, account))
-        attrs = _base_query(tunnel, account)
+        account = _sudo_account(server)
+        Security.SecItemDelete(_base_query(server, account))
+        attrs = _base_query(server, account)
         attrs[Security.kSecValueData] = password.encode("utf-8")
         status = Security.SecItemAdd(attrs, None)
         ok = status[0] == Security.errSecSuccess if isinstance(status, tuple) \
@@ -142,11 +152,11 @@ def set_sudo_password(tunnel: dict, password: str) -> bool:
         return False
 
 
-def get_sudo_password(tunnel: dict) -> str:
-    if not tunnel.get("ssh_host"):
+def get_sudo_password(server: dict) -> str:
+    if not _ssh_host(server):
         return ""
     try:
-        query = _base_query(tunnel, _sudo_account(tunnel))
+        query = _base_query(server, _sudo_account(server))
         query[Security.kSecReturnData] = True
         query[Security.kSecMatchLimit] = Security.kSecMatchLimitOne
         status, data = Security.SecItemCopyMatching(query, None)
@@ -157,10 +167,10 @@ def get_sudo_password(tunnel: dict) -> str:
     return ""
 
 
-def delete_sudo_password(tunnel: dict) -> bool:
-    """删除远程 sudo 密码槽（隧道删除时随 all 清理）。"""
+def delete_sudo_password(server: dict) -> bool:
+    """删除远程 sudo 密码槽（服务器删除时随 all 清理）。"""
     try:
-        Security.SecItemDelete(_base_query(tunnel, _sudo_account(tunnel)))
+        Security.SecItemDelete(_base_query(server, _sudo_account(server)))
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning("Keychain sudo delete failed: %s", type(e).__name__)

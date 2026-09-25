@@ -89,10 +89,11 @@ def _read_mp():
         return {"_load_error": "Magic Proxy 配置装载失败，已阻止保存以防覆盖"}
     if not cfg:
         return {}
-    for t in cfg.get("tunnels", []):
+    for t in cfg.get("servers", []):
         # has_password 属 READONLY_DECORATED_FIELDS（prepare 剥除侧单点声明）
+        _ssh = t.get("ssh") if isinstance(t.get("ssh"), dict) else {}
         t["has_password"] = bool(
-            t.get("auth_type") == "password" and keychain.get_password(t))
+            _ssh.get("auth_type") == "password" and keychain.get_password(t))
     # 掩码契约（#66 复核）：local_client_token 明文永不出进程——UI 回
     # token_set 布尔；prepare 按旧档恢复真实值（sp 侧 api_key 同款模式）
     if "local_client_token" in cfg:
@@ -108,23 +109,26 @@ def _probe_inputs(tunnel):
     过关 → 探针消费校验归一后的值（strip/int），与历史行为一致——手改
     配置的空白 host 或 "022" 端口不进 ssh argv。
     """
-    host = str(tunnel.get("ssh_host") or "").strip()
-    user = str(tunnel.get("ssh_user") or "").strip()
+    ssh = tunnel.get("ssh") if isinstance(tunnel.get("ssh"), dict) else {}
+    host = str(ssh.get("host") or "").strip()
+    user = str(ssh.get("user") or "").strip()
     try:
-        port = int(tunnel.get("ssh_port", 22))
+        port = int(ssh.get("port", 22))
     except (TypeError, ValueError):
         port = 0
     destination = f"{user}@{host}" if user else host
     if not host or not 1 <= port <= 65535 or destination.startswith("-"):
-        return None, "", "隧道地址或端口无效"
+        return None, "", "服务器地址或端口无效"
 
     password = ""
-    if tunnel.get("auth_type") == "password":
+    if ssh.get("auth_type") == "password":
         password = keychain.get_password(tunnel)
         if not password:
-            return None, "", "钥匙串中没有该隧道的密码，请先保存"
+            return None, "", "钥匙串中没有该服务器的密码，请先保存"
 
-    return dict(tunnel, ssh_host=host, ssh_user=user, ssh_port=port), password, ""
+    normalized = {**tunnel, "ssh": {**ssh, "host": host, "user": user,
+                                    "port": port}}
+    return normalized, password, ""
 
 
 def test_tunnel(tunnel):
@@ -173,7 +177,7 @@ def _nfs_credentials(tunnel, sudo_password_override=None):
         return None, "", "", error
     if sudo_password_override:
         return normalized, password, sudo_password_override, ""
-    if normalized.get("auth_type") == "password":
+    if (normalized.get("ssh") or {}).get("auth_type") == "password":
         return normalized, password, password, ""
     return normalized, password, keychain.get_sudo_password(normalized), ""
 
@@ -198,7 +202,7 @@ def nfs_setup_remote(tunnel, mounts, squash_to_ssh_user=False,
         normalized, mounts, password=password, sudo_password=sudo_password,
         squash_to_ssh_user=squash_to_ssh_user)
     if (result.get("ok") and sudo_password_override
-            and normalized.get("auth_type") != "password"):
+            and (normalized.get("ssh") or {}).get("auth_type") != "password"):
         keychain.set_sudo_password(normalized, sudo_password_override)
     return result
 
@@ -503,9 +507,9 @@ class _Handler(BaseHTTPRequestHandler):
             opts if isinstance(opts, dict) else None))
 
     def _api_test_tunnel(self, data):
-        """POST /api/test-tunnel {index} → probe saved tunnels[index].
+        """POST /api/test-tunnel {index} → probe saved servers[index].
 
-        400 for bad index / no tunnels, 200 with {"ok", "error"?} once the
+        400 for bad index / no servers, 200 with {"ok", "error"?} once the
         probe actually runs（隧道解析与 test-forward/NFS 端点共用
         _saved_tunnel_by_index）。"""
         tunnel, error = self._saved_tunnel_by_index(data.get("index"))
@@ -621,12 +625,12 @@ class _Handler(BaseHTTPRequestHandler):
         if isinstance(idx, bool) or not isinstance(idx, int):
             return None, "无效的隧道索引"
         cfg = _read_mp()
-        tunnels = cfg.get("tunnels", []) if isinstance(cfg, dict) else []
-        if not tunnels:
-            return None, "尚未配置隧道"
-        if not 0 <= idx < len(tunnels):
-            return None, "隧道索引越界"
-        return tunnels[idx], ""
+        rows = cfg.get("servers", []) if isinstance(cfg, dict) else []
+        if not rows:
+            return None, "尚未配置服务器"
+        if not 0 <= idx < len(rows):
+            return None, "服务器索引越界"
+        return rows[idx], ""
 
     @staticmethod
     def _resolve_tunnel(data):

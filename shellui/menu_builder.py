@@ -202,23 +202,16 @@ def _error_counts(st):
     return fw_bad, mounts_bad
 
 
-def _proxy_tunnel_index(config):
-    """代理角色 → 隧道下标：id（current_tunnel_id）是唯一真相，旧下标
-    是兼容回退（无 id 旧档/手编配置），末路回首条。与 mpconf.config
-    merge 的解析序同一语义——菜单只消费不重定义。"""
-    if not isinstance(config, dict):
-        return 0
-    tunnels = config.get("tunnels", [])
-    cid = config.get("current_tunnel_id") or ""
+def _is_proxy_server(config, server) -> bool:
+    """代理角色判定（v2）：proxy_server_id 唯一真相，回退首条。与
+    mpconf.config.merge 的解析序同一语义——菜单只消费不重定义。"""
+    if not isinstance(config, dict) or not isinstance(server, dict):
+        return False
+    rows = config.get("servers", [])
+    cid = config.get("proxy_server_id") or ""
     if cid:
-        for i, t in enumerate(tunnels):
-            if isinstance(t, dict) and t.get("id") == cid:
-                return i
-    try:
-        idx = int(config.get("current_tunnel", 0))
-    except (TypeError, ValueError):
-        idx = 0
-    return idx if 0 <= idx < len(tunnels) else 0
+        return server.get("id") == cid
+    return rows and server is rows[0]
 
 
 def _status_color(kind):
@@ -262,7 +255,7 @@ class MenuState:
     suanpan_running: bool
     suanpan_error: str
     suanpan_listen_address: str
-    current_tunnel: dict | None
+    current_server: dict | None
     # 抓包结构化状态（状态语法批次）：enabled 驱动标题动词方向，
     # state 四值（ok/warn/idle/err）驱动状态点，hint 承载引导/异常详情
     capture_enabled: bool = False
@@ -316,7 +309,7 @@ class MenuBuilder:
     def struct_key(self):
         st = self._get_state()
         s = st.ssh_status
-        tunnels = st.config.get("tunnels", [])
+        tunnels = st.config.get("servers", [])
         # Note: active_connections is deliberately NOT here (#40) — it
         # fluctuates every tick while traffic flows, but only affects the
         # traffic *title* (refresh_titles), never the menu structure.
@@ -329,14 +322,15 @@ class MenuBuilder:
         fw_identity = tuple(
             (t.get("id") or f"#{i}",
              tuple((f.get("local_port"), f.get("remote_port"))
-                   for f in (t.get("forwards") or [])
+                   for f in ((t.get("services") or {}).get("ssh") or {}).get(
+                       "forwards") or []
                    if isinstance(f, dict)))
             for i, t in enumerate(tunnels) if isinstance(t, dict))
         mount_identity = tuple((e.tunnel_id, e.name)
                                for e in (st.mount_states or ()))
         return (
             s, st.paused,
-            st.config.get("current_tunnel_id", ""),
+            st.config.get("proxy_server_id", ""),
             len(tunnels),
             s == "error" and bool(st.ssh_error_msg),
             st.ssh_log if s == "connecting" else "",
@@ -449,17 +443,19 @@ class MenuBuilder:
         parent.add(item)
 
         # 代理角色单选（哪条隧道当 SOCKS5 上游）
-        tunnels = st.config.get("tunnels", [])
-        if tunnels:
+        rows = st.config.get("servers", [])
+        if rows:
             parent.add(None)
-            parent.add(rumps.MenuItem("代理隧道（本地代理的上游）",
+            parent.add(rumps.MenuItem("代理服务器（本地代理的上游）",
                                       callback=None))
-            current_idx = _proxy_tunnel_index(st.config)
-            for i, t in enumerate(tunnels):
-                marker = "✓ " if i == current_idx else ""
-                name = t.get("name") or f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}"
+            for t in rows:
+                if not isinstance(t, dict):
+                    continue
+                _ssh = t.get("ssh") or {}
+                marker = "✓ " if _is_proxy_server(st.config, t) else ""
+                name = t.get("name") or f"{_ssh.get('user', '')}@{_ssh.get('host', '')}"
                 item = rumps.MenuItem(f"{marker}{name}",
-                                      callback=a.make_switch_tunnel(i))
+                                      callback=a.make_switch_server(t.get("id") or ""))
                 _apply_icon(item, "tunnel_row")
                 parent.add(item)
 
@@ -495,14 +491,15 @@ class MenuBuilder:
         parent = rumps.MenuItem("端口映射", callback=None)
         _apply_icon(parent, "forward_menu")
 
-        tunnels = st.config.get("tunnels", [])
+        tunnels = st.config.get("servers", [])
         single = len(tunnels) == 1
         any_rules = False
         for i, t in enumerate(tunnels):
             tid = t.get("id") or f"#{i}"
-            forwards = t.get("forwards") or []
+            forwards = ((t.get("services") or {}).get("ssh") or {}).get(
+                "forwards") or []
             any_rules = any_rules or bool(forwards)
-            is_proxy = i == _proxy_tunnel_index(st.config)
+            is_proxy = _is_proxy_server(st.config, t)
             if single:
                 host = parent          # 拍平：行直接挂顶层（免一层嵌套）
             else:
@@ -569,8 +566,7 @@ class MenuBuilder:
         """端口映射区动态段：隧道行尾标、逐条转发行尾标与圆点、启停
         动作标签。每秒 tick 调用——只在标题变化时重挂图标（SF Symbol
         查找不便宜，不能每 tick 全量重设）。"""
-        tunnels = st.config.get("tunnels", [])
-        current_idx = _proxy_tunnel_index(st.config)
+        tunnels = st.config.get("servers", [])
         fw_running = {f.tunnel_id: f.status
                       for f in (st.forward_states or ())}
         for i, t in enumerate(tunnels):
@@ -578,8 +574,8 @@ class MenuBuilder:
                 continue
             tid = t.get("id") or f"#{i}"
             name = t.get("name") or \
-                f"{t.get('ssh_user', '')}@{t.get('ssh_host', '')}"
-            is_proxy = i == current_idx
+                f"{(t.get('ssh') or {}).get('user', '')}@{(t.get('ssh') or {}).get('host', '')}"
+            is_proxy = _is_proxy_server(st.config, t)
             if is_proxy:
                 row = self.refs.get(("fw_ctx", tid))
                 if row is not None:
@@ -615,7 +611,7 @@ class MenuBuilder:
                                     "fw_stop" if running else "fw_start")
             session_up = (st.ssh_status == "connected" if is_proxy
                           else fw_running.get(tid) == "connected")
-            for fi, f in enumerate(t.get("forwards") or []):
+            for fi, f in enumerate(((t.get("services") or {}).get("ssh") or {}).get("forwards") or []):
                 if not isinstance(f, dict):
                     continue
                 row = self.refs.get(("fw_row", tid, fi))
@@ -811,7 +807,7 @@ class MenuBuilder:
     def refresh_titles(self):
         st = self._get_state()
         s = st.ssh_status
-        tunnel = st.current_tunnel
+        tunnel = st.current_server
         tunnel_name = tunnel.get("name") if tunnel else None
         tunnel_name = tunnel_name or (
             f"{tunnel.get('ssh_user', '')}@{tunnel.get('ssh_host', '')}" if tunnel else "未配置")
