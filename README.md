@@ -1,6 +1,6 @@
-# Magic Stack
+# Magic Stack — Route Claude Code to Any LLM from the macOS Menu Bar
 
-**The local AI network stack in your menu bar: route Claude Code to any model, ride your own tunnel, and actually *see* what your AI apps send.**
+**Local-first AI network stack: an LLM gateway that speaks Anthropic / OpenAI protocols, your own SSH tunnels, and TLS-level AI traffic capture — one native macOS app.**
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -11,22 +11,23 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 [![Tests](https://img.shields.io/badge/tests-2000%2B%20%C2%B7%20ADRs%20%C2%B7%20zero%20telemetry-brightgreen)](CONTEXT.md)
 
-![Menu bar](assets/docs/menu-bar-v091.png)
+![Magic Stack in the macOS menu bar — AI routing gateway, SSH SOCKS5 proxy, port forwarding](assets/docs/menu-bar-v091.png)
 
-Routing tools forward requests. Proxies move bytes. **Magic Stack closes the loop**: one native macOS app holds all three layers — access (your own SSH tunnels), routing (a local gateway that speaks your agent's protocol — Anthropic, OpenAI Chat, or Responses), and observability (TLS decryption of AI traffic). Change a routing rule, and watch the *real* cost, latency, and responses change in the same app. Keys never leave your machine.
+## The problems it solves
 
-| Layer | What you get |
+| Pain | With Magic Stack |
 |---|---|
-| 🧮 **Route** | Local gateway (`:9527`) with **three inbound protocols** — Anthropic Messages / OpenAI Chat / Responses: point Claude Code, Codex, OpenCode or ZCode at it (**one key configures every agent**), route to **GLM / DeepSeek / Kimi / Qwen / OpenAI / Anthropic** and more by model-prefix rule |
-| 🔗 **Access** | SSH SOCKS5 proxy (`:8888`) through your own server + **multi-tunnel `ssh -L` port forwarding** running in parallel, all from the menu bar |
-| 🔍 **Verify** | TLS capture decrypts AI calls (OpenAI, Anthropic, DeepSeek, Doubao, Qwen, MiniMax) to readable JSONL + per-provider usage, cache-hit-rate and balance stats |
+| **Claude Code is locked to one vendor and one bill** | Set `ANTHROPIC_BASE_URL` once, then route by model-prefix rules to **GLM / DeepSeek / Kimi / Qwen / OpenAI / Anthropic** — same workflow, cheaper or faster backend |
+| **Every agent needs its own key and config** | **One key configures every agent**: the built-in engine sets up Claude Code, Codex, OpenCode and ZCode; they only ever hold a local gateway credential |
+| **You can't see what agents send or spend** | TLS capture decrypts AI calls (OpenAI / Anthropic / DeepSeek / Doubao / Qwen / MiniMax) into readable JSONL, with per-provider usage, cache-hit-rate and balance in one panel |
+| **Your traffic should ride your own server** | SSH SOCKS5 proxy + parallel `ssh -L` port forwarding + NFSv4 mounts, all toggled from the menu bar |
 
-## 60-second start
+Keys never leave your machine. Zero telemetry. MIT.
 
-The #1 reason people install this: **keep the Claude Code workflow, swap the backend** (and the bill).
+## Route Claude Code to GLM in 60 seconds
 
 ```bash
-# 1. Launch the app → Preferences → AI Routing → Providers
+# 1. App → Preferences → AI Routing → Providers
 #    add GLM  https://open.bigmodel.cn/api/anthropic  + your API key
 #    set router.default = GLM/glm-5.2
 # 2. Point Claude Code at the gateway:
@@ -34,7 +35,7 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:9527
 claude   # every request now routes per your rules
 ```
 
-Mix models per tier — strong for main threads, cheap for subagents:
+Mix models per tier — strong models for main threads, cheap ones for subagents:
 
 ```yaml
 rules:
@@ -46,116 +47,77 @@ rules:
     route_to: KIMI/k3
 ```
 
-Type `provider/model` (e.g. `DeepSeek/deepseek-chat`) anywhere a model is expected to bypass all rules.
+## One app, three layers
 
-## Why not just …?
+| Layer | What you get |
+|---|---|
+| 🧮 **Route** — LLM gateway (`:9527`) | Three inbound protocols (Anthropic Messages / OpenAI Chat / Responses), prefix routing, same-protocol passthrough with auto-conversion on mismatch (SSE included), prompt-caching preserved, usage & balance stats |
+| 🔗 **Access** — SSH tunnels (`:8888`) | SOCKS5 proxy through your own server, multi-tunnel `-L` forwards in parallel, key or Keychain-password auth, auto-retry and wake-triggered reconnect, one page per server (connection / forwards / NFS mounts / service detection) |
+| 🔍 **Verify** — AI traffic capture | Bundled mitmdump cascades into the proxy; only known AI APIs are logged to JSONL — everything else passes untouched |
 
-Curators and comparison shoppers, this section is for you:
+**Bonus — agent-operable:** “Copy AI assistant instructions” hands Claude Code a token-guarded local API, and it configures the app for you. The AI network tool your AI can run.
 
-| | **Magic Stack** | claude-code-router / LiteLLM | OpenRouter (SaaS) | 手动 ssh + 配置文件 |
-|---|---|---|---|---|
-| Where it runs | **Local-first** (menu bar / Docker) | Local or self-host server | Their cloud | Your terminal |
-| Keys & prompts | **Never leave your machine** | Yours (self-host) | Sent to service | Yours |
-| Sees actual AI traffic (TLS plaintext) | ✅ built in | ❌ | ❌ | needs mitmproxy setup |
-| SSH access layer (SOCKS5 + `-L` forwards, parallel) | ✅ built in | ❌ | ❌ | ✅ but manual |
-| Cost / cache / usage closed-loop per rule | ✅ same app | partial | dashboard | ❌ |
-| macOS native UX (menu bar, settings window) | ✅ | CLI/config | web | ❌ |
-| Configurable by the AI agent itself | ✅ `agent.md` + token API | ❌ | ❌ | ❌ |
+![Settings — server view: port forwarding tab](assets/docs/settings-servers-v0130.png)
 
-**The differentiator is the loop, not any single layer** — routers that can't see traffic are flying blind; proxies that can see traffic can't route.
-
-![Settings — server view (port mapping tab)](assets/docs/settings-servers-v0130.png)
-
-![Settings — server view (NFS tab)](assets/docs/settings-nfs-v0130.png)
+![Settings — server view: NFS mounts tab](assets/docs/settings-nfs-v0130.png)
 
 ## Install
 
-**macOS (recommended):** grab the signed + notarized `.dmg` from [Releases](../../releases), drag to `Applications`. That's it — ⚫ appears in the menu bar.
+**macOS (recommended):** grab the signed + notarized `.dmg` from [Releases](../../releases), drag to `Applications`. ⚫ appears in the menu bar.
 
-**From source / build your own `.app`:**
+**From source:**
 
 ```bash
-git clone https://github.com/benz-ai-x/magic-stack.git
-cd magic-stack
-pip3 install -r requirements-dev.txt && python3 app.py     # run
-# bash build.sh                                            # or package
+git clone https://github.com/benz-ai-x/magic-stack.git && cd magic-stack
+pip3 install -r requirements-dev.txt && python3 app.py
 ```
 
 **Linux / headless — Docker (gateway + web config):**
 
 ```bash
-bash docker/suanpan.sh up      # gateway :9527 + web config :9528
-bash docker/suanpan.sh sync    # writes ~/.claude/settings.json for Claude Code
+bash docker/suanpan.sh up    # gateway :9527 + web config :9528
+bash docker/suanpan.sh sync  # writes ~/.claude/settings.json
 ```
 
-First run on macOS: Preferences → **Proxy → Tunnel** → fill SSH details → menu **代 理 ▸ 连接代理** → browser proxy → `127.0.0.1:8888`. Forward remote ports to localhost under **端口映射 ▸** (each row toggles in place). Password auth needs `sshpass` once (`brew install hudochenkov/sshpass/sshpass`).
+## How it compares
 
-## What's inside
-
-### 🧮 Suanpan (算盘) — LLM routing gateway
-
-- **Providers** — built-in endpoint cards for GLM/DeepSeek/Kimi/Qwen/OpenAI/Anthropic/OpenRouter/SiliconFlow/Volces (per-vendor anthropic/openai/responses matrix + auth header + balance grammar), plus any custom endpoint; API key inline, env var, or custom auth header
-- **Routing** — prefix rules → default route; inline `provider/model` override; `<SUBAGENT-MODEL>` subagent tag; explicit misroutes fall through loudly (`x-suanpan-fallback` header), never silently
-- **Prompt-caching aware** — `anthropic_native` providers keep `cache_control` intact so upstream prompt caches stay effective; stats track hit rate
-- **Protocols & streaming** — same-protocol passthrough first, auto-conversion on mismatch (full Anthropic⇄OpenAI Chat translation incl. SSE); uniform usage extraction across all four lanes; safe retries only (non-idempotent requests never replayed)
-- **Usage & balance** — JSONL usage log, today/7d/month/all by provider and route source; balance/quota panels
-- **Agent setup engine** — **one key configures every agent**: Claude Code (role→model mapping, writes `~/.claude/settings.json`), Codex (incremental `config.toml` edits), OpenCode, ZCode; agents only ever hold the local gateway credential; “save & sync” also upserts gateway tier rules (rules = persistent truth, env = projection)
-
-### 🔗 Magic Proxy — SSH tunnels + port forwarding
-
-- **v0.13 server-centric config** — one page per remote server (Server → Service → Instance, ADR-011): connection + SSH-tunnel service (forward instances) + NFS service (mount instances) + OpenVPN (placeholder) in a single view, each service card with one-click detection of what's actually usable on that box (SSH reachability / NFS 2049+exports / OpenVPN presence); old `tunnels[]` configs auto-migrate with server names, keys, mounts and Keychain passwords preserved
-- asyncio HTTP→SOCKS5 proxy with per-request origin binding (keep-alive safe, CONNECT, chunked)
-- **v0.9 multi-active**: one proxy tunnel (`-D`) + any number of forward-only tunnels (`-L`) in parallel — server A as your proxy, server B mapping ports to `127.0.0.1`; independent retry, host-key handling, `forward_autostart` on launch; **per-forward click-to-toggle** (disabled rows hold no port, unconnected sessions never pulled up)
-- Per-rule one-click SSH reachability test (works on unsaved values)
-- Key auth or password (via `sshpass`; password only in macOS Keychain, piped to ssh — never in `argv`/`ps`)
-- TOFU host-key pinning; retry backoff capped at 60s and never gives up; wake-triggered reconnect (~5s); transactional system-proxy management; per-app `--proxy-server` launches
-
-### 🔍 AI Capture — TLS recorder for AI APIs
-
-- One click starts a bundled mitmdump cascaded into the proxy; only known AI APIs are logged to `~/.magic-proxy-captures/<date>.jsonl`, everything else passes untouched
-- Guided root-CA trust; configurable retention
-
-## Trust & engineering
-
-Security-sensitive tooling earns trust in the open:
-
-- **Zero telemetry** — nothing phones home; every endpoint binds to loopback
-- SSH passwords in the macOS **Keychain**, piped to `ssh` (never in `argv`/`ps`/files); `StrictHostKeyChecking=yes` with a dedicated `known_hosts`
-- Constant-time key comparison; credential-bearing outbound calls refuse cross-origin redirects and HTTPS→HTTP downgrades; 1MB response cap
-- Config writes atomic (`0600`) with a crash-recovery journal; masked keys never leave the UI
-- **2000+ tests**, architecture decision records ([`docs/adr/`](docs/adr/)), a drift-guarded domain glossary ([`CONTEXT.md`](CONTEXT.md)) — the discipline is in the repo, not just the claim
-
-## 🤖 Agent-operable
-
-Open Preferences → **“Copy AI assistant instructions”** and paste into Claude Code: the agent reads `http://127.0.0.1:9528/agent.md` (no token), then configures the app for you through a token-guarded local API. **The AI network tool your AI can run.** (The same copy action is available on the settings sidebar — including the browser panel, where it falls back to the token-guarded `/api/agent-instructions` endpoint.)
+| | **Magic Stack** | claude-code-router / LiteLLM | OpenRouter (SaaS) | manual ssh + configs |
+|---|---|---|---|---|
+| Runs | **Local-first** (menu bar / Docker) | Local or self-host | Their cloud | Your terminal |
+| Keys & prompts | **Never leave your machine** | Yours | Sent to service | Yours |
+| Sees actual AI traffic (TLS plaintext) | ✅ built in | ❌ | ❌ | needs mitmproxy setup |
+| SSH access layer (SOCKS5 + `-L`, parallel) | ✅ built in | ❌ | ❌ | ✅ but manual |
+| Cost / cache / usage closed-loop per rule | ✅ same app | partial | dashboard | ❌ |
 
 ## FAQ
 
 **Does Claude Code really work with DeepSeek / GLM / Kimi?**
-Yes — the gateway is fully Anthropic-Messages-compatible (SSE streaming, tool use, prompt-caching markers preserved). Claude Code only changes `ANTHROPIC_BASE_URL`. No patches, no hacks.
+Yes — the gateway is fully Anthropic-Messages-compatible (SSE streaming, tool use, prompt-caching markers preserved). Only `ANTHROPIC_BASE_URL` changes. No patches, no hacks.
 
-**Is it free? Where do keys live?**
-MIT-licensed; it routes to *your* provider accounts. Keys sit in `~/.suanpan.yaml` (`0600`), masked in every UI surface, plaintext never leaves the process. Zero telemetry.
+**How is this different from claude-code-router, LiteLLM or OpenRouter?**
+A router forwards but can't see traffic; a SaaS sees your keys. Magic Stack is local-first **and** closes the loop: change a rule, watch real cost, latency and responses change in the same app.
 
-**How is this different from a plain proxy — or a plain router?**
-A proxy moves bytes but can't route; a router forwards but can't see traffic. This app does both and closes the loop: per-rule cost, cache-hit and response visibility in the same UI.
+**Where do my keys live? Is it free?**
+MIT-licensed; it routes to *your* provider accounts. Keys sit in `~/.suanpan.yaml` (`0600`), masked in every UI. Zero telemetry, every endpoint binds to loopback.
 
 **Does it work with Codex / OpenCode / ZCode?**
-Yes — three inbound protocols; the quick-start wizard picks the vendor, takes one key, and configures every agent you tick. Each agent only holds the local gateway credential.
-
-**Can I forward a remote port without exposing it?**
-Per-tunnel `ssh -L` binds to `127.0.0.1` only, runs in parallel with the SOCKS5 tunnel, reconnects independently.
+Yes — three inbound protocols; the quick-start wizard takes one key and configures every agent you tick.
 
 **Linux / Windows?**
-Linux: the Suanpan gateway ships as a Docker image. Menu-bar shell, SSH tunnels and capture are macOS-only.
+The Suanpan gateway ships as a Docker image; menu-bar shell, SSH tunnels and capture are macOS-only.
+
+## Trust & engineering
+
+- SSH passwords in the macOS **Keychain**, piped to `ssh` — never in `argv`/`ps`; `StrictHostKeyChecking=yes` with dedicated `known_hosts`
+- Constant-time key comparison; credential-bearing outbound calls refuse cross-origin redirects and downgrades
+- Config writes atomic (`0600`) with crash-recovery journal
+- **2000+ tests**, 10 ADRs ([`docs/adr/`](docs/adr/)), drift-guarded domain glossary ([`CONTEXT.md`](CONTEXT.md))
 
 ## For curators (one-liner)
 
 > **Magic Stack** — open-source macOS menu-bar app that routes Claude Code, Codex and other agents (Anthropic/OpenAI protocols) to GLM/DeepSeek/Kimi/Qwen/OpenAI through a local-first gateway, bundled with SSH tunnel/port-forwarding management and TLS-level AI traffic observability. MIT.
 
-## Documentation
-
-[`CHANGELOG.md`](CHANGELOG.md) · [`docs/docker-deploy.md`](docs/docker-deploy.md) · [`docs/adr/`](docs/adr/) (10 ADRs) · [`CONTEXT.md`](CONTEXT.md) (domain glossary)
+[`CHANGELOG.md`](CHANGELOG.md) · [`docs/docker-deploy.md`](docs/docker-deploy.md) · [`docs/adr/`](docs/adr/) · [`CONTEXT.md`](CONTEXT.md)
 
 ## License
 
