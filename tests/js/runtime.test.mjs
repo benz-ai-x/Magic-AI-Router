@@ -155,7 +155,7 @@ test("a clean read-only page advertises refresh, not save", () => {
 
 test("zero tunnels render a real empty state without a fake Server 1 editor", () => {
   const rt = makeRuntime();
-  const html = rt.run("S=normalizeState({mp:{tunnels:[]}});activeTunnel=0;tunnelHTML()");
+  const html = rt.run("S=normalizeState({mp:{servers:[]}});activeTunnel=0;tunnelHTML()");
   assert.match(html, /0 个隧道/);
   assert.match(html, /添加第一个隧道/);
   assert.doesNotMatch(html, /Server 1/);
@@ -197,8 +197,9 @@ test("typing then clearing a provider API key restores the masked baseline", () 
 test("typing then clearing an SSH password restores the masked baseline", () => {
   const rt = makeRuntime();
   rt.run(`
-    S=normalizeState({mp:{tunnels:[{name:'t1',ssh_user:'',ssh_host:'h',ssh_port:22,
-      auth_type:'password',ssh_key:'',ssh_compression:true,has_password:true}]}});
+    S=normalizeState({mp:{servers:[{name:'t1',has_password:true,
+      ssh:{user:'',host:'h',port:22,auth_type:'password',ssh_key:'',compression:true},
+      services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
     activeView='tunnel';activeTunnel=0;recomputeDirty();
     const fields={name:{value:'t1'},addr:{value:'h'},ssh_port:{value:'22'},
@@ -221,15 +222,16 @@ test("typing then clearing an SSH password restores the masked baseline", () => 
 
   rt.run("window.__pw.value='';collectAndRecompute()");
   assert.equal(rt.run("dirty"), false, "cleared password must clear dirty");
-  assert.equal(rt.run("S.mp.tunnels[0].password"), null,
+  assert.equal(rt.run("S.mp.servers[0].password"), null,
     "cleared password must not leave a phantom value for the keychain write");
 });
 
 test("collectTunnel reads forward rows into the active tunnel", () => {
   const rt = makeRuntime();
   rt.run(`
-    S=normalizeState({mp:{tunnels:[{name:'t1',ssh_user:'u',ssh_host:'h',ssh_port:22,
-      auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]}]}});
+    S=normalizeState({mp:{servers:[{name:'t1',
+      ssh:{user:'u',host:'h',port:22,auth_type:'key',ssh_key:'',compression:true},
+      services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
     activeView='tunnel';activeTunnel=0;recomputeDirty();
     const fields={name:{value:'t1'},addr:{value:'u@h'},ssh_port:{value:'22'},
@@ -254,7 +256,7 @@ test("collectTunnel reads forward rows into the active tunnel", () => {
   `);
   rt.run("collectTunnel();recomputeDirty()");
   // vm 跨 realm 对象不走 deepEqual（原型不同）——JSON 字符串钉形状
-  assert.equal(rt.run("JSON.stringify(S.mp.tunnels[0].forwards)"),
+  assert.equal(rt.run("JSON.stringify(S.mp.servers[0].services.ssh.forwards)"),
     JSON.stringify([
       { local_port: 9000, remote_host: "10.0.0.5", remote_port: 8000,
         enabled: true },
@@ -268,8 +270,9 @@ test("collectTunnel reads forward rows into the active tunnel", () => {
 test("collectTunnel reads the forward_autostart switch", () => {
   const rt = makeRuntime();
   rt.run(`
-    S=normalizeState({mp:{tunnels:[{name:'t1',ssh_user:'',ssh_host:'h',ssh_port:22,
-      auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[],forward_autostart:false}]}});
+    S=normalizeState({mp:{servers:[{name:'t1',
+      ssh:{user:'',host:'h',port:22,auth_type:'key',ssh_key:'',compression:true},
+      services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
     activeView='tunnel';activeTunnel=0;recomputeDirty();
     const fields={name:{value:'t1'},addr:{value:'h'},ssh_port:{value:'22'},
@@ -287,8 +290,8 @@ test("collectTunnel reads the forward_autostart switch", () => {
     };
   `);
   rt.run("collectTunnel();recomputeDirty()");
-  assert.equal(rt.run("S.mp.tunnels[0].forward_autostart"), true,
-    "autostart 开关经 collect 读回");
+  assert.equal(rt.run("S.mp.servers[0].services.ssh.autostart"), true,
+    "autostart 开关经 collect 读回（services.ssh.autostart）");
   assert.equal(rt.run("dirty"), true, "开关翻转点亮保存按钮");
 });
 
@@ -296,9 +299,9 @@ test("collectTunnel reads the forward_autostart switch", () => {
 function setupTunnelForm(rt, { role = "t-a", active = 0 } = {}) {
   const name = active === 0 ? "A" : "B", addr = active === 0 ? "a" : "b";
   rt.run(`
-    S=normalizeState({mp:{current_tunnel_id:'${role}',current_tunnel:${role === "t-b" ? 1 : 0},tunnels:[
-      {id:'t-a',name:'A',ssh_user:'',ssh_host:'a',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]},
-      {id:'t-b',name:'B',ssh_user:'',ssh_host:'b',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]}]}});
+    S=normalizeState({mp:{proxy_server_id:'${role}',servers:[
+      {id:'t-a',name:'A',ssh:{user:'',host:'a',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}},
+      {id:'t-b',name:'B',ssh:{user:'',host:'b',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
     activeView='tunnel';activeTunnel=${active};recomputeDirty();
     const fields={name:{value:'${name}'},addr:{value:'${addr}'},ssh_port:{value:'22'},
@@ -323,8 +326,8 @@ test("viewing another tunnel must not silently switch the proxy role", () => {
   setupTunnelForm(rt, { role: "t-a", active: 1 });
   // 保存路径的精确复现：用户停留在隧道页查看 B（activeTunnel=1）时按下保存
   rt.run("collect(true);recomputeDirty()");
-  assert.equal(rt.run("S.mp.current_tunnel_id"), "t-a",
-    "collect 只读表单——正在查看的隧道绝不能被隐式写成代理隧道");
+  assert.equal(rt.run("S.mp.proxy_server_id"), "t-a",
+    "collect 只读表单——正在查看的服务器绝不能被隐式写成代理服务器");
   assert.equal(rt.run("dirty"), false, "单纯查看另一条隧道不得伪造待保存项");
 });
 
@@ -334,23 +337,22 @@ test("setProxyTunnel marks the role switch as one tracked, reversible change", (
   assert.match(rt.run("tunnelHTML()"), /设为代理隧道/,
     "非代理隧道的详情栏必须暴露显式角色动作");
   rt.run("setProxyTunnel()");
-  assert.equal(rt.run("S.mp.current_tunnel_id"), "t-b");
-  assert.equal(rt.run("S.mp.current_tunnel"), 1, "下标投影随 id 一并写入");
+  assert.equal(rt.run("S.mp.proxy_server_id"), "t-b");
   assert.equal(rt.run("dirty"), true);
   assert.equal(rt.run("totalDirtyCount()"), 1, "只有角色一个叶子计入待保存");
   assert.match(rt.run("tunnelHTML()"), /fw-badge[^>]*>代理隧道</,
-    "当前代理隧道渲染徽标而非按钮");
+    "当前代理服务器渲染徽标而非按钮");
   rt.run("discardAll()");
-  assert.equal(rt.run("S.mp.current_tunnel_id"), "t-a", "放弃更改恢复已保存的角色");
+  assert.equal(rt.run("S.mp.proxy_server_id"), "t-a", "放弃更改恢复已保存的角色");
 });
 
 test("deleting a tunnel keeps the proxy role on the same tunnel", () => {
   const rt = makeRuntime();
   rt.run(`
-    S=normalizeState({mp:{current_tunnel_id:'t-c',current_tunnel:2,tunnels:[
-      {id:'t-a',name:'A',ssh_user:'',ssh_host:'a',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]},
-      {id:'t-b',name:'B',ssh_user:'',ssh_host:'b',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]},
-      {id:'t-c',name:'C',ssh_user:'',ssh_host:'c',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]}]}});
+    S=normalizeState({mp:{proxy_server_id:'t-c',servers:[
+      {id:'t-a',name:'A',ssh:{user:'',host:'a',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}},
+      {id:'t-b',name:'B',ssh:{user:'',host:'b',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}},
+      {id:'t-c',name:'C',ssh:{user:'',host:'c',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
     activeView='tunnel';activeTunnel=2;recomputeDirty();
     document.querySelector=function(){return null;};
@@ -358,14 +360,14 @@ test("deleting a tunnel keeps the proxy role on the same tunnel", () => {
     document.getElementById('viewport').firstElementChild={classList:{add(){}}};
   `);
   rt.run("removeTunnel(0)");
-  assert.equal(rt.run("S.mp.current_tunnel_id"), "t-c",
-    "删掉代理前面的隧道后，角色 id 纹丝不动——不再依赖下标");
-  assert.equal(rt.run("proxyIndexOf(S)"), 1, "解析下标指向同一条隧道");
-  assert.equal(rt.run("S.mp.tunnels[proxyIndexOf(S)].id"), "t-c");
+  assert.equal(rt.run("S.mp.proxy_server_id"), "t-c",
+    "删掉代理前面的服务器后，角色 id 纹丝不动——不再依赖下标");
+  assert.equal(rt.run("proxyIndexOf(S)"), 1, "解析下标指向同一条服务器");
+  assert.equal(rt.run("S.mp.servers[proxyIndexOf(S)].id"), "t-c");
   rt.run("removeTunnel(1)");
-  assert.equal(rt.run("S.mp.tunnels.length"), 1);
-  assert.equal(rt.run("S.mp.current_tunnel_id"), "",
-    "删掉代理自身后清空 id 真相，交由下标钳制回落剩余首条");
+  assert.equal(rt.run("S.mp.servers.length"), 1);
+  assert.equal(rt.run("S.mp.proxy_server_id"), "",
+    "删掉代理自身后清空 id 真相，交由首条兜底回落");
   assert.equal(rt.run("proxyIndexOf(S)"), 0);
 });
 
@@ -373,13 +375,13 @@ test("deleting a tunnel keeps the proxy role on the same tunnel", () => {
 test("nfs view renders master-detail mirroring the tunnel view", () => {
   const rt = makeRuntime();
   const html = rt.run(`
-    S=normalizeState({mp:{tunnels:[
-      {id:'t-1',name:'srv-a',ssh_user:'u',ssh_host:'a.example',ssh_port:22,
-       nfs:{enabled:true,local_port:12049,squash_to_ssh_user:false,
-            mounts:[{name:'data',remote_path:'/data',local_dir:'',auto_mount:true}]},
+    S=normalizeState({mp:{servers:[
+      {id:'t-1',name:'srv-a',ssh:{user:'u',host:'a.example',port:22},
+       services:{nfs:{enabled:true,local_port:12049,squash_to_ssh_user:false,
+            mounts:[{name:'data',remote_path:'/data',local_dir:'',auto_mount:true}]}},
        nfs_states:{data:'mounted'}},
-      {id:'t-2',name:'srv-b',ssh_user:'u',ssh_host:'b.example',ssh_port:22,
-       nfs:{enabled:false,local_port:12049,squash_to_ssh_user:false,mounts:[]}},
+      {id:'t-2',name:'srv-b',ssh:{user:'u',host:'b.example',port:22},
+       services:{nfs:{enabled:false,local_port:12049,squash_to_ssh_user:false,mounts:[]}}},
     ]}});
     activeTunnel=0;nfsHTML();
   `);
@@ -401,9 +403,9 @@ test("nfs view renders master-detail mirroring the tunnel view", () => {
 test("nfs view follows the shared activeTunnel selection", () => {
   const rt = makeRuntime();
   rt.run(`
-    S=normalizeState({mp:{tunnels:[
-      {id:'t-1',name:'srv-a',ssh_host:'a.example',nfs:{enabled:true,local_port:12049,mounts:[]}},
-      {id:'t-2',name:'srv-b',ssh_host:'b.example',nfs:{enabled:false,local_port:12049,mounts:[]}},
+    S=normalizeState({mp:{servers:[
+      {id:'t-1',name:'srv-a',ssh:{host:'a.example'},services:{nfs:{enabled:true,local_port:12049,mounts:[]}}},
+      {id:'t-2',name:'srv-b',ssh:{host:'b.example'},services:{nfs:{enabled:false,local_port:12049,mounts:[]}}},
     ]}});
     activeTunnel=0;
   `);
@@ -419,7 +421,7 @@ test("nfs view follows the shared activeTunnel selection", () => {
 
 test("nfs view empty state without tunnels", () => {
   const rt = makeRuntime();
-  const html = rt.run("S=normalizeState({mp:{tunnels:[]}});nfsHTML()");
+  const html = rt.run("S=normalizeState({mp:{servers:[]}});nfsHTML()");
   assert.match(html, /还没有配置隧道/);
 });
 
@@ -427,8 +429,9 @@ test("nfs view empty state without tunnels", () => {
 test("collectTunnel reads per-row enabled switches", () => {
   const rt = makeRuntime();
   rt.run(`
-    S=normalizeState({mp:{tunnels:[{name:'t1',ssh_user:'u',ssh_host:'h',ssh_port:22,
-      auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[]}]}});
+    S=normalizeState({mp:{servers:[{name:'t1',
+      ssh:{user:'u',host:'h',port:22,auth_type:'key',ssh_key:'',compression:true},
+      services:{ssh:{forwards:[],autostart:false}}}]}});
     baselineState=cloneData(S);baselineRoles={};ccRoles={};
     activeView='tunnel';activeTunnel=0;recomputeDirty();
     const fields={name:{value:'t1'},addr:{value:'u@h'},ssh_port:{value:'22'},
@@ -455,7 +458,7 @@ test("collectTunnel reads per-row enabled switches", () => {
     };
   `);
   rt.run("collectTunnel();recomputeDirty()");
-  assert.equal(rt.run("JSON.stringify(S.mp.tunnels[0].forwards)"),
+  assert.equal(rt.run("JSON.stringify(S.mp.servers[0].services.ssh.forwards)"),
     JSON.stringify([
       { local_port: 9000, remote_host: "x", remote_port: 80, enabled: true },
       { local_port: 9001, remote_host: "x", remote_port: 81, enabled: false },

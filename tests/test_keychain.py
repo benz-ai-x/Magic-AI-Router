@@ -8,7 +8,9 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 from shared import keychain
-_TUNNEL = {"ssh_user": "u", "ssh_host": "h", "ssh_port": 22, "auth_type": "password"}
+# v2 服务器形状（ADR-011）：连接参数在 ssh 节；账户名字符串契约不变
+_TUNNEL = {"ssh": {"user": "u", "host": "h", "port": 22,
+                   "auth_type": "password"}}
 
 
 class TestAccountKey(unittest.TestCase):
@@ -70,7 +72,8 @@ class TestSetPassword(unittest.TestCase):
         self.assertNotIn(secret, "\n".join(cm.output))
 
     def test_no_host_returns_false(self):
-        self.assertFalse(keychain.set_password({"ssh_host": ""}, "pw"))
+        self.assertFalse(keychain.set_password(
+            {"ssh": {"host": ""}}, "pw"))
 
 
 class TestGetPassword(unittest.TestCase):
@@ -85,7 +88,7 @@ class TestGetPassword(unittest.TestCase):
         self.assertEqual(keychain.get_password(_TUNNEL), "")
 
     def test_no_host_returns_empty(self):
-        self.assertEqual(keychain.get_password({"ssh_host": ""}), "")
+        self.assertEqual(keychain.get_password({"ssh": {"host": ""}}), "")
 
 
 class TestDeletePassword(unittest.TestCase):
@@ -108,4 +111,4 @@ class TestDeletePassword(unittest.TestCase):
         self.assertFalse(keychain.delete_password(_TUNNEL))
 
     def test_no_host_is_noop(self):
-        keychain.delete_password({"ssh_host": ""})  # should not raise
+        keychain.delete_password({"ssh": {"host": ""}})  # should not raise

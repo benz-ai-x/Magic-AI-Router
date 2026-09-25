@@ -30,13 +30,13 @@ class TestLoadStates(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             mp = Path(d) / "magic-proxy.json"
             sp = Path(d) / "suanpan.yaml"
-            mp.write_text('{"tunnels": []}')
+            mp.write_text('{"servers": []}')
             sp.write_text("listen_port: 9527\n")
             store = ConfigStateStore(mp_path=str(mp), sp_path=str(sp))
             result = store.load()
             self.assertEqual(result.mp_state, "valid")
             self.assertEqual(result.sp_state, "valid")
-            self.assertEqual(result.mp_data, {"tunnels": []})
+            self.assertEqual(result.mp_data, {"servers": []})
 
     def test_invalid_json_reported_not_folded_to_empty(self):
         with tempfile.TemporaryDirectory() as d:
@@ -111,61 +111,66 @@ class TestPrepareValidation(unittest.TestCase):
         return {"local_port": lp, "remote_host": rh, "remote_port": rp}
 
     def test_valid_forwards_accepted(self):
-        plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
-            {"name": "t1", "forwards": [self._fw()]}]})
+        plan = self._prepare(sp={"providers": {}}, mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [self._fw()]}}}]})
         self.assertTrue(plan.ok, plan.errors)
 
     def test_forward_port_out_of_range_rejected(self):
-        plan = self._prepare(mp={"tunnels": [
-            {"name": "t1", "forwards": [self._fw(lp=70000)]}]})
+        plan = self._prepare(mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [
+                self._fw(lp=70000)]}}}]})
         self.assertFalse(plan.ok)
         self.assertTrue(any("local_port" in e for e in plan.errors), plan.errors)
 
     def test_forward_string_port_rejected_before_merge(self):
         """保存候选必须规整：字符串端口只在 load 路径容错（merge 归一），
         prepare 是写路径的严格半边。"""
-        plan = self._prepare(mp={"tunnels": [
-            {"name": "t1", "forwards": [self._fw(rp="8000")]}]})
+        plan = self._prepare(mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [
+                self._fw(rp="8000")]}}}]})
         self.assertFalse(plan.ok)
         self.assertTrue(any("remote_port" in e for e in plan.errors), plan.errors)
 
     def test_forward_bool_port_rejected(self):
-        plan = self._prepare(mp={"tunnels": [
-            {"name": "t1", "forwards": [self._fw(lp=True)]}]})
+        plan = self._prepare(mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [
+                self._fw(lp=True)]}}}]})
         self.assertFalse(plan.ok)
         self.assertTrue(any("local_port" in e for e in plan.errors), plan.errors)
 
     def test_forward_bad_remote_host_rejected(self):
         for rh in ("", "  ", "a b", "127.0.0.1:x", "::1"):
-            plan = self._prepare(mp={"tunnels": [
-                {"name": "t1", "forwards": [self._fw(rh=rh)]}]})
+            plan = self._prepare(mp={"servers": [
+                {"name": "t1", "services": {"ssh": {"forwards": [
+                    self._fw(rh=rh)]}}}]})
             self.assertFalse(plan.ok, f"remote_host={rh!r} 不应通过")
             self.assertTrue(any("remote_host" in e for e in plan.errors),
                             plan.errors)
 
     def test_forward_missing_remote_host_ok_defaults(self):
         """remote_host 缺省合法（merge 回填 127.0.0.1）——None 不应报错。"""
-        plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
-            {"name": "t1", "forwards": [
-                {"local_port": 9000, "remote_port": 8000}]}]})
+        plan = self._prepare(sp={"providers": {}}, mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [
+                {"local_port": 9000, "remote_port": 8000}]}}}]})
         self.assertTrue(plan.ok, plan.errors)
 
     def test_forward_non_list_rejected(self):
-        plan = self._prepare(mp={"tunnels": [
-            {"name": "t1", "forwards": "nope"}]})
+        plan = self._prepare(mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": "nope"}}}]})
         self.assertFalse(plan.ok)
         self.assertTrue(any("forwards" in e for e in plan.errors), plan.errors)
 
     def test_forward_non_dict_row_rejected(self):
-        plan = self._prepare(mp={"tunnels": [
-            {"name": "t1", "forwards": ["nope"]}]})
+        plan = self._prepare(mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": ["nope"]}}}]})
         self.assertFalse(plan.ok)
         self.assertTrue(any("端口转发必须是对象" in e for e in plan.errors),
                         plan.errors)
 
     def test_forward_same_tunnel_duplicate_local_port_rejected(self):
-        plan = self._prepare(mp={"tunnels": [
-            {"name": "t1", "forwards": [self._fw(), self._fw(rp=8001)]}]})
+        plan = self._prepare(mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [
+                self._fw(), self._fw(rp=8001)]}}}]})
         self.assertFalse(plan.ok)
         self.assertTrue(any("重复" in e for e in plan.errors), plan.errors)
 
@@ -173,22 +178,25 @@ class TestPrepareValidation(unittest.TestCase):
         """多活（v0.9）：任意隧道可并行——跨隧道同本地端口会让两条 ssh
         在 ExitOnForwardFailure 下互顶死循环，prepare 必须拦（v0.8 的
         单活豁免随多活作废）。"""
-        plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
-            {"name": "t1", "forwards": [self._fw()]},
-            {"name": "t2", "forwards": [self._fw(rp=9001)]}]})
+        plan = self._prepare(sp={"providers": {}}, mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [self._fw()]}}},
+            {"name": "t2", "services": {"ssh": {"forwards": [
+                self._fw(rp=9001)]}}}]})
         self.assertFalse(plan.ok)
         self.assertTrue(any("端口冲突" in e and "t1" in e and "t2" in e
                             for e in plan.errors), plan.errors)
 
     def test_forward_distinct_cross_tunnel_ports_allowed(self):
-        plan = self._prepare(sp={"providers": {}}, mp={"tunnels": [
-            {"name": "t1", "forwards": [self._fw()]},
-            {"name": "t2", "forwards": [self._fw(lp=9001)]}]})
+        plan = self._prepare(sp={"providers": {}}, mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [self._fw()]}}},
+            {"name": "t2", "services": {"ssh": {"forwards": [
+                self._fw(lp=9001)]}}}]})
         self.assertTrue(plan.ok, plan.errors)
 
     def test_forward_conflicts_with_reserved_port_rejected(self):
-        plan = self._prepare(mp={"tunnels": [
-            {"name": "t1", "forwards": [self._fw(lp=8888)]}],
+        plan = self._prepare(mp={"servers": [
+            {"name": "t1", "services": {"ssh": {"forwards": [
+                self._fw(lp=8888)]}}}],
             "http_listen_port": 8888})
         self.assertFalse(plan.ok)
         self.assertTrue(any("端口冲突" in e for e in plan.errors), plan.errors)
@@ -309,17 +317,17 @@ class TestKeychainTransaction(unittest.TestCase):
                 ops.append(("del", tunnel["name"]))
                 return True
         store = self._store(FakeKC())
-        plan = store.prepare(mp={"tunnels": [
-            {"name": "t1", "ssh_host": "h", "auth_type": "password",
+        plan = store.prepare(mp={"servers": [
+            {"name": "t1", "ssh": {"host": "h", "auth_type": "password"},
              "password": "sekrit"}]})
         self.assertTrue(plan.ok)
-        self.assertEqual(plan.mp_candidate["tunnels"][0].get("password"),
+        self.assertEqual(plan.mp_candidate["servers"][0].get("password"),
                          None, "密码在候选里必须剥离，只进 keychain 计划")
         result = store.commit(plan)
         self.assertTrue(result.ok, result.errors)
         self.assertEqual(ops, [("set", "t1", "sekrit")])
         loaded = store.load()
-        self.assertNotIn("password", loaded.mp_data["tunnels"][0])
+        self.assertNotIn("password", loaded.mp_data["servers"][0])
 
     def test_auth_switch_away_from_password_schedules_delete(self):
         ops = []
@@ -331,8 +339,8 @@ class TestKeychainTransaction(unittest.TestCase):
                 ops.append(("del", t["name"]))
                 return True
         store = self._store(FakeKC())
-        plan = store.prepare(mp={"tunnels": [
-            {"name": "t1", "ssh_host": "h", "auth_type": "key"}]})
+        plan = store.prepare(mp={"servers": [
+            {"name": "t1", "ssh": {"host": "h", "auth_type": "key"}}]})
         self.assertTrue(plan.ok)
         result = store.commit(plan)
         self.assertTrue(result.ok)
@@ -345,8 +353,8 @@ class TestKeychainTransaction(unittest.TestCase):
             def delete_password(self, tunnel):
                 return True
         store = self._store(FailKC())
-        plan = store.prepare(mp={"tunnels": [
-            {"name": "t1", "ssh_host": "h", "auth_type": "password",
+        plan = store.prepare(mp={"servers": [
+            {"name": "t1", "ssh": {"host": "h", "auth_type": "password"},
              "password": "sekrit"}]})
         result = store.commit(plan)
         self.assertFalse(result.ok)
@@ -480,10 +488,10 @@ class TestFaultInjectionCompletions(unittest.TestCase):
         # id=哈希(旧地址)，现身份=新地址 → 守卫拒绝
         from mpconf.config import stable_tunnel_id
         old_addr_id = stable_tunnel_id("u", "old.example.com", 22)
-        plan = store.prepare(mp={"tunnels": [
-            {"id": old_addr_id, "name": "y", "ssh_user": "u",
-             "ssh_host": "new.example.com", "ssh_port": 22,
-             "auth_type": "password"}]})
+        plan = store.prepare(mp={"servers": [
+            {"id": old_addr_id, "name": "y",
+             "ssh": {"user": "u", "host": "new.example.com", "port": 22,
+                     "auth_type": "password"}}]})
         store.commit(plan)
         self.assertNotIn("get", ops, "身份编辑过 → 不读 legacy，不猜归属")
 
@@ -507,10 +515,10 @@ class TestFaultInjectionCompletions(unittest.TestCase):
             sp_path=str(Path(d.name) / "s.yaml"), keychain=KC())
         # 先建档含 t-gone，再保存不含它
         Path(store.mp_path).write_text(json.dumps(
-            {"tunnels": [{"id": "t-gone", "name": "g", "ssh_host": "h",
-                          "auth_type": "password",
-                          "ssh_user": "u", "ssh_port": 22}]}))
-        plan = store.prepare(mp={"tunnels": []})
+            {"servers": [{"id": "t-gone", "name": "g",
+                          "ssh": {"host": "h", "auth_type": "password",
+                                  "user": "u", "port": 22}}]}))
+        plan = store.prepare(mp={"servers": []})
         self.assertTrue(plan.ok)
         store.commit(plan)
         self.assertIn(("del-all", "t-gone"), ops, "删除隧道双账户清理")
@@ -567,11 +575,12 @@ class TestUpdateMp(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             store = self._store(d)
             # UI 保存：完整事务写入两条隧道 + retention 调整
-            plan = store.prepare(mp={"tunnels": [
-                {"name": "t1", "ssh_user": "u", "ssh_host": "h1",
-                 "ssh_port": 22, "auth_type": "key"},
-                {"name": "t2", "ssh_user": "u", "ssh_host": "h2",
-                 "ssh_port": 22, "auth_type": "key"}], "retention_days": 3})
+            plan = store.prepare(mp={"servers": [
+                {"name": "t1", "ssh": {"user": "u", "host": "h1",
+                                        "port": 22, "auth_type": "key"}},
+                {"name": "t2", "ssh": {"user": "u", "host": "h2",
+                                        "port": 22, "auth_type": "key"}}],
+                "retention_days": 3})
             self.assertTrue(plan.ok, plan.errors)
             self.assertTrue(store.commit(plan).ok)
             # 菜单开关：写前读新，只动 prevent_sleep
@@ -584,8 +593,8 @@ class TestUpdateMp(unittest.TestCase):
                              "菜单开关抹掉了 UI 并发保存的字段（#46 丢更新）")
             self.assertIs(disk.get("prevent_sleep"), True)
             self.assertEqual(
-                len(disk.get("tunnels", [])), 2,
-                "菜单开关抹掉了 UI 并发保存的隧道（#46 丢更新）")
+                len(disk.get("servers", [])), 2,
+                "菜单开关抹掉了 UI 并发保存的服务器（#46 丢更新）")
 
 
     def test_update_refuses_when_disk_config_corrupt(self):
@@ -699,17 +708,17 @@ class TestReadonlyDecoratedFields(unittest.TestCase):
             store = ConfigStateStore(
                 mp_path=str(Path(d) / "m.json"),
                 sp_path=str(Path(d) / "s.yaml"))
-            plan = store.prepare(mp={"tunnels": [{
-                "name": "t", "ssh_host": "h", "ssh_port": 22,
-                "auth_type": "key", "has_password": True,
-                "capture_active": False}]})
+            plan = store.prepare(mp={"servers": [{
+                "name": "t", "ssh": {"host": "h", "port": 22,
+                                     "auth_type": "key"},
+                "has_password": True, "capture_active": False}]})
             self.assertTrue(plan.ok, plan.errors)
             self.assertNotIn("has_password",
-                             plan.mp_candidate["tunnels"][0])
+                             plan.mp_candidate["servers"][0])
             self.assertNotIn("capture_active",
-                             plan.mp_candidate["tunnels"][0])
+                             plan.mp_candidate["servers"][0])
             # 未声明字段不受累（剥除恰为声明集）
-            self.assertEqual(plan.mp_candidate["tunnels"][0]["name"], "t")
+            self.assertEqual(plan.mp_candidate["servers"][0]["name"], "t")
 
 
 
@@ -721,7 +730,7 @@ class TestLocalTokenSurvivesSave(unittest.TestCase):
     def test_merge_preserves_registered_extra_fields(self):
         """merge_config 保留注册的额外字段（UI 提交含 token 时存活）。"""
         from mpconf.config import merge_config
-        out = merge_config({"tunnels": [],
+        out = merge_config({"servers": [],
                             "local_client_token": "tok-abc",
                             "prevent_sleep": True})
         self.assertEqual(out.get("local_client_token"), "tok-abc",
@@ -737,7 +746,7 @@ class TestLocalTokenSurvivesSave(unittest.TestCase):
             mp = Path(d) / "magic-proxy.json"
             store = ConfigStateStore(mp_path=str(mp),
                                      sp_path=str(Path(d) / "s.yaml"))
-            mp.write_text(json.dumps({"tunnels": [],
+            mp.write_text(json.dumps({"servers": [],
                                       "local_client_token": "tok-abc"}))
             # UI 全量替换（候选带 token，与 S.mp 同形）→ 存活
             plan = store.prepare(mp={"prevent_sleep": True,
@@ -755,7 +764,7 @@ class TestLocalTokenSurvivesSave(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             mp = Path(d) / "magic-proxy.json"
-            mp.write_text(json.dumps({"tunnels": [],
+            mp.write_text(json.dumps({"servers": [],
                                       "local_client_token": "tok-secret"}))
             # 注入侧：明文不得出 config_server._read_mp
             from services.config_server import _read_mp
@@ -784,7 +793,7 @@ class TestLocalTokenSurvivesSave(unittest.TestCase):
             mp = Path(d) / "magic-proxy.json"
             store = ConfigStateStore(mp_path=str(mp),
                                      sp_path=str(Path(d) / "s.yaml"))
-            mp.write_text(json.dumps({"tunnels": [],
+            mp.write_text(json.dumps({"servers": [],
                                       "local_client_token": "tok-xyz"}))
             result = store.update_mp(lambda c: {**c, "prevent_sleep": True})
             self.assertTrue(result.ok, result.errors)
@@ -835,7 +844,7 @@ class TestCrashShapeGuards(unittest.TestCase):
             store = ConfigStateStore(
                 mp_path=str(Path(d) / "m.json"),
                 sp_path=str(Path(d) / "s.yaml"))
-            plan = store.prepare(mp={"tunnels": [], "socks5_port": 8888,
+            plan = store.prepare(mp={"servers": [], "socks5_port": 8888,
                                      "http_listen_port": 8888})
             self.assertFalse(plan.ok)
             self.assertTrue(any("冲突" in e for e in plan.errors),
@@ -866,10 +875,10 @@ class TestKeychainRealContractSemantics(unittest.TestCase):
                 ops.append(("del", t["name"]))
                 return True
         store = self._store(KC())
-        plan = store.prepare(mp={"tunnels": [
-            {"name": "t1", "ssh_host": "h", "auth_type": "password",
+        plan = store.prepare(mp={"servers": [
+            {"name": "t1", "ssh": {"host": "h", "auth_type": "password"},
              "password": "new"},
-            {"name": "t2", "ssh_host": "h2", "auth_type": "key"}]})
+            {"name": "t2", "ssh": {"host": "h2", "auth_type": "key"}}]})
         result = store.commit(plan)
         self.assertFalse(result.ok)
         self.assertEqual(result.stage, "keychain")
@@ -884,8 +893,8 @@ class TestKeychainRealContractSemantics(unittest.TestCase):
             def delete_password(self, t):
                 return False
         store = self._store(KC())
-        plan = store.prepare(mp={"tunnels": [
-            {"name": "t1", "ssh_host": "h", "auth_type": "key"}]})
+        plan = store.prepare(mp={"servers": [
+            {"name": "t1", "ssh": {"host": "h", "auth_type": "key"}}]})
         result = store.commit(plan)
         self.assertFalse(result.ok)
         self.assertEqual(result.stage, "keychain")
@@ -897,48 +906,51 @@ class TestStableIdentityMigration(unittest.TestCase):
 
     def test_legacy_tunnel_gets_deterministic_id(self):
         from mpconf.config import assign_stable_ids
-        tunnels = [{"name": "a", "ssh_user": "u", "ssh_host": "h",
-                    "ssh_port": 22}]
+        tunnels = [{"name": "a",
+                    "ssh": {"user": "u", "host": "h", "port": 22}}]
         ids = assign_stable_ids(tunnels)
         self.assertTrue(tunnels[0]["id"].startswith("t-"))
         self.assertEqual(len(tunnels[0]["id"]), 12)
         self.assertEqual(ids, 1, "恰一个迁移")
         # 确定性：同身份重算同 id
-        again = [{"name": "a", "ssh_user": "u", "ssh_host": "h",
-                  "ssh_port": 22}]
+        again = [{"name": "a",
+                  "ssh": {"user": "u", "host": "h", "port": 22}}]
         assign_stable_ids(again)
         self.assertEqual(again[0]["id"], tunnels[0]["id"])
 
     def test_existing_id_untouched_and_stable_across_edits(self):
         from mpconf.config import assign_stable_ids
-        tunnels = [{"id": "t-keepme1234", "ssh_user": "u",
-                    "ssh_host": "h", "ssh_port": 22}]
+        tunnels = [{"id": "t-keepme1234",
+                    "ssh": {"user": "u", "host": "h", "port": 22}}]
         assign_stable_ids(tunnels)
         self.assertEqual(tunnels[0]["id"], "t-keepme1234")
-        tunnels[0]["ssh_host"] = "changed.example.com"  # 编辑地址
+        tunnels[0]["ssh"] = {**tunnels[0]["ssh"],
+                             "host": "changed.example.com"}  # 编辑地址
         tunnels[0]["name"] = "renamed"
         assign_stable_ids(tunnels)
         self.assertEqual(tunnels[0]["id"], "t-keepme1234",
                          "重命名/改地址不改变 id")
 
     def test_duplicate_legacy_identity_gets_deterministic_suffix(self):
-        """legacy 同身份双隧道本合法——确定性序数后缀，不拒启。"""
+        """legacy 同身份双服务器本合法——确定性序数后缀，不拒启。"""
         from mpconf.config import assign_stable_ids
-        dup = [{"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
-               {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22}]
+        _row = lambda n: {"name": n,
+                          "ssh": {"user": "u", "host": "h", "port": 22}}
+        dup = [_row("a"), _row("b")]
         n = assign_stable_ids(dup)
         self.assertEqual(n, 2)
         self.assertNotEqual(dup[0]["id"], dup[1]["id"])
-        again = [{"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
-                 {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22}]
+        again = [_row("a"), _row("b")]
         assign_stable_ids(again)
         self.assertEqual([t["id"] for t in again], [t["id"] for t in dup],
                          "确定性：重算同序")
 
     def test_duplicate_explicit_ids_fails_actionable(self):
         from mpconf.config import assign_stable_ids
-        dup = [{"id": "t-same", "ssh_user": "u1", "ssh_host": "h", "ssh_port": 22},
-               {"id": "t-same", "ssh_user": "u2", "ssh_host": "h", "ssh_port": 22}]
+        dup = [{"id": "t-same",
+                "ssh": {"user": "u1", "host": "h", "port": 22}},
+               {"id": "t-same",
+                "ssh": {"user": "u2", "host": "h", "port": 22}}]
         with self.assertRaises(ValueError) as ctx:
             assign_stable_ids(dup)
         self.assertIn("t-same", str(ctx.exception))
@@ -1050,9 +1062,10 @@ class TestTunnelSecretRepin(unittest.TestCase):
             sp_path=str(Path(d.name) / "s.yaml"), keychain=KC())
         from mpconf.config import stable_tunnel_id
         real_id = stable_tunnel_id("u", "h", 22)
-        plan = store.prepare(mp={"tunnels": [
-            {"id": real_id, "name": "a", "ssh_user": "u",
-             "ssh_host": "h", "ssh_port": 22, "auth_type": "password"}]})
+        plan = store.prepare(mp={"servers": [
+            {"id": real_id, "name": "a",
+             "ssh": {"user": "u", "host": "h", "port": 22,
+                     "auth_type": "password"}}]})
         self.assertTrue(plan.ok)
         result = store.commit(plan)
         self.assertTrue(result.ok, result.errors)
@@ -1068,9 +1081,10 @@ class TestRound3Holes(unittest.TestCase):
         from mpconf.config import assign_stable_ids, stable_tunnel_id
         real_id = stable_tunnel_id("u", "h", 22)
         tunnels = [
-            {"id": real_id, "name": "a", "ssh_user": "u",
-             "ssh_host": "h", "ssh_port": 22},
-            {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
+            {"id": real_id, "name": "a",
+             "ssh": {"user": "u", "host": "h", "port": 22}},
+            {"name": "b",
+             "ssh": {"user": "u", "host": "h", "port": 22}},
         ]
         n = assign_stable_ids(tunnels)
         self.assertEqual(n, 1)  # 只有 B 被迁移
@@ -1081,10 +1095,9 @@ class TestRound3Holes(unittest.TestCase):
         from mpconf.config import assign_stable_ids
         # 两条同身份隧道：第一条得 ordinal=1 id；第二条 #2 后缀
         # 但若 #2 id 撞显式 id —— 分配后查重兜底
-        tunnels = [
-            {"name": "a", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
-            {"name": "b", "ssh_user": "u", "ssh_host": "h", "ssh_port": 22},
-        ]
+        _row = lambda n: {"name": n,
+                          "ssh": {"user": "u", "host": "h", "port": 22}}
+        tunnels = [_row("a"), _row("b")]
         n = assign_stable_ids(tunnels)
         self.assertEqual(n, 2)  # 正常路径不受影响
 
@@ -1094,7 +1107,7 @@ class TestRound3Holes(unittest.TestCase):
         store = ConfigStateStore(
             mp_path=str(Path(d.name) / "m.json"),
             sp_path=str(Path(d.name) / "s.yaml"))
-        plan = store.prepare(mp={"_load_error": "装载失败", "tunnels": []})
+        plan = store.prepare(mp={"_load_error": "装载失败", "servers": []})
         self.assertFalse(plan.ok)
         self.assertIn("已阻止保存", plan.errors[0])
 
@@ -1104,10 +1117,9 @@ class TestReloadAfterMigration(unittest.TestCase):
 
     def test_reloading_migrated_tunnels_with_ids_is_idempotent(self):
         from mpconf.config import assign_stable_ids
-        tunnels = [{"name": "a", "ssh_user": "u", "ssh_host": "h",
-                    "ssh_port": 22},
-                   {"name": "b", "ssh_user": "u", "ssh_host": "h",
-                    "ssh_port": 22}]
+        _row = lambda n: {"name": n,
+                          "ssh": {"user": "u", "host": "h", "port": 22}}
+        tunnels = [_row("a"), _row("b")]
         assign_stable_ids(tunnels)  # 首次迁移：双 id
         # 带 id 重载（真实磁盘路径）：幂等，不 raise
         n = assign_stable_ids(tunnels)
@@ -1122,30 +1134,35 @@ class TestDisabledForwardPortConflicts(unittest.TestCase):
 
     def test_disabled_row_frees_port_for_reuse(self):
         """停 A（enabled=False）配 B 同端口：放行——腾挪端口的常规操作。"""
-        plan = self._prepare({"tunnels": [
-            {"name": "a", "ssh_host": "h", "forwards": [
-                {"local_port": 9000, "remote_host": "127.0.0.1",
-                 "remote_port": 80, "enabled": False}]},
-            {"name": "b", "ssh_host": "h2", "forwards": [
-                {"local_port": 9000, "remote_host": "127.0.0.1",
-                 "remote_port": 81}]},
+        plan = self._prepare({"servers": [
+            {"name": "a", "ssh": {"host": "h"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_host": "127.0.0.1",
+                  "remote_port": 80, "enabled": False}]}}},
+            {"name": "b", "ssh": {"host": "h2"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_host": "127.0.0.1",
+                  "remote_port": 81}]}}},
         ]})
         self.assertTrue(plan.ok, plan.errors)
 
     def test_both_enabled_same_port_still_rejected(self):
-        plan = self._prepare({"tunnels": [
-            {"name": "a", "ssh_host": "h", "forwards": [
-                {"local_port": 9000, "remote_port": 80}]},
-            {"name": "b", "ssh_host": "h2", "forwards": [
-                {"local_port": 9000, "remote_port": 81}]},
+        plan = self._prepare({"servers": [
+            {"name": "a", "ssh": {"host": "h"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_port": 80}]}}},
+            {"name": "b", "ssh": {"host": "h2"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_port": 81}]}}},
         ]})
         self.assertFalse(plan.ok)
 
     def test_disabled_row_shape_still_validated(self):
         """行级形状校验不因停用放行（随时可重新启用）。"""
-        plan = self._prepare({"tunnels": [
-            {"name": "a", "ssh_host": "h", "forwards": [
-                {"local_port": "abc", "remote_port": 80,
-                 "enabled": False}]},
+        plan = self._prepare({"servers": [
+            {"name": "a", "ssh": {"host": "h"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": "abc", "remote_port": 80,
+                  "enabled": False}]}}},
         ]})
         self.assertFalse(plan.ok)

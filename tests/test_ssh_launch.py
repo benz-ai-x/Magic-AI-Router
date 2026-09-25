@@ -82,8 +82,8 @@ class TestHostKeyChanged(unittest.TestCase):
 class TestBuildTunnelCommand(unittest.TestCase):
     """长驻隧道 argv 策略：SSHMonitor.start 的完整策略面。"""
 
-    _KEY = {"ssh_host": "srv", "ssh_user": "u", "ssh_port": 22,
-            "auth_type": "key", "ssh_key": "~/.ssh/id_rsa"}
+    _KEY = {"ssh": {"host": "srv", "user": "u", "port": 22,
+                    "auth_type": "key", "ssh_key": "~/.ssh/id_rsa"}}
 
     def test_key_auth_full_argv(self):
         sc = ssh_launch.build_tunnel_command(self._KEY, 1080)
@@ -109,23 +109,26 @@ class TestBuildTunnelCommand(unittest.TestCase):
             sc.close_password_fd()
 
     def test_compression_off_omits_dash_c(self):
-        t = dict(self._KEY, ssh_compression=False)
+        t = {"ssh": {**self._KEY["ssh"], "compression": False}}
         sc = ssh_launch.build_tunnel_command(t, 1080)
         self.assertNotIn("-C", sc.cmd)
 
     def test_no_user_destination_is_bare_host(self):
-        t = {k: v for k, v in self._KEY.items() if k != "ssh_user"}
+        t = {"ssh": {k: v for k, v in self._KEY["ssh"].items()
+                     if k != "user"}}
         sc = ssh_launch.build_tunnel_command(t, 1080)
         self.assertEqual(sc.cmd[-1], "srv")
 
     def test_default_port_22(self):
-        t = {k: v for k, v in self._KEY.items() if k != "ssh_port"}
+        t = {"ssh": {k: v for k, v in self._KEY["ssh"].items()
+                     if k != "port"}}
         sc = ssh_launch.build_tunnel_command(t, 1080)
         self.assertEqual(sc.cmd[-2:], ["22", "u@srv"])
 
     def test_password_auth_uses_sshpass_fd(self):
         sc = ssh_launch.build_tunnel_command(
-            {"ssh_host": "srv", "ssh_user": "u", "auth_type": "password"},
+            {"ssh": {"host": "srv", "user": "u",
+                     "auth_type": "password"}},
             1080, "sekrit")
         try:
             self.assertEqual(sc.cmd[0], "sshpass")
@@ -141,7 +144,7 @@ class TestBuildTunnelCommand(unittest.TestCase):
 
     def test_close_password_fd_is_idempotent(self):
         sc = ssh_launch.build_tunnel_command(
-            {"ssh_host": "srv", "auth_type": "password"}, 1080, "sekrit")
+            {"ssh": {"host": "srv", "auth_type": "password"}}, 1080, "sekrit")
         fd = sc.password_fd
         sc.close_password_fd()
         with self.assertRaises(OSError):
@@ -156,10 +159,10 @@ class TestBuildTunnelCommand(unittest.TestCase):
 class TestProbe(unittest.TestCase):
     """一次性探针：与隧道同策略，连一次即退（remote command `true`）。"""
 
-    _KEY = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222,
-            "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"}
-    _PW = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 22,
-           "auth_type": "password"}
+    _KEY = {"ssh": {"host": "example.com", "user": "u", "port": 2222,
+                    "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"}}
+    _PW = {"ssh": {"host": "example.com", "user": "u", "port": 22,
+                   "auth_type": "password"}}
 
     @staticmethod
     def _proc(returncode=0, stderr=b""):
@@ -245,7 +248,7 @@ class TestProbe(unittest.TestCase):
 
     def test_null_ssh_key_coerced_to_empty_string(self):
         """显式 ssh_key: null 不得让 None 进入 argv（probe 绝不抛异常）。"""
-        t = dict(self._KEY, ssh_key=None)
+        t = {"ssh": {**self._KEY["ssh"], "ssh_key": None}}
         with patch.object(ssh_launch.subprocess, "run",
                           return_value=self._proc(0)) as run:
             result = ssh_launch.probe(t)
@@ -254,7 +257,7 @@ class TestProbe(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-i") + 1], "")
 
     def test_null_ssh_key_coerced_in_tunnel_command(self):
-        t = dict(self._KEY, ssh_key=None)
+        t = {"ssh": {**self._KEY["ssh"], "ssh_key": None}}
         sc = ssh_launch.build_tunnel_command(t, 1080)
         self.assertEqual(sc.cmd[sc.cmd.index("-i") + 1], "")
 
@@ -291,14 +294,14 @@ class TestProbe(unittest.TestCase):
 class TestBuildTunnelCommandForwards(unittest.TestCase):
     """本地端口转发（-L）argv 段：顺序紧跟 -D/ExitOnForwardFailure 组。"""
 
-    _KEY = {"ssh_host": "srv", "ssh_user": "u", "ssh_port": 22,
-            "auth_type": "key", "ssh_key": "~/.ssh/id_rsa"}
+    _KEY = {"ssh": {"host": "srv", "user": "u", "port": 22,
+                    "auth_type": "key", "ssh_key": "~/.ssh/id_rsa"}}
 
     def test_two_forwards_full_argv(self):
-        t = dict(self._KEY, forwards=[
+        t = {**self._KEY, "services": {"ssh": {"forwards": [
             {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000},
             {"local_port": 9001, "remote_host": "10.0.0.5", "remote_port": 5432},
-        ])
+        ]}}}
         sc = ssh_launch.build_tunnel_command(t, 1080)
         try:
             self.assertEqual(sc.cmd, [
@@ -324,12 +327,12 @@ class TestBuildTunnelCommandForwards(unittest.TestCase):
         """无 forwards 的隧道 argv 与历史完全一致（缺省字段零影响）。"""
         sc_plain = ssh_launch.build_tunnel_command(self._KEY, 1080)
         sc_empty = ssh_launch.build_tunnel_command(
-            dict(self._KEY, forwards=[]), 1080)
+            {**self._KEY, "services": {"ssh": {"forwards": []}}}, 1080)
         self.assertEqual(sc_plain.cmd, sc_empty.cmd)
 
     def test_remote_host_blank_defaults_to_loopback(self):
-        t = dict(self._KEY, forwards=[
-            {"local_port": 9000, "remote_host": "", "remote_port": 8000}])
+        t = {**self._KEY, "services": {"ssh": {"forwards": [
+            {"local_port": 9000, "remote_host": "", "remote_port": 8000}]}}}
         sc = ssh_launch.build_tunnel_command(t, 1080)
         self.assertIn("-L", sc.cmd)
         self.assertEqual(sc.cmd[sc.cmd.index("-L") + 1],
@@ -338,13 +341,13 @@ class TestBuildTunnelCommandForwards(unittest.TestCase):
     def test_invalid_rows_skipped_defensively(self):
         """越界/缺字段/非 dict 行防御性跳过——prepare+merge 双保险下不可达，
         但 argv 构建绝不能因坏行产出畸形 -L 参数。"""
-        t = dict(self._KEY, forwards=[
+        t = {**self._KEY, "services": {"ssh": {"forwards": [
             {"local_port": 70000, "remote_host": "h", "remote_port": 80},
             {"local_port": 9000, "remote_host": "h", "remote_port": 0},
             "not-a-dict",
             {"local_port": True, "remote_host": "h", "remote_port": 80},
             {"local_port": 9100, "remote_host": "db", "remote_port": 5432},
-        ])
+        ]}}}
         sc = ssh_launch.build_tunnel_command(t, 1080)
         fw = [sc.cmd[i + 1] for i, a in enumerate(sc.cmd) if a == "-L"]
         self.assertEqual(fw, ["127.0.0.1:9100:db:5432"])
@@ -353,8 +356,8 @@ class TestBuildTunnelCommandForwards(unittest.TestCase):
 class TestProbeForward(unittest.TestCase):
     """一次性端口转发探针（ssh -W）：测表单意图，不依赖隧道状态。"""
 
-    _KEY = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222,
-            "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"}
+    _KEY = {"ssh": {"host": "example.com", "user": "u", "port": 2222,
+                    "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"}}
 
     @staticmethod
     def _proc(returncode=0, stderr=b""):
@@ -435,8 +438,8 @@ class TestProbeForward(unittest.TestCase):
             self.assertNotIn("Traceback", result["error"])
 
     def test_password_auth_uses_sshpass_fd(self):
-        t = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 22,
-             "auth_type": "password"}
+        t = {"ssh": {"host": "example.com", "user": "u", "port": 22,
+                     "auth_type": "password"}}
         with patch.object(ssh_launch.subprocess, "run",
                           return_value=self._proc(0)) as run:
             result = ssh_launch.probe_forward(t, "127.0.0.1", 8000, "sekrit")
@@ -456,10 +459,11 @@ if __name__ == "__main__":
 class TestBuildTunnelCommandForwardMode(unittest.TestCase):
     """纯转发模式（socks5_port=None，多活的转发会话）：无 -D。"""
 
-    _T = {"ssh_host": "srv", "ssh_user": "u", "ssh_port": 22,
-          "auth_type": "key", "ssh_key": "~/.ssh/id_rsa",
-          "forwards": [{"local_port": 9000, "remote_host": "127.0.0.1",
-                        "remote_port": 8000}]}
+    _T = {"ssh": {"host": "srv", "user": "u", "port": 22,
+                  "auth_type": "key", "ssh_key": "~/.ssh/id_rsa"},
+          "services": {"ssh": {"forwards": [
+              {"local_port": 9000, "remote_host": "127.0.0.1",
+               "remote_port": 8000}]}}}
 
     def test_none_omits_dash_d(self):
         sc = ssh_launch.build_tunnel_command(self._T, None)
@@ -486,16 +490,16 @@ class TestForwardArgsEnabledFilter(unittest.TestCase):
 
     def test_disabled_row_skipped(self):
         from tunnel.ssh_launch import _forward_args
-        args = _forward_args({"forwards": [
+        args = _forward_args({"services": {"ssh": {"forwards": [
             {"local_port": 9000, "remote_host": "127.0.0.1",
              "remote_port": 80, "enabled": False},
             {"local_port": 9001, "remote_host": "127.0.0.1",
              "remote_port": 81},
-        ]})
+        ]}}})
         self.assertEqual(args, ["-L", "127.0.0.1:9001:127.0.0.1:81"])
 
     def test_absent_enabled_means_on(self):
         from tunnel.ssh_launch import _forward_args
-        args = _forward_args({"forwards": [
-            {"local_port": 9000, "remote_port": 80}]})
+        args = _forward_args({"services": {"ssh": {"forwards": [
+            {"local_port": 9000, "remote_port": 80}]}}})
         self.assertEqual(args, ["-L", "127.0.0.1:9000:127.0.0.1:80"])

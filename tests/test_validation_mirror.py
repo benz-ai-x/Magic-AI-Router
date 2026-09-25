@@ -27,9 +27,14 @@ ROOT = Path(__file__).resolve().parent.parent
 NODE = shutil.which("node")
 
 
-def _t(host="h", **extra):
-    row = {"ssh_host": host, "ssh_port": 22, "auth_type": "key"}
-    row.update(extra)
+def _t(host="h", forwards=None, nfs=None):
+    """v2 服务器行：连接参数在 ssh 节，转发/NFS 在 services。"""
+    row = {"ssh": {"host": host, "port": 22, "auth_type": "key"},
+           "services": {}}
+    if forwards is not None:
+        row["services"]["ssh"] = {"forwards": forwards}
+    if nfs is not None:
+        row["services"]["nfs"] = nfs
     return row
 
 
@@ -49,77 +54,77 @@ def _fw(lp, rp=80, host="127.0.0.1", enabled=True):
 CORPUS = [
     # ── mirrored：同错同净 ──────────────────────────────
     ("clean_minimal",
-     {"tunnels": [_t()]}, _sp(), "mirrored"),
+     {"servers": [_t()]}, _sp(), "mirrored"),
     ("socks5_port_range",
-     {"socks5_port": 70000, "tunnels": [_t()]}, _sp(), "mirrored"),
+     {"socks5_port": 70000, "servers": [_t()]}, _sp(), "mirrored"),
     ("listen_port_range",
-     {"tunnels": [_t()]}, _sp(listen_port=0), "mirrored"),
+     {"servers": [_t()]}, _sp(listen_port=0), "mirrored"),
     ("zero_port_capture",
-     {"capture_port": 0, "tunnels": [_t()]}, _sp(), "mirrored"),
+     {"capture_port": 0, "servers": [_t()]}, _sp(), "mirrored"),
     ("forward_port_range",
-     {"tunnels": [_t(forwards=[_fw(0)])]}, _sp(), "mirrored"),
+     {"servers": [_t(forwards=[_fw(0)])]}, _sp(), "mirrored"),
     ("forward_remote_host_ipv6",
-     {"tunnels": [_t(forwards=[_fw(9000, host="a::b")])]}, _sp(), "mirrored"),
-    ("forward_dup_in_tunnel",
-     {"tunnels": [_t(forwards=[_fw(9000), _fw(9000, rp=81)])]}, _sp(),
+     {"servers": [_t(forwards=[_fw(9000, host="a::b")])]}, _sp(), "mirrored"),
+    ("forward_dup_in_server",
+     {"servers": [_t(forwards=[_fw(9000), _fw(9000, rp=81)])]}, _sp(),
      "mirrored"),
     ("port_conflict_global",
-     {"socks5_port": 8080, "capture_port": 8080, "tunnels": [_t()]}, _sp(),
+     {"socks5_port": 8080, "capture_port": 8080, "servers": [_t()]}, _sp(),
      "mirrored"),
     ("port_conflict_forward_vs_global",
      {"capture_port": 9000,
-      "tunnels": [_t(forwards=[_fw(9000)])]}, _sp(), "mirrored"),
+      "servers": [_t(forwards=[_fw(9000)])]}, _sp(), "mirrored"),
     ("port_conflict_nfs_vs_forward",
-     {"tunnels": [
+     {"servers": [
          _t(forwards=[_fw(9000)]),
          _t(host="h2", nfs={"enabled": True, "local_port": 9000,
                             "mounts": [{"name": "d", "remote_path": "/d"}]}),
      ]}, _sp(), "mirrored"),
     ("nfs_port_range",
-     {"tunnels": [_t(nfs={"enabled": True, "local_port": 70000,
+     {"servers": [_t(nfs={"enabled": True, "local_port": 70000,
                           "mounts": [{"name": "d", "remote_path": "/d"}]})]},
      _sp(), "mirrored"),
     ("nfs_default_node_exempt",
-     {"tunnels": [
+     {"servers": [
          _t(nfs={"enabled": False, "local_port": 12049, "mounts": []}),
          _t(host="h2", nfs={"enabled": False, "local_port": 12049,
                             "mounts": []}),
      ]}, _sp(), "mirrored"),
     ("disabled_forward_exempt",
-     {"tunnels": [_t(forwards=[_fw(9000, enabled=False), _fw(9000)])]},
+     {"servers": [_t(forwards=[_fw(9000, enabled=False), _fw(9000)])]},
      _sp(), "mirrored"),
     ("dangling_route_ref",
-     {"tunnels": [_t()]},
+     {"servers": [_t()]},
      _sp(rules=[{"match_prefix": "m", "route_to": "ghost/model-x"}]),
      "mirrored"),
     ("dangling_default_ref",
-     {"tunnels": [_t()]},
+     {"servers": [_t()]},
      _sp(router={"default": "ghost/model-x"}),
      "mirrored"),
     # ── py_only：Python 有、JS 无——显式登记（第一道闸放行 → 422 现形）──
     ("mount_dir_conflict",
-     {"tunnels": [
+     {"servers": [
          _t(nfs={"enabled": True, "local_port": 12049, "mounts": [
              {"name": "a", "remote_path": "/a", "local_dir": "/Volumes/x"}]}),
          _t(host="h2", nfs={"enabled": True, "local_port": 12050, "mounts": [
              {"name": "b", "remote_path": "/b", "local_dir": "/Volumes/x"}]}),
      ]}, _sp(), "py_only"),
     ("nfs_mount_row_shape",
-     {"tunnels": [_t(nfs={"enabled": True, "local_port": 12049,
+     {"servers": [_t(nfs={"enabled": True, "local_port": 12049,
                           "mounts": [{"name": "  ", "remote_path": "/d"}]})]},
      _sp(), "py_only"),
     ("retention_days_range",
-     {"retention_days": 99999, "tunnels": [_t()]}, _sp(), "py_only"),
+     {"retention_days": 99999, "servers": [_t()]}, _sp(), "py_only"),
     ("request_timeout_range",
-     {"tunnels": [_t()]}, _sp(request_timeout_s=0), "py_only"),
+     {"servers": [_t()]}, _sp(request_timeout_s=0), "py_only"),
     ("body_limit_range",
-     {"tunnels": [_t()]}, _sp(body_limit_mb=99999), "py_only"),
+     {"servers": [_t()]}, _sp(body_limit_mb=99999), "py_only"),
     ("provider_base_url_origin",
-     {"tunnels": [_t()]},
+     {"servers": [_t()]},
      _sp(providers={"p": {"base_url": "notaurl"}}), "py_only"),
     # ── js_only：JS 有、Python 无——显式登记 ──
     ("provider_blank_name",
-     {"tunnels": [_t()]},
+     {"servers": [_t()]},
      _sp(providers={" ": {"base_url": "https://api.example.com"}}),
      "js_only"),
 ]
@@ -129,7 +134,7 @@ def _py_errors(mp, sp):
     """Python 第一道闸等价物：分域校验器直调（prepare 的校验半边）。"""
     errors = []
     errors += mp_validate.numeric_errors(mp)
-    errors += mp_validate.tunnel_rows_errors(mp)
+    errors += mp_validate.server_rows_errors(mp)
     errors += mp_validate.port_conflict_errors(mp, sp)
     errors += mp_validate.mount_dir_conflict_errors(mp)
     errors += sp_errors(sp)

@@ -10,7 +10,8 @@ from shared import keychain
 
 
 def _tun(**kw):
-    return {"ssh_user": "u", "ssh_host": "h", "ssh_port": 22, **kw}
+    """v2 服务器形状：id 在顶层，连接参数在 ssh 节。"""
+    return {"ssh": {"user": "u", "host": "h", "port": 22}, **kw}
 
 
 class TestIdAddressing(unittest.TestCase):

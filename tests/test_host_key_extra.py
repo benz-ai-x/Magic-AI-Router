@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 from tunnel import host_key
-_TUNNEL = {"ssh_host": "srv", "ssh_port": 22, "ssh_user": "u"}
+_TUNNEL = {"ssh": {"host": "srv", "port": 22, "user": "u"}}
 
 
 class TestInspect(unittest.TestCase):
@@ -43,7 +43,7 @@ class TestInspect(unittest.TestCase):
         self.assertIn("SHA256", fps)
 
     def test_no_host_returns_error(self):
-        known, keys, fps, err = host_key.inspect({"ssh_host": ""})
+        known, keys, fps, err = host_key.inspect({"ssh": {"host": ""}})
         self.assertFalse(known)
         self.assertIn("主机", err)
 
@@ -55,7 +55,7 @@ class TestAccept(unittest.TestCase):
 
 class TestReplace(unittest.TestCase):
     def test_no_host_returns_false(self):
-        result = host_key.replace({"ssh_host": ""}, "keys")
+        result = host_key.replace({"ssh": {"host": ""}}, "keys")
         self.assertFalse(result)
 
 

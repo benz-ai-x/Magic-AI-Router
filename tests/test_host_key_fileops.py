@@ -47,7 +47,7 @@ class TestHostKeyReplaceWithFiles(unittest.TestCase):
             with patch("tunnel.host_key.APP_SECURITY_DIR", sec_dir), \
                  patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh_path):
                 result = host_key.replace(
-                    {"ssh_host": "srv", "ssh_port": 22},
+                    {"ssh": {"host": "srv", "port": 22}},
                     "[srv]:22 ssh-rsa NEWKEY\n")
             self.assertTrue(result)
             with open(kh_path) as f:
@@ -63,7 +63,7 @@ class TestHostKeyReplaceWithFiles(unittest.TestCase):
             with patch("tunnel.host_key.APP_SECURITY_DIR", sec_dir), \
                  patch("tunnel.host_key.KNOWN_HOSTS_PATH", kh_path):
                 result = host_key.replace(
-                    {"ssh_host": "newhost", "ssh_port": 22},
+                    {"ssh": {"host": "newhost", "port": 22}},
                     "[newhost]:22 ssh-rsa NEWKEY\n")
             self.assertTrue(result)
             with open(kh_path) as f:
@@ -101,7 +101,7 @@ class TestHostKeyInspectDetailed(unittest.TestCase):
         mock_run.return_value = type("R", (), {
             "returncode": 0, "stdout": "[srv]:22 ssh-rsa AAAA\n", "stderr": ""
         })()
-        known, keys, fps, err = host_key.inspect({"ssh_host": "srv", "ssh_port": 22})
+        known, keys, fps, err = host_key.inspect({"ssh": {"host": "srv", "port": 22}})
         self.assertTrue(known)
 
     @patch("tunnel.host_key.subprocess.run")
@@ -110,7 +110,7 @@ class TestHostKeyInspectDetailed(unittest.TestCase):
             type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})(),  # not found
             OSError("ssh-keyscan not found"),
         ]
-        known, keys, fps, err = host_key.inspect({"ssh_host": "srv", "ssh_port": 22})
+        known, keys, fps, err = host_key.inspect({"ssh": {"host": "srv", "port": 22}})
         self.assertFalse(known)
         self.assertIn("扫描", err)
 
@@ -121,7 +121,7 @@ class TestHostKeyInspectDetailed(unittest.TestCase):
             type("R", (), {"returncode": 0, "stdout": "srv ssh-rsa AAAA\n", "stderr": ""})(),  # keyscan
             type("R", (), {"returncode": 1, "stdout": "", "stderr": "fingerprint error"})(),  # fp fail
         ]
-        known, keys, fps, err = host_key.inspect({"ssh_host": "srv", "ssh_port": 22})
+        known, keys, fps, err = host_key.inspect({"ssh": {"host": "srv", "port": 22}})
         self.assertFalse(known)
         self.assertIn("fingerprint", err.lower())
 
@@ -144,7 +144,7 @@ class TestReplaceNewlineGuard(unittest.TestCase):
             with patch.object(host_key, "KNOWN_HOSTS_PATH", kh), \
                  patch.object(host_key, "APP_SECURITY_DIR", d):
                 ok = host_key.replace(
-                    {"ssh_host": "newhost", "ssh_port": 22},
+                    {"ssh": {"host": "newhost", "port": 22}},
                     "newhost ssh-ed25519 AAAA_NEW")
             self.assertTrue(ok)
             lines = open(kh).read().splitlines()

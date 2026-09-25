@@ -306,11 +306,11 @@ class TestPutState(unittest.TestCase):
     def test_put_goes_through_config_state_store(self):
         """issue #6：PUT 经 ConfigStateStore 事务边界（prepare→commit）。"""
         from mpconf.config_state import CommitPlan, SaveResult
-        plan = CommitPlan(True, [], {"tunnels": []}, {"providers": {}})
+        plan = CommitPlan(True, [], {"servers": []}, {"providers": {}})
         with patch("services.config_server.ConfigStateStore") as store_cls:
             store_cls.return_value.prepare.return_value = plan
             store_cls.return_value.commit.return_value = SaveResult(True, None, [])
-            body = json.dumps({"mp": {"tunnels": []}, "sp": {"providers": {}}})
+            body = json.dumps({"mp": {"servers": []}, "sp": {"providers": {}}})
             status, data = _request(self.port, "PUT",
                                     "/api/state", token=self.token,
                                     body=body)
@@ -536,7 +536,7 @@ class TestCaptureStateField(unittest.TestCase):
             store = config_server.ConfigStateStore(
                 mp_path=str(Path(d) / "m.json"),
                 sp_path=str(Path(d) / "s.yaml"))
-            plan = store.prepare(mp={"tunnels": [], "capture_active": True})
+            plan = store.prepare(mp={"servers": [], "capture_active": True})
             self.assertTrue(plan.ok)
             self.assertNotIn("capture_active", plan.mp_candidate)
 
@@ -569,29 +569,30 @@ class TestTestTunnelEndpoint(unittest.TestCase):
                     ("ok" in body and not body["ok"]) or "error" in body,
                     body)
 
-    def test_no_tunnels_returns_400(self):
-        with patch.object(config_server, "_read_mp", return_value={"tunnels": []}):
+    def test_no_servers_returns_400(self):
+        with patch.object(config_server, "_read_mp", return_value={"servers": []}):
             status, data = self._post('{"index": 0}')
         self.assertEqual(status, 400)
         self.assertFalse(json.loads(data)["ok"])
 
     def test_index_out_of_range_returns_400(self):
-        cfg = {"tunnels": [{"ssh_host": "h"}]}
+        cfg = {"servers": [{"ssh": {"host": "h"}}]}
         with patch.object(config_server, "_read_mp", return_value=cfg):
             status, data = self._post('{"index": 5}')
         self.assertEqual(status, 400)
         self.assertFalse(json.loads(data)["ok"])
 
     def test_negative_index_returns_400(self):
-        cfg = {"tunnels": [{"ssh_host": "h"}]}
+        cfg = {"servers": [{"ssh": {"host": "h"}}]}
         with patch.object(config_server, "_read_mp", return_value=cfg):
             status, _ = self._post('{"index": -1}')
         self.assertEqual(status, 400)
 
     def test_valid_index_delegates_to_test_tunnel(self):
-        tunnel = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222}
+        tunnel = {"ssh": {"host": "example.com", "user": "u",
+                          "port": 2222}}
         with patch.object(config_server, "_read_mp",
-                          return_value={"tunnels": [tunnel]}), \
+                          return_value={"servers": [tunnel]}), \
              patch.object(config_server, "test_tunnel",
                           return_value={"ok": True}) as probe:
             status, data = self._post('{"index": 0}')
@@ -605,29 +606,33 @@ class TestTunnelProbeLogic(unittest.TestCase):
     委托 ssh_launch.probe（探针 argv / 失败分类的测试在 test_ssh_launch.py）。"""
 
     _KEY_TUNNEL = {
-        "ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222,
-        "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519",
+        "ssh": {"host": "example.com", "user": "u", "port": 2222,
+                "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"},
     }
     _PW_TUNNEL = {
-        "ssh_host": "example.com", "ssh_user": "u", "ssh_port": 22,
-        "auth_type": "password",
+        "ssh": {"host": "example.com", "user": "u", "port": 22,
+                "auth_type": "password"},
     }
 
     def test_missing_host_is_rejected_without_probe(self):
         with patch.object(config_server.ssh_launch, "probe") as probe:
-            result = config_server.test_tunnel({"ssh_host": "  ", "ssh_port": 22})
+            result = config_server.test_tunnel(
+                {"ssh": {"host": "  ", "port": 22}})
         probe.assert_not_called()
         self.assertFalse(result["ok"])
         self.assertIn("地址", result["error"])
 
     def test_invalid_port_is_rejected(self):
-        result = config_server.test_tunnel({"ssh_host": "h", "ssh_port": 99999})
+        result = config_server.test_tunnel(
+            {"ssh": {"host": "h", "port": 99999}})
         self.assertFalse(result["ok"])
-        result = config_server.test_tunnel({"ssh_host": "h", "ssh_port": "x"})
+        result = config_server.test_tunnel(
+            {"ssh": {"host": "h", "port": "x"}})
         self.assertFalse(result["ok"])
 
     def test_option_like_destination_is_rejected(self):
-        result = config_server.test_tunnel({"ssh_host": "-oProxyCommand=evil"})
+        result = config_server.test_tunnel(
+            {"ssh": {"host": "-oProxyCommand=evil"}})
         self.assertFalse(result["ok"])
         self.assertIn("无效", result["error"])
 
@@ -658,16 +663,16 @@ class TestTunnelProbeLogic(unittest.TestCase):
 
     def test_probe_receives_normalized_tunnel_fields(self):
         """手改配置的空白/非规范端口经校验归一后才进探针。"""
-        raw = {"ssh_host": "  example.com ", "ssh_user": " u ",
-               "ssh_port": "2222", "auth_type": "key", "ssh_key": "k"}
+        raw = {"ssh": {"host": "  example.com ", "user": " u ",
+                       "port": "2222", "auth_type": "key", "ssh_key": "k"}}
         with patch.object(config_server.ssh_launch, "probe",
                           return_value={"ok": True}) as probe:
             result = config_server.test_tunnel(raw)
         self.assertEqual(result, {"ok": True})
-        target = probe.call_args[0][0]
-        self.assertEqual(target["ssh_host"], "example.com")
-        self.assertEqual(target["ssh_user"], "u")
-        self.assertEqual(target["ssh_port"], 2222)
+        target = probe.call_args[0][0]["ssh"]
+        self.assertEqual(target["host"], "example.com")
+        self.assertEqual(target["user"], "u")
+        self.assertEqual(target["port"], 2222)
 
 
 class TestTestForwardEndpoint(unittest.TestCase):
@@ -705,24 +710,24 @@ class TestTestForwardEndpoint(unittest.TestCase):
                     ("ok" in body and not body["ok"]) or "error" in body,
                     body)
 
-    def test_no_tunnels_returns_400(self):
+    def test_no_servers_returns_400(self):
         with patch.object(config_server, "_read_mp",
-                          return_value={"tunnels": []}):
+                          return_value={"servers": []}):
             status, data = self._post('{"index": 0, "forward": {}}')
         self.assertEqual(status, 400)
         self.assertFalse(json.loads(data)["ok"])
 
     def test_index_out_of_range_returns_400(self):
-        cfg = {"tunnels": [{"ssh_host": "h"}]}
+        cfg = {"servers": [{"ssh": {"host": "h"}}]}
         with patch.object(config_server, "_read_mp", return_value=cfg):
             status, _ = self._post('{"index": 5, "forward": {}}')
         self.assertEqual(status, 400)
 
     def test_form_tunnel_body_delegates_without_index(self):
         """设置窗新载荷 {tunnel, forward}：隧道与转发都取表单当前值——
-        未保存的新隧道同样可测，不落 _read_mp（无 index 可解析）。"""
-        tunnel = {"ssh_host": "new.example.com", "ssh_user": "u",
-                  "ssh_port": 2222, "auth_type": "key"}
+        未保存的新服务器同样可测，不落 _read_mp（无 index 可解析）。"""
+        tunnel = {"ssh": {"host": "new.example.com", "user": "u",
+                          "port": 2222, "auth_type": "key"}}
         forward = {"local_port": 9000, "remote_host": "10.0.0.5",
                    "remote_port": 8000}
         with patch.object(config_server, "_read_mp") as rm, \
@@ -736,12 +741,12 @@ class TestTestForwardEndpoint(unittest.TestCase):
         tf.assert_called_once_with(tunnel, forward)
 
     def test_legacy_index_body_still_resolves_saved_tunnel(self):
-        """旧载荷 {index, forward} 兼容：按已保存隧道解析（agent.md 契约）。"""
-        tunnel = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 22}
+        """旧载荷 {index, forward} 兼容：按已保存服务器解析（agent.md 契约）。"""
+        tunnel = {"ssh": {"host": "example.com", "user": "u", "port": 22}}
         forward = {"local_port": 9000, "remote_host": "10.0.0.5",
                    "remote_port": 8000}
         with patch.object(config_server, "_read_mp",
-                          return_value={"tunnels": [tunnel]}), \
+                          return_value={"servers": [tunnel]}), \
              patch.object(config_server, "test_forward",
                           return_value={"ok": True, "latency_ms": 42}) as tf:
             status, data = self._post(json.dumps({"index": 0,
@@ -755,23 +760,23 @@ class TestForwardProbeLogic(unittest.TestCase):
     委托 ssh_launch.probe_forward（-W argv / 分类的测试在 test_ssh_launch.py）。"""
 
     _KEY_TUNNEL = {
-        "ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222,
-        "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519",
+        "ssh": {"host": "example.com", "user": "u", "port": 2222,
+                "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"},
     }
-    _PW_TUNNEL = {"ssh_host": "example.com", "ssh_user": "u",
-                  "ssh_port": 22, "auth_type": "password"}
+    _PW_TUNNEL = {"ssh": {"host": "example.com", "user": "u",
+                          "port": 22, "auth_type": "password"}}
 
     def test_invalid_tunnel_guarded_without_probe(self):
         with patch.object(config_server.ssh_launch, "probe_forward") as pf:
             result = config_server.test_forward(
-                {"ssh_host": "  ", "ssh_port": 22}, {"remote_port": 8000})
+                {"ssh": {"host": "  ", "port": 22}}, {"remote_port": 8000})
         pf.assert_not_called()
         self.assertFalse(result["ok"])
         self.assertIn("地址", result["error"])
 
     def test_option_like_destination_is_rejected(self):
         result = config_server.test_forward(
-            {"ssh_host": "-oProxyCommand=evil"}, {"remote_port": 8000})
+            {"ssh": {"host": "-oProxyCommand=evil"}}, {"remote_port": 8000})
         self.assertFalse(result["ok"])
         self.assertIn("无效", result["error"])
 
@@ -798,7 +803,7 @@ class TestForwardProbeLogic(unittest.TestCase):
         args, kwargs = pf.call_args
         self.assertEqual(kwargs.get("password"), "sekrit")
         # 隧道侧归一后传入；forward 的三个表单值原样透传（归一在 probe_forward）
-        self.assertEqual(args[0]["ssh_host"], "example.com")
+        self.assertEqual(args[0]["ssh"]["host"], "example.com")
         self.assertEqual(args[1], "10.0.0.5")
         self.assertEqual(args[2], 8000)
 
@@ -984,28 +989,31 @@ class TestMultiActiveDecorations(unittest.TestCase):
         return json.loads(body)["mp"]
 
     def test_is_proxy_and_forward_running_injected(self):
-        cfg = {"tunnels": [
-            {"id": "t-1", "ssh_host": "a", "forwards": []},
-            {"id": "t-2", "ssh_host": "b", "forwards": []}],
-            "current_tunnel": 0}
+        cfg = {"servers": [
+            {"id": "t-1", "ssh": {"host": "a"},
+             "services": {"ssh": {"forwards": []}}},
+            {"id": "t-2", "ssh": {"host": "b"},
+             "services": {"ssh": {"forwards": []}}}],
+            "proxy_server_id": "t-1"}
         with patch.object(config_server, "_read_mp", return_value=cfg):
             from tunnel.connection_coordinator import ForwardState
             from shared.runtime_state import RuntimeProjection
             mp = self._state(
                 lambda: RuntimeProjection(
                     forwards=(ForwardState("t-2", "b", "connected"),)))
-        self.assertTrue(mp["tunnels"][0]["is_proxy"])
-        self.assertFalse(mp["tunnels"][0]["forward_running"])
-        self.assertFalse(mp["tunnels"][1]["is_proxy"])
-        self.assertTrue(mp["tunnels"][1]["forward_running"])
+        self.assertTrue(mp["servers"][0]["is_proxy"])
+        self.assertFalse(mp["servers"][0]["forward_running"])
+        self.assertFalse(mp["servers"][1]["is_proxy"])
+        self.assertTrue(mp["servers"][1]["forward_running"])
 
     def test_states_fn_absent_decorates_all_false(self):
-        cfg = {"tunnels": [{"id": "t-1", "ssh_host": "a", "forwards": []}],
-               "current_tunnel": 0}
+        cfg = {"servers": [{"id": "t-1", "ssh": {"host": "a"},
+                            "services": {"ssh": {"forwards": []}}}],
+               "proxy_server_id": "t-1"}
         with patch.object(config_server, "_read_mp", return_value=cfg):
             mp = self._state(None)
-        self.assertTrue(mp["tunnels"][0]["is_proxy"])
-        self.assertFalse(mp["tunnels"][0]["forward_running"])
+        self.assertTrue(mp["servers"][0]["is_proxy"])
+        self.assertFalse(mp["servers"][0]["forward_running"])
 
     def test_decorations_never_round_trip_into_plan(self):
         """READONLY_DECORATED_FIELDS 扩名单——is_proxy/forward_running 永不落盘。"""
@@ -1015,11 +1023,12 @@ class TestMultiActiveDecorations(unittest.TestCase):
             store = config_server.ConfigStateStore(
                 mp_path=str(Path(d) / "m.json"),
                 sp_path=str(Path(d) / "s.yaml"))
-            plan = store.prepare(mp={"tunnels": [
-                {"id": "t-1", "ssh_host": "a", "forwards": [],
+            plan = store.prepare(mp={"servers": [
+                {"id": "t-1", "ssh": {"host": "a"},
+                 "services": {"ssh": {"forwards": []}},
                  "is_proxy": True, "forward_running": True}]})
             self.assertTrue(plan.ok)
-            t = plan.mp_candidate["tunnels"][0]
+            t = plan.mp_candidate["servers"][0]
             self.assertNotIn("is_proxy", t)
             self.assertNotIn("forward_running", t)
 
@@ -1057,7 +1066,7 @@ class TestPutSectionCallbacks(unittest.TestCase):
                             token=self.token, body=json.dumps(body_obj))
 
     def test_mp_only_put_fires_on_mp_saved_only(self):
-        status, _ = self._put({"mp": {"tunnels": []}})
+        status, _ = self._put({"mp": {"servers": []}})
         self.assertEqual(status, 200)
         self.mp_saved.assert_called_once()
         self.sp_saved.assert_not_called()
@@ -1069,13 +1078,13 @@ class TestPutSectionCallbacks(unittest.TestCase):
         self.mp_saved.assert_not_called()
 
     def test_both_sections_fire_both_callbacks(self):
-        status, _ = self._put({"mp": {"tunnels": []}, "sp": {"providers": {}}})
+        status, _ = self._put({"mp": {"servers": []}, "sp": {"providers": {}}})
         self.assertEqual(status, 200)
         self.mp_saved.assert_called_once()
         self.sp_saved.assert_called_once()
 
     def test_failed_commit_fires_nothing(self):
-        status, _ = self._put({"mp": {"tunnels": []}}, commit_ok=False)
+        status, _ = self._put({"mp": {"servers": []}}, commit_ok=False)
         self.assertEqual(status, 422)
         self.mp_saved.assert_not_called()
         self.sp_saved.assert_not_called()
@@ -1084,11 +1093,13 @@ class TestPutSectionCallbacks(unittest.TestCase):
 class TestProxyRoleDecorationById(unittest.TestCase):
     """is_proxy 装饰按角色 id 真相解析（v0.9.2）：下标漂移不再误导 UI。"""
 
-    def test_is_proxy_resolves_by_id_over_index(self):
-        cfg = {"tunnels": [
-            {"id": "t-1", "ssh_host": "a", "forwards": []},
-            {"id": "t-2", "ssh_host": "b", "forwards": []}],
-            "current_tunnel": 0, "current_tunnel_id": "t-2"}
+    def test_is_proxy_resolves_by_id(self):
+        cfg = {"servers": [
+            {"id": "t-1", "ssh": {"host": "a"},
+             "services": {"ssh": {"forwards": []}}},
+            {"id": "t-2", "ssh": {"host": "b"},
+             "services": {"ssh": {"forwards": []}}}],
+            "proxy_server_id": "t-2"}
         server = config_server.ConfigServer()
         server._server = config_server._ThreadingHTTPServer(
             ("127.0.0.1", 0), config_server._Handler,
@@ -1100,8 +1111,8 @@ class TestProxyRoleDecorationById(unittest.TestCase):
         with patch.object(config_server, "_read_mp", return_value=cfg):
             status, body = _request(port, "GET", "/api/state", token=server._token)
         mp = json.loads(body)["mp"]
-        self.assertFalse(mp["tunnels"][0]["is_proxy"])
-        self.assertTrue(mp["tunnels"][1]["is_proxy"])
+        self.assertFalse(mp["servers"][0]["is_proxy"])
+        self.assertTrue(mp["servers"][1]["is_proxy"])
 
 
 class TestNfsDecorationShape(unittest.TestCase):
@@ -1114,8 +1125,9 @@ class TestNfsDecorationShape(unittest.TestCase):
         from tunnel.connection_coordinator import ForwardState  # noqa: F401
         from mount.coordinator import MountState
         from shared.runtime_state import RuntimeProjection
-        cfg = {"tunnels": [{"id": "t-1", "ssh_host": "a", "forwards": []}],
-               "current_tunnel": 0}
+        cfg = {"servers": [{"id": "t-1", "ssh": {"host": "a"},
+                            "services": {"ssh": {"forwards": []}}}],
+               "proxy_server_id": "t-1"}
         proj = RuntimeProjection(mounts=(MountState(
             "t-1", "srv", "data", "error", "远程路径不存在或未导出", "exports"),))
         s = config_server.ConfigServer(runtime_state_fn=lambda: proj)
@@ -1127,8 +1139,8 @@ class TestNfsDecorationShape(unittest.TestCase):
         self.addCleanup(s.stop)
         with patch.object(config_server, "_read_mp", return_value=cfg):
             status, body = _request(port, "GET", "/api/state", token=s._token)
-        tunnels = json.loads(body)["mp"]["tunnels"]
-        self.assertEqual(tunnels[0]["nfs_states"]["data"], {
+        servers = json.loads(body)["mp"]["servers"]
+        self.assertEqual(servers[0]["nfs_states"]["data"], {
             "status": "error", "error": "远程路径不存在或未导出",
             "fixable": "exports"})
 

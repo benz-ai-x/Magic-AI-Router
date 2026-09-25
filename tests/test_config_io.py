@@ -15,7 +15,8 @@ class TestSaveConfig(unittest.TestCase):
     def test_save_and_read_back(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "test.json")
-            cfg = {"tunnels": [{"ssh_host": "srv", "ssh_port": 22}], "socks5_port": 1080}
+            cfg = {"servers": [{"ssh": {"host": "srv", "port": 22}}],
+                   "socks5_port": 1080}
             self.assertTrue(config.save_config(cfg, path))
             with open(path) as f:
                 saved = json.load(f)
@@ -30,18 +31,43 @@ class TestMigrate(unittest.TestCase):
     def test_single_tunnel_format_migrated(self):
         old = {"ssh_host": "srv", "ssh_user": "u", "ssh_port": 22, "auth_type": "key"}
         result = config._migrate(old)
-        self.assertIn("tunnels", result)
-        self.assertEqual(len(result["tunnels"]), 1)
-        self.assertEqual(result["tunnels"][0]["ssh_host"], "srv")
+        self.assertIn("servers", result)
+        self.assertEqual(len(result["servers"]), 1)
+        self.assertEqual(result["servers"][0]["ssh"]["host"], "srv")
+        self.assertEqual(result["schema_version"], config.SCHEMA_VERSION)
 
     def test_invalid_tunnels_raises(self):
         with self.assertRaises(ValueError):
             config._migrate({"tunnels": "not a list"})
 
-    def test_already_migrated_passes_through(self):
-        cfg = {"tunnels": [{"ssh_host": "s"}], "socks5_port": 1080}
+    def test_v1_tunnels_migrated_to_servers(self):
+        cfg = {"tunnels": [
+            {"id": "t-x", "ssh_host": "s", "forwards": [
+                {"local_port": 9000, "remote_port": 80}]}],
+            "current_tunnel_id": "t-x", "current_tunnel": 0}
         result = config._migrate(cfg)
-        self.assertEqual(len(result["tunnels"]), 1)
+        srv = result["servers"][0]
+        self.assertEqual(srv["ssh"]["host"], "s")
+        self.assertEqual(srv["services"]["ssh"]["forwards"][0]["local_port"],
+                         9000)
+        self.assertEqual(result["proxy_server_id"], "t-x")
+        self.assertNotIn("tunnels", result)
+        self.assertNotIn("current_tunnel", result)
+        self.assertNotIn("current_tunnel_id", result)
+
+    def test_v1_role_collapse_falls_back_to_first_id(self):
+        # current_tunnel_id 悬空 → 旧下标（这里指向首条）→ 首条兜底，
+        # 解析序与 v1 相同；id 空时塌缩为空串（load 期 assign 再补）
+        cfg = {"tunnels": [{"id": "t-a"}, {"id": "t-b"}],
+               "current_tunnel_id": "gone", "current_tunnel": 5}
+        result = config._migrate(cfg)
+        self.assertEqual(result["proxy_server_id"], "t-a")
+
+    def test_already_migrated_passes_through(self):
+        cfg = {"servers": [{"ssh": {"host": "s"}}], "socks5_port": 1080,
+               "schema_version": 2}
+        result = config._migrate(cfg)
+        self.assertEqual(len(result["servers"]), 1)
         self.assertEqual(result["socks5_port"], 1080)
 
 
@@ -49,20 +75,25 @@ class TestMergeConfigEdgeCases(unittest.TestCase):
     def test_none_input_uses_defaults(self):
         merged = config.merge_config(None)
         self.assertEqual(merged["socks5_port"], 1080)
-        self.assertEqual(merged["tunnels"], [])
+        self.assertEqual(merged["servers"], [])
 
-    def test_non_dict_tunnel_entry_skipped(self):
-        merged = config.merge_config({"tunnels": ["not a dict", {"ssh_host": "ok"}]})
-        self.assertEqual(len(merged["tunnels"]), 1)
-        self.assertEqual(merged["tunnels"][0]["ssh_host"], "ok")
+    def test_non_dict_server_entry_normalized_not_dropped(self):
+        # v2 归一语义：非 dict 行折叠为空白默认服务器（保位不丢行），
+        # 不再像 v1 那样静默剔除——手编配置的坏行在 UI 里可见可修
+        merged = config.merge_config({"servers": ["not a dict",
+                                                  {"ssh": {"host": "ok"}}]})
+        self.assertEqual(len(merged["servers"]), 2)
+        self.assertEqual(merged["servers"][0]["ssh"]["host"], "")
+        self.assertEqual(merged["servers"][1]["ssh"]["host"], "ok")
 
-    def test_non_list_tunnels_handled(self):
-        merged = config.merge_config({"tunnels": "bad"})
-        self.assertEqual(merged["tunnels"], [])
+    def test_non_list_servers_handled(self):
+        merged = config.merge_config({"servers": "bad"})
+        self.assertEqual(merged["servers"], [])
 
     def test_invalid_ssh_port_string_falls_back(self):
-        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "ssh_port": "abc"}]})
-        self.assertEqual(merged["tunnels"][0]["ssh_port"], 22)
+        merged = config.merge_config(
+            {"servers": [{"ssh": {"host": "s", "port": "abc"}}]})
+        self.assertEqual(merged["servers"][0]["ssh"]["port"], 22)
 
     def test_empty_capture_dir_falls_back_to_default(self):
         from capture.capture_store import DEFAULT_CAPTURE_DIR
@@ -79,11 +110,11 @@ class TestLoadConfigMigration(unittest.TestCase):
             with open(path, "w") as f:
                 json.dump(old, f)
             result = config.load_config(path)
-            self.assertIn("tunnels", result)
+            self.assertIn("servers", result)
             # File was rewritten in the new format
             with open(path) as f:
                 saved = json.load(f)
-            self.assertIn("tunnels", saved)
+            self.assertIn("servers", saved)
 
     def test_corrupt_config_backup_failure_returns_none(self):
         with tempfile.TemporaryDirectory() as d:
@@ -116,7 +147,7 @@ class TestLoadConfigMigration(unittest.TestCase):
                  patch("mpconf.config.save_config", return_value=False):
                 result = config.load_config(path)
             self.assertIsNotNone(result)
-            self.assertNotIn("ssh_password", result["tunnels"][0])
+            self.assertNotIn("ssh_password", result["servers"][0])
             self.assertFalse(os.path.exists(path))
             with open(path + ".bak") as f:
                 self.assertEqual(json.load(f), old)
@@ -153,21 +184,21 @@ class TestMigratePasswordSweep(unittest.TestCase):
         old = {"ssh_host": "srv", "ssh_password": "secret"}
         with patch("mpconf.config.keychain.set_password", return_value=True):
             result = config._migrate(old)
-        tunnel = result["tunnels"][0]
-        self.assertEqual(tunnel["auth_type"], "password")
+        server = result["servers"][0]
+        self.assertEqual(server["ssh"]["auth_type"], "password")
 
     def test_plaintext_password_moved_to_keychain(self):
         cfg = {"tunnels": [{"ssh_host": "s", "ssh_password": "secret"}]}
         with patch("mpconf.config.keychain.set_password", return_value=True):
             result = config._migrate(cfg)
-        self.assertNotIn("ssh_password", result["tunnels"][0])
+        self.assertNotIn("ssh_password", result["servers"][0])
 
     def test_password_removed_even_when_keychain_fails(self):
         """HARD-1: plaintext must leave the dict regardless of Keychain result."""
         cfg = {"tunnels": [{"ssh_host": "s", "ssh_password": "secret"}]}
         with patch("mpconf.config.keychain.set_password", return_value=False):
             result = config._migrate(cfg)
-        self.assertNotIn("ssh_password", result["tunnels"][0])
+        self.assertNotIn("ssh_password", result["servers"][0])
 
     def test_password_not_persisted_on_disk_when_keychain_fails(self):
         """HARD-1 end-to-end: load_config must not write plaintext back to disk."""
@@ -179,7 +210,7 @@ class TestMigratePasswordSweep(unittest.TestCase):
                 config.load_config(path)
             with open(path) as f:
                 on_disk = json.load(f)
-        self.assertNotIn("ssh_password", on_disk["tunnels"][0])
+        self.assertNotIn("ssh_password", on_disk["servers"][0])
 
 
 class TestSaveConfigWriteError(unittest.TestCase):
