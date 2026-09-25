@@ -9,7 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), adheres to [Sem
 
 ### Added
 - **服务器中心 schema v2**：`servers[]`（`ssh` 节持连接参数 / `services.ssh` 持转发实例+autostart / `services.nfs` 持挂载实例）+ `proxy_server_id` 单一真相 + `schema_version` 显式版本化；**v1 `tunnels[]` 自动迁移保稳定 id**——Keychain 密码槽（`tunnel:{id}`）与运行时会话身份零损失，服务器名/密钥/挂载原样保留（#106）
-- **设置窗「服务器」单视图**（#107，按定稿原型）：master-detail——服务器列表（代理徽标/转发 n/m/NFS ×n 标签）→ 服务器页 = 连接卡 + 服务卡区（SSH 隧道服务卡〔转发实例表+启停+autostart〕· NFS 服务卡〔挂载实例表全功能含 5s 运行态轮询〕· **OpenVPN 占位卡**〔即将支持〕）+ 可见滑动条；侧边栏「代理」组从三页收敛为 服务器+网络设置；未保存的新服务器不能被设为代理（id 是角色寻址前提）
+- **设置窗「服务器」单视图**（#107，按定稿原型）：master-detail——服务器列表（代理徽标/转发 n/m/NFS ×n 标签）→ 服务器页 = 连接卡 + 服务卡区（SSH 隧道服务卡〔转发实例表+启停+autostart〕· NFS 服务卡〔挂载实例表全功能含 5s 运行态轮询〕· **OpenVPN 占位卡**〔即将支持〕）+ 可见滑动条；侧边栏「代理」组从三页收敛为 服务器+网络设置；未保存的新服务器不能被设为代理（id 是角色寻址前提）；真机验收反馈：服务卡横向 tab 展开（连接/端口映射/NFS/OpenVPN，tab 标签带实时计数）——四 pane 全量常驻渲染 + 纯 DOM 显隐切换，collect/NFS 轮询/探针零改动，切 tab 不重渲染不冲未保存表单
 - **服务卡一键检测框架**（#108，M2）：`services/server_check.SERVICE_CARDS` 服务注册表（新增服务类型 = 加一张卡，对齐 PROVIDER_REGISTRY 模式）+ `POST /api/server-check` 聚合端点——SSH 复用 probe（可达性+延迟）/ NFS 复用 check_remote（发行版/2049 监听/导出表）/ **OpenVPN 新探针**（`command -v openvpn`，占位卡「检测服务」已激活）；探针输入归一单一归宿（probe_inputs 迁入 server_check，keychain 参数化）
 
 ### Changed

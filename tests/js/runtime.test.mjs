@@ -436,10 +436,10 @@ test("servers view renders master-detail with proxy badge, service tags and moun
   assert.match(html, /tag proxy">代理</);
   assert.match(html, /转发 1\/2</);
   assert.match(html, /NFS ×1</);
-  // detail：连接区 + SSH 隧道服务卡（转发表 + 探针区）+ NFS 服务卡（挂载行 + 即时操作）
+  // detail：连接 pane + 端口映射 pane（转发表 + 探针区）+ NFS pane（挂载行 + 即时操作）
   assert.match(html, /class="md-detail"/);
   assert.match(html, /data-tf="addr"/);
-  assert.match(html, /SSH 隧道服务/);
+  assert.match(html, /data-svc-pane="fw"/);
   assert.match(html, /id="probe-ssh"/);
   assert.match(html, /data-tf="fw_autostart"/);
   assert.match(html, /data-fwf="local_port"/);
@@ -455,6 +455,90 @@ test("servers view renders master-detail with proxy badge, service tags and moun
   assert.match(html, /即将支持/);
   assert.match(html, /svcCheck\('openvpn',this\)/);
   assert.match(html, /id="probe-vpn"/);
+});
+
+// ── 服务 tab（v0.13.0 真机验收反馈：服务卡纵向堆叠 → 横向 tab）─────────
+test("service tabs render in fixed order with live counts and all four panes", () => {
+  const rt = makeRuntime();
+  const html = rt.run(`
+    S=normalizeState({mp:{servers:[
+      {id:'t-1',name:'srv-a',ssh:{user:'u',host:'a.example',port:22},
+       services:{ssh:{forwards:[{local_port:9000,remote_host:'127.0.0.1',remote_port:80,enabled:true},
+                                {local_port:9001,remote_host:'127.0.0.1',remote_port:81,enabled:false}]},
+                  nfs:{enabled:true,local_port:12049,squash_to_ssh_user:false,
+            mounts:[{name:'data',remote_path:'/data',local_dir:'',auto_mount:true}]}}}]}});
+    activeTunnel=0;activeSvcTab='conn';serversHTML();
+  `);
+  // tab 条：四枚 tab 固定顺序（连接/端口映射/NFS/OpenVPN）
+  assert.match(html, /class="svc-tabs"/);
+  assert.deepEqual(
+    [...html.matchAll(/data-svc-tab="(\w+)"/g)].map((m) => m[1]),
+    ["conn", "fw", "nfs", "vpn"]);
+  // tab 标签计数：端口映射 enabled/total、NFS ×挂载数、OpenVPN 即将支持
+  assert.match(html, /端口映射<span class="svc-tab-count">1\/2<\/span>/);
+  assert.match(html, /NFS<span class="svc-tab-count">×1<\/span>/);
+  assert.match(html, /OpenVPN<span class="soon">即将支持<\/span>/);
+  // 缺省 tab = 连接：conn pane 可见，其余 hidden——但四 pane 全量渲染
+  //（hidden pane 里的 data-* / id 是 collectServers 刮全页、NFS 5s 轮询
+  // 与探针结果定向更新的前提，绝不能条件性不渲染）
+  assert.match(html, /class="svc-tab is-active" data-svc-tab="conn"/);
+  assert.match(html, /class="svc-tab " data-svc-tab="fw"/);
+  assert.match(html, /data-svc-pane="conn" >/);
+  assert.match(html, /data-svc-pane="fw" hidden>[\s\S]*?data-fwf="local_port"/);
+  assert.match(html, /data-svc-pane="nfs" hidden>[\s\S]*?data-nf="port"/);
+  assert.match(html, /data-svc-pane="vpn" hidden>[\s\S]*?id="probe-vpn"/);
+});
+
+test("svcTab switches panes by pure DOM toggle — no re-render, no collect, no dirty", () => {
+  const rt = makeRuntime();
+  rt.run(`
+    S=normalizeState({mp:{servers:[
+      {id:'t-1',name:'srv-a',ssh:{user:'u',host:'a.example',port:22},
+       services:{ssh:{forwards:[],autostart:false}}}]}});
+    baselineState=cloneData(S);baselineRoles={};ccRoles={};
+    activeView='servers';activeTunnel=0;recomputeDirty();
+    // 连接 pane 里的未保存编辑——真实 UI 中切 tab 绝不能冲掉它
+    window.__addr={value:'u@edited.example'};
+    window.__mkCls=()=>{const s=new Set();return{
+      add:n=>s.add(n),remove:n=>s.delete(n),
+      toggle:(n,f)=>{const on=f===undefined?!s.has(n):!!f;on?s.add(n):s.delete(n);return on;},
+      contains:n=>s.has(n)};};
+    const pane=k=>({hidden:k!=='conn',dataset:{svcPane:k}});
+    const tab=k=>({dataset:{svcTab:k},classList:window.__mkCls(),
+      attrs:new Map(),
+      setAttribute(n,v){this.attrs.set(n,String(v));},
+      getAttribute(n){return this.attrs.has(n)?this.attrs.get(n):'false';}});
+    window.__panes=['conn','fw','nfs','vpn'].map(pane);
+    window.__panes[0].hostedInput=window.__addr;
+    window.__tabs=['conn','fw','nfs','vpn'].map(tab);
+    window.__detail={querySelectorAll:function(sel){
+      if(sel.includes('data-svc-pane'))return window.__panes;
+      if(sel.includes('data-svc-tab'))return window.__tabs;
+      return [];
+    }};
+    document.querySelector=function(sel){
+      return sel.includes('.md-detail')?window.__detail:null;
+    };
+    window.__rerenders=0;renderView=()=>{window.__rerenders++;};
+    window.__collects=0;collectServers=()=>{window.__collects++;};
+  `);
+  rt.run("svcTab('nfs')");
+  assert.equal(rt.run("activeSvcTab"), "nfs", "tab 选中态是模块级全局（切服务器保持）");
+  assert.equal(rt.run("window.__panes.map(p=>p.hidden).join()"), "true,true,false,true",
+    "只有目标 pane 可见，其余 hidden");
+  assert.equal(rt.run("window.__tabs[2].classList.contains('is-active')"), true);
+  assert.equal(rt.run("window.__tabs[0].classList.contains('is-active')"), false);
+  assert.equal(rt.run("window.__tabs[2].getAttribute('aria-selected')"), "true");
+  // 历史守卫契约：切 tab 不重渲染（未保存表单存活）、不 collect、不碰 dirty
+  assert.equal(rt.run("window.__addr.value"), "u@edited.example");
+  assert.equal(rt.run("window.__rerenders"), 0);
+  assert.equal(rt.run("window.__collects"), 0);
+  assert.equal(rt.run("dirty"), false);
+  rt.run("svcTab('conn')");
+  assert.equal(rt.run("window.__panes[0].hidden"), false);
+  assert.equal(rt.run("window.__addr.value"), "u@edited.example",
+    "切走再切回，未保存的表单编辑必须还在（纯显隐，DOM 从未重建）");
+  assert.equal(rt.run("window.__rerenders"), 0);
 });
 
 test("servers view follows the shared activeTunnel selection", () => {
