@@ -35,7 +35,7 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .nav-label{padding:0 10px 6px;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .side-nav{display:grid;gap:3px}
 .nav-item{width:100%;min-height:40px;display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;text-align:left;font-weight:550;font-size:15px}
-.nav-item svg{width:17px;height:17px;flex:0 0 auto;align-self:flex-start;margin-top:2px}
+.nav-item svg{width:16px;height:16px;flex:0 0 auto;align-self:flex-start;margin-top:2px}
 .nav-text{display:flex;flex-direction:column;min-width:0}
 .nav-sub{display:block;font-size:11px;color:var(--muted);font-weight:400;line-height:1.4}
 .nav-item:hover{background:color-mix(in oklch,var(--surface),var(--border) 28%);color:var(--fg)}
@@ -87,6 +87,7 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .view>.module-intro{margin-left:auto;margin-right:auto}
 /* empty state */
 .empty-state{padding:48px 24px;text-align:center;color:var(--muted)}
+.empty-state>svg{display:block;margin:0 auto 12px}
 .empty-state p{margin-bottom:16px;font-size:15px}
 .empty-state-inline{padding:32px 24px;text-align:center;color:var(--muted)}
 .empty-state-inline p{margin-bottom:12px;font-size:15px}
@@ -142,6 +143,9 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .form-section:first-child{padding-top:0}
 .form-section+.form-section{border-top:1px solid var(--border)}
 .form-section h3{font-size:14px;font-weight:600;margin-bottom:12px}
+/* 区块头/表头前置图标（ICONS 单笔触语言）：14px、muted、与文字基线对齐 */
+.form-section h3,.fw-head h3{display:flex;align-items:center;gap:6px}
+.form-section h3 svg,.fw-head h3 svg{flex:0 0 auto;color:var(--muted)}
 /* fields */
 .field{margin-bottom:12px}
 .field:last-child{margin-bottom:0}
@@ -205,11 +209,13 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .fw-status.ok{color:var(--ok)}
 .fw-status.err{color:var(--danger)}
 .fw-empty td{padding:16px 12px;color:var(--muted);font-size:13px;text-align:center}
+.fw-empty svg{vertical-align:-4px;margin-right:7px}
 /* multi-active tunnel badges */
 .fw-badge{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;line-height:1.5;background:color-mix(in oklch,var(--accent),transparent 88%);color:var(--accent)}
 /* ── 服务器视图（v0.13.0 PR-2）：master 标签行 + 服务 tab + 探针结果 ── */
 .md-row .srv-tags{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
-.tag{display:inline-block;font-size:10.5px;line-height:1.6;padding:0 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+.tag{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;line-height:1.6;padding:0 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+.tag svg{flex:0 0 auto}
 .tag.proxy{border-color:var(--ok);color:var(--ok);font-weight:600}
 .tag.on{color:var(--fg)}
 .detail-bar.srv{flex-wrap:wrap;row-gap:6px;column-gap:8px;padding:8px 20px}
@@ -1050,21 +1056,48 @@ const refreshTimers={};
 
 // Single registry: nav metadata + render + collect per view.
 // render/collect are attached below once the view functions exist.
+// icon 字段是 ICONS 键名（不再内联 path）——renderNav 经 icon() 单一归宿渲染
 const VIEWS={
-  servers:{group:'代理',title:'服务器',sub:'远程服务器与其上的服务',icon:'<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/>'},
-  proxy:{group:'代理',title:'网络设置',sub:'端口与抓包',icon:'<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a6 6 0 0 1 6 6h-2a4 4 0 0 0-4-4z"/>'},
-  system:{group:'系统',title:'系统选项',sub:'防睡眠与登录启动',icon:'<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 4a4 4 0 0 0-4 4h2a2 2 0 0 1 4 0h2a4 4 0 0 0-4-4zm0 10a4 4 0 0 0 4-4H8a4 4 0 0 0 4 4z"/>'},
-  quickstart:{group:'AI 路由',title:'快速接入',sub:'厂商 Key → 多 Agent 自动配置',readOnly:true,icon:'<path d="M13 2 3 14h7l-1 8 12-14h-7z"/>'},
-  providers:{group:'AI 路由',title:'供应商',sub:'后端接入与凭证',icon:'<circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 6h8M6 8v5a5 5 0 0 0 5 5h5"/>'},
-  rules:{group:'AI 路由',title:'Claude Code 同步',sub:'角色模型映射与同步',icon:'<path d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 15h6v4h-6z"/>'},
-  usage:{group:'AI 路由',title:'运行统计',sub:'缓存命中与用量分析',readOnly:true,icon:'<path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/>'},
-  status:{group:'AI 路由',title:'余额速览',sub:'供应商余额与配额',readOnly:true,icon:'<path d="M3 7h18v12H3zM3 10h18M16 15h2"/>'}
+  servers:{group:'代理',title:'服务器',sub:'远程服务器与其上的服务',icon:'server'},
+  proxy:{group:'代理',title:'网络设置',sub:'端口与抓包',icon:'globe'},
+  system:{group:'系统',title:'系统选项',sub:'防睡眠与登录启动',icon:'sliders-horizontal'},
+  quickstart:{group:'AI 路由',title:'快速接入',sub:'厂商 Key → 多 Agent 自动配置',readOnly:true,icon:'zap'},
+  providers:{group:'AI 路由',title:'供应商',sub:'后端接入与凭证',icon:'share-2'},
+  rules:{group:'AI 路由',title:'Claude Code 同步',sub:'角色模型映射与同步',icon:'list-todo'},
+  usage:{group:'AI 路由',title:'运行统计',sub:'缓存命中与用量分析',readOnly:true,icon:'bar-chart-3'},
+  status:{group:'AI 路由',title:'余额速览',sub:'供应商余额与配额',readOnly:true,icon:'credit-card'}
 };
+// ── icon 单一归宿（Lucide v0.462.0 线性几何内联，ISC License）──────────
+// 单笔触语言：24×24 网格 / fill=none / currentColor / stroke-width 1.6 /
+// round cap+join——颜色随宿主（muted/accent/danger）自动明暗。
+// 尺寸阶梯：16（侧栏 nav + 服务 tab）/ 14（区块头）/ 12（能力徽标 chip）/
+// 28（空态主图）；表格空行 inline 用 20（行高约束，见 fw-empty）。
+const ICONS={
+  'server':'<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
+  'globe':'<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  'zap':'<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  'share-2':'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/>',
+  'list-todo':'<rect x="3" y="5" width="6" height="6" rx="1"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+  // 上游更名：bar-chart-3 → chart-column（同一 v0.462.0 包内取的几何）
+  'bar-chart-3':'<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+  'credit-card':'<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/>',
+  'sliders-horizontal':'<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
+  'plug':'<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+  'arrow-right-left':'<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>',
+  'hard-drive':'<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
+  'shield':'<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  'bolt':'<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><circle cx="12" cy="12" r="4"/>',
+  'key-round':'<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>',
+  'folder-tree':'<path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/>',
+  'settings-2':'<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>'
+};
+function icon(name,size=16){return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]||''}</svg>`;}
 const NAV_ORDER=['代理','AI 路由','系统'];
-const eyeOpen='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5z"/><circle cx="12" cy="12" r="2.5"/></svg>';
-const eyeOff='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6 0 9.5 5 9.5 5a16 16 0 0 1-2.3 2.7M6.1 6.1A16 16 0 0 0 2.5 12s3.5 5 9.5 5a10.9 10.9 0 0 0 4-.7M3 3l18 18"/></svg>';
-const folderIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7v12a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z"/></svg>';
-const copyIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
+// 功能性图标（密码可见性 / 文件选择 / 复制）：几何不变，统一过单笔触语言
+const eyeOpen='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5z"/><circle cx="12" cy="12" r="2.5"/></svg>';
+const eyeOff='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c6 0 9.5 5 9.5 5a16 16 0 0 1-2.3 2.7M6.1 6.1A16 16 0 0 0 2.5 12s3.5 5 9.5 5a10.9 10.9 0 0 0 4-.7M3 3l18 18"/></svg>';
+const folderIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v12a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-9l-2-3H4a1 1 0 0 0-1 1z"/></svg>';
+const copyIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
 
 // ── dirty ─────────────────────────────────────────────
 // 设置窗桥接：单一 bridge 通道，{type, payload} JSON；JS 拥有 DOM 与 dirty 真相
@@ -1153,7 +1186,7 @@ function renderNav(){
     html+=`<div class="nav-group"><div class="nav-label">${group}</div><nav class="side-nav" aria-label="${group}">`;
     html+=Object.entries(VIEWS).filter(([_,v])=>v.group===group).map(([id,v])=>
       `<button class="nav-item" data-view="${id}" ${id===activeView?'aria-current="page"':''} onclick="setView('${id}')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">${v.icon}</svg><span class="nav-text"><span>${v.title}</span><span class="nav-sub">${v.sub||''}</span></span></button>`).join('');
+        ${icon(v.icon,16)}<span class="nav-text"><span>${v.title}</span><span class="nav-sub">${v.sub||''}</span></span></button>`).join('');
     html+=`</nav></div>`;
   }
   document.getElementById('nav-container').innerHTML=html;
@@ -1333,7 +1366,7 @@ function toggleSwitch(el){
 // ── tunnel view (master-detail only) ──────────────────
 function fwRows(t){
   const fs=forwardsOf(t);
-  if(!fs.length)return `<tr class="fw-empty"><td colspan="5">暂无端口转发规则——点「+ 添加转发」把远程端口映射到本机</td></tr>`;
+  if(!fs.length)return `<tr class="fw-empty"><td colspan="5">${icon('arrow-right-left',20)}暂无端口转发规则——点「+ 添加转发」把远程端口映射到本机</td></tr>`;
   return fs.map((f,fi)=>`<tr data-fwr="${fi}">
     <td><input class="control mono" data-fwf="local_port" type="number" min="1" max="65535" value="${esc(f.local_port||'')}" placeholder="9000" aria-label="转发 ${fi+1} 本地端口"></td>
     <td><input class="control mono" data-fwf="remote_host" value="${esc(f.remote_host||'')}" placeholder="127.0.0.1" aria-label="转发 ${fi+1} 远程地址"></td>
@@ -1347,9 +1380,8 @@ function fwRows(t){
 // ── servers view（v0.13.0 单视图吞并旧「隧道 + 远程挂载」两页）──
 // 一台服务器一页配完：连接 / 端口映射 / NFS / OpenVPN 横向 tab 展开。
 // 页签头状态徽标 = 配置态；pane 内实例表 = 用途行（1:n）。
-const svcSshIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
-const svcNfsIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="5.5" rx="7" ry="2.8"/><path d="M5 5.5v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-6"/><path d="M5 11.5v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-6"/></svg>';
-const svcVpnIcon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9V6z"/></svg>';
+// pane 头 .svc-icon 与对应 tab 同图标（ICONS 单一归宿）：arrow-right-left /
+// hard-drive / shield——卡头图标盒是 tab 图标的放大容器，不再另养一套几何。
 function serverListRows(ts){
   // master 行：状态点（代理角色）+ 名称 + user@host + 服务标签
   //（代理 / 转发 n/m / NFS ×n）——转发中徽标沿用运行态装饰
@@ -1358,7 +1390,7 @@ function serverListRows(ts){
     const fw=forwardsOf(tn),fwOn=fw.filter(f=>f.enabled!==false).length;
     const n=nfsOf(tn),nfsOn=!!n&&n.enabled===true;
     const mountCount=nfsOn?(n.mounts||[]).length:0;
-    return `<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectServer(${i})"><span class="dot ${i===curIdx?'':'off'}" title="${i===curIdx?'代理服务器（SOCKS5 上游）':'非代理服务器（可启动端口转发）'}"></span><span><strong>${esc(tn.name||sshOf(tn).host||'Server '+(i+1))}</strong>${tn.forward_running?'<span class="fw-badge">转发中</span>':''}<span class="sub">${sshOf(tn).host?esc((sshOf(tn).user?sshOf(tn).user+'@':'')+sshOf(tn).host+(sshOf(tn).port&&sshOf(tn).port!==22?':'+sshOf(tn).port:'')):'（需填写地址）'}</span><span class="srv-tags">${i===curIdx?'<span class="tag proxy">代理</span>':''}${fw.length?`<span class="tag ${fwOn?'on':''}">转发 ${fwOn}/${fw.length}</span>`:''}${nfsOn?`<span class="tag ${mountCount?'on':''}">NFS ×${mountCount}</span>`:''}</span></span></button>`;
+    return `<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectServer(${i})"><span class="dot ${i===curIdx?'':'off'}" title="${i===curIdx?'代理服务器（SOCKS5 上游）':'非代理服务器（可启动端口转发）'}"></span><span><strong>${esc(tn.name||sshOf(tn).host||'Server '+(i+1))}</strong>${tn.forward_running?'<span class="fw-badge">转发中</span>':''}<span class="sub">${sshOf(tn).host?esc((sshOf(tn).user?sshOf(tn).user+'@':'')+sshOf(tn).host+(sshOf(tn).port&&sshOf(tn).port!==22?':'+sshOf(tn).port:'')):'（需填写地址）'}</span><span class="srv-tags">${i===curIdx?`<span class="tag proxy">${icon('bolt',12)}代理</span>`:''}${fw.length?`<span class="tag ${fwOn?'on':''}">${icon('arrow-right-left',12)}转发 ${fwOn}/${fw.length}</span>`:''}${nfsOn?`<span class="tag ${mountCount?'on':''}">${icon('hard-drive',12)}NFS ×${mountCount}</span>`:''}</span></span></button>`;
   }).join('');
 }
 function serversHTML(){
@@ -1367,7 +1399,7 @@ function serversHTML(){
     <p class="module-intro">管理远程服务器与其上的服务（SSH 隧道 / NFS / OpenVPN 占位）。变更保存后点击菜单栏「重新连接」生效。</p>
     <div class="panel">
       <div class="section-bar"><h2 class="section-title">服务器</h2><span class="count">0 台服务器</span></div>
-      <div class="empty-state"><h2>还没有配置服务器</h2><p>添加 SSH 服务器后，Magic Stack 才能建立代理连接、端口转发与 NFS 挂载。</p><button class="btn btn-primary" onclick="addServer()">+ 添加第一台服务器</button></div>
+      <div class="empty-state">${icon('server',28)}<h2>还没有配置服务器</h2><p>添加 SSH 服务器后，Magic Stack 才能建立代理连接、端口转发与 NFS 挂载。</p><button class="btn btn-primary" onclick="addServer()">+ 添加第一台服务器</button></div>
     </div>
   </section>`;
   const t=ts[activeTunnel];
@@ -1398,14 +1430,14 @@ function serversHTML(){
             <button class="btn btn-sm btn-danger" aria-label="删除服务器 ${esc(tname)}" onclick="cdel(this,function(){removeServer(${activeTunnel})})">删除</button>
           </div></div>
         <div class="svc-tabs" role="tablist" aria-label="服务器服务分页">
-          <button class="svc-tab ${activeSvcTab==='conn'?'is-active':''}" data-svc-tab="conn" role="tab" aria-selected="${activeSvcTab==='conn'}" onclick="svcTab('conn')">连接</button>
-          <button class="svc-tab ${activeSvcTab==='fw'?'is-active':''}" data-svc-tab="fw" role="tab" aria-selected="${activeSvcTab==='fw'}" onclick="svcTab('fw')">端口映射${fw.length?`<span class="svc-tab-count">${fwOn}/${fw.length}</span>`:''}</button>
-          <button class="svc-tab ${activeSvcTab==='nfs'?'is-active':''}" data-svc-tab="nfs" role="tab" aria-selected="${activeSvcTab==='nfs'}" onclick="svcTab('nfs')">NFS${nfsOn?`<span class="svc-tab-count">×${mountCount}</span>`:''}</button>
-          <button class="svc-tab ${activeSvcTab==='vpn'?'is-active':''}" data-svc-tab="vpn" role="tab" aria-selected="${activeSvcTab==='vpn'}" onclick="svcTab('vpn')">OpenVPN<span class="soon">即将支持</span></button>
+          <button class="svc-tab ${activeSvcTab==='conn'?'is-active':''}" data-svc-tab="conn" role="tab" aria-selected="${activeSvcTab==='conn'}" onclick="svcTab('conn')">${icon('plug',16)}连接</button>
+          <button class="svc-tab ${activeSvcTab==='fw'?'is-active':''}" data-svc-tab="fw" role="tab" aria-selected="${activeSvcTab==='fw'}" onclick="svcTab('fw')">${icon('arrow-right-left',16)}端口映射${fw.length?`<span class="svc-tab-count">${fwOn}/${fw.length}</span>`:''}</button>
+          <button class="svc-tab ${activeSvcTab==='nfs'?'is-active':''}" data-svc-tab="nfs" role="tab" aria-selected="${activeSvcTab==='nfs'}" onclick="svcTab('nfs')">${icon('hard-drive',16)}NFS${nfsOn?`<span class="svc-tab-count">×${mountCount}</span>`:''}</button>
+          <button class="svc-tab ${activeSvcTab==='vpn'?'is-active':''}" data-svc-tab="vpn" role="tab" aria-selected="${activeSvcTab==='vpn'}" onclick="svcTab('vpn')">${icon('shield',16)}OpenVPN<span class="soon">即将支持</span></button>
         </div>
         <div class="detail-body">
           <div class="svc-pane" data-svc-pane="conn" ${activeSvcTab==='conn'?'':'hidden'}>
-          <div class="form-section"><h3>连接</h3>
+          <div class="form-section"><h3>${icon('key-round',14)}连接</h3>
             <p class="fw-hint">SSH 端点与认证——全部服务共享这一份连接参数。</p>
             <div class="field-grid">
               <div class="field span-2"><label>SSH 地址（user@host，不含端口）</label><input class="control mono" data-tf="addr" value="${esc(addrStr(t))}" placeholder="ubuntu@my-server.com"></div>
@@ -1423,7 +1455,7 @@ function serversHTML(){
           </div>
           <div class="service-card svc-pane" data-svc-pane="fw" ${activeSvcTab==='fw'?'':'hidden'}>
             <div class="service-card-head">
-              <div class="svc-icon">${svcSshIcon}</div>
+              <div class="svc-icon">${icon('arrow-right-left',16)}</div>
               <div><div class="svc-title">端口映射</div>
                 <div class="svc-sub">SSH 隧道（-L）· ${fw.length?`${fwOn} 启用 / ${fw.length} 条`:'未配置转发'}</div></div>
               <div class="grow"></div>
@@ -1436,7 +1468,7 @@ function serversHTML(){
               <div class="toggle-row" style="border:0;padding:0 0 12px"><label>随应用启动转发</label>
                 <div class="switch-line"><span class="switch-label">${autostartOf(t)===true?'已启用':'已停用'}</span>
                 <button class="switch" data-tf="fw_autostart" role="switch" aria-checked="${autostartOf(t)===true}" aria-label="随应用启动转发" onclick="toggleSwitch(this)"></button></div></div>
-              <div class="fw-head"><h3>转发实例</h3>
+              <div class="fw-head"><h3>${icon('arrow-right-left',14)}转发实例</h3>
                 <button class="btn btn-sm" onclick="addForward()">+ 添加转发</button></div>
               <p class="fw-hint">把远程服务器的端口映射到本机 127.0.0.1（ssh -L）；保存后自动重连生效。行内「测试」对当前填写的值做一次 SSH 探测（无需先保存）。多服务器可并行——非代理服务器用本页头「启动转发」独立运行。</p>
               <table class="rules-table fw-table"><thead><tr>
@@ -1446,7 +1478,7 @@ function serversHTML(){
           </div>
           <div class="service-card svc-pane ${nfsOn?'':'disabled'}" data-svc-pane="nfs" ${activeSvcTab==='nfs'?'':'hidden'}>
             <div class="service-card-head">
-              <div class="svc-icon">${svcNfsIcon}</div>
+              <div class="svc-icon">${icon('hard-drive',16)}</div>
               <div><div class="svc-title">NFS 服务</div>
                 <div class="svc-sub">NFSv4 over SSH · 挂载实例 ${nfsOn?`×${mountCount}`:'（未启用）'}</div></div>
               <div class="grow"></div>
@@ -1458,6 +1490,7 @@ function serversHTML(){
             </div>
             <div class="probe-result mono" id="probe-nfs"></div>
             <div class="service-card-body">
+              <div class="fw-head"><h3>${icon('settings-2',14)}挂载选项</h3></div>
               <div class="field-grid">
                 <div class="field"><label>本地端口（→ 远程 2049）</label><input class="control mono" data-nf="port" type="number" min="1025" max="65535" value="${esc(n.local_port||12049)}" onblur="validatePort(this)"></div>
                 <div class="field"><label>远程 sudo 密码（可选）</label><input class="control mono" type="password" data-nf="sudo_pw" placeholder="密钥登录且未配 NOPASSWD 时填写"></div>
@@ -1465,7 +1498,7 @@ function serversHTML(){
               <div class="toggle-row"><div><label>属主统一映射</label><p class="panel-hint" style="margin:2px 0 0">服务器与 Mac 用户 UID 不一致时，文件属主统一映射到 SSH 用户（all_squash）</p></div>
                 <div class="switch-line"><span class="switch-label">${n.squash_to_ssh_user===true?'已启用':'已停用'}</span>
                 <button class="switch" data-nf="squash" role="switch" aria-checked="${n.squash_to_ssh_user===true}" aria-label="属主统一映射" onclick="toggleSwitch(this)"></button></div></div>
-              <div class="fw-head" style="margin-top:12px"><h3>挂载实例</h3>
+              <div class="fw-head" style="margin-top:12px"><h3>${icon('folder-tree',14)}挂载实例</h3>
                 <button class="btn btn-sm" data-nfs-gated onclick="addNfsMount()" ${nfsOn?'':'disabled'}>+ 添加挂载</button></div>
               <p class="fw-hint">远程路径为服务器绝对路径（一键安装会自动创建并导出）；本地目录留空 = /Volumes/&lt;挂载名&gt;。「挂载 / 卸载」即时生效（无需保存）；改名或改路径须保存后重新挂载。密码登录的服务器自动复用隧道密码执行安装，无需在此填 sudo 密码。</p>
               <table class="rules-table fw-table"><thead><tr>
@@ -1475,7 +1508,7 @@ function serversHTML(){
           </div>
           <div class="service-card svc-pane disabled" data-svc-pane="vpn" ${activeSvcTab==='vpn'?'':'hidden'}>
             <div class="service-card-head">
-              <div class="svc-icon">${svcVpnIcon}</div>
+              <div class="svc-icon">${icon('shield',16)}</div>
               <div><div class="svc-title">OpenVPN 服务<span class="soon">即将支持</span></div>
                 <div class="svc-sub">VPN 实例（与 SSH 隧道二选一互斥）</div></div>
               <div class="grow"></div>
@@ -1661,7 +1694,7 @@ const NFS_STATUS_LABEL={mounted:['已挂载','ok'],mounting:['挂载中…','war
 function nfsMountRows(t){
   const n=nfsOf(t)||{},states=t.nfs_states||{};
   const ms=n.mounts||[];
-  if(!ms.length)return `<tr class="fw-empty"><td colspan="5">暂无挂载项——点「+ 添加挂载」把远程目录挂到本机</td></tr>`;
+  if(!ms.length)return `<tr class="fw-empty"><td colspan="5">${icon('folder-tree',20)}暂无挂载项——点「+ 添加挂载」把远程目录挂到本机</td></tr>`;
   return ms.map((m,mi)=>{
     const o=nfsStateOf(states,m.name);
     const [lbl,cls]=NFS_STATUS_LABEL[o.status]||NFS_STATUS_LABEL.unmounted;

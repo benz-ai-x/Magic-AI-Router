@@ -430,10 +430,10 @@ test("servers view renders master-detail with proxy badge, service tags and moun
     ]}});
     activeTunnel=0;serversHTML();
   `);
-  // master：服务器列表 + 代理徽标 + 转发 n/m + NFS ×n 标签
+  // master：服务器列表 + 代理徽标 + 转发 n/m + NFS ×n 标签（图标 chip：12px 图标在文字前）
   assert.match(html, /class="md-master"/);
   assert.match(html, /selectServer\(1\)/);
-  assert.match(html, /tag proxy">代理</);
+  assert.match(html, /tag proxy"><svg[\s\S]*?<\/svg>代理</);
   assert.match(html, /转发 1\/2</);
   assert.match(html, /NFS ×1</);
   // detail：连接 pane + 端口映射 pane（转发表 + 探针区）+ NFS pane（挂载行 + 即时操作）
@@ -487,6 +487,40 @@ test("service tabs render in fixed order with live counts and all four panes", (
   assert.match(html, /data-svc-pane="fw" hidden>[\s\S]*?data-fwf="local_port"/);
   assert.match(html, /data-svc-pane="nfs" hidden>[\s\S]*?data-nf="port"/);
   assert.match(html, /data-svc-pane="vpn" hidden>[\s\S]*?id="probe-vpn"/);
+});
+
+// ── 图标体系（ICONS 注册表 + icon() 单一归宿，Lucide 单笔触语言）─────────
+test("icon() emits the shared stroke language at the requested ladder size", () => {
+  const rt = makeRuntime();
+  const html = rt.run("icon('server', 14)");
+  assert.match(html, /^<svg viewBox="0 0 24 24" width="14" height="14"/);
+  assert.match(html,
+    /fill="none" stroke="currentColor" stroke-width="1\.6" stroke-linecap="round" stroke-linejoin="round"/);
+  assert.match(html, /aria-hidden="true"/);
+  assert.match(html, /<rect x="2" y="2"/, "几何体来自 ICONS 注册表");
+  // 未知键名必须渲染空图标而非破碎 path——布点处手滑写错键名不炸整页
+  assert.equal(rt.run("icon('nope', 12)").includes("<rect"), false);
+});
+
+test("every view nav icon and all four service tab icons resolve in the ICONS map", () => {
+  const rt = makeRuntime();
+  // 侧边栏 8 视图的 icon 字段全部是 ICONS 键名（VIEWS 不再内联 path）
+  assert.equal(
+    rt.run("Object.values(VIEWS).filter(v=>!ICONS[v.icon]).map(v=>v.title).join()"),
+    "", "VIEWS 引用了 ICONS 里不存在的图标名");
+  // 服务 tab 四图标（连接/端口映射/NFS/OpenVPN）真实落进 serversHTML
+  rt.run(`
+    S=normalizeState({mp:{servers:[
+      {id:'t-1',name:'srv-a',ssh:{user:'u',host:'a.example',port:22},
+       services:{ssh:{forwards:[],autostart:false}}}]}});
+    activeTunnel=0;
+  `);
+  const html = rt.run("serversHTML()");
+  for (const name of ["plug", "arrow-right-left", "hard-drive", "shield"]) {
+    const geom = rt.run(`ICONS[${JSON.stringify(name)}]`);
+    assert.ok(geom, `ICONS 缺 ${name} 几何`);
+    assert.ok(html.includes(geom), `${name} 未渲染进服务 tab`);
+  }
 });
 
 test("svcTab switches panes by pure DOM toggle — no re-render, no collect, no dirty", () => {
