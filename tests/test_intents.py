@@ -19,7 +19,7 @@ _SYNC = lambda target, name=None: target()  # noqa: E731
 def _intents(**over):
     """最小依赖装配：conn/mounts 为 MagicMock，通知与 dirty 收集进 list。"""
     conn = MagicMock()
-    conn.proxy_tunnel_id = "t-proxy"
+    conn.proxy_server_id = "t-proxy"
     conn.proxy_connected = True
     conn.forward_sessions.return_value = []
     mounts = MagicMock()
@@ -202,12 +202,14 @@ class TestToggleForwardRow(unittest.TestCase):
         import json
         from shared import config_store as cs
         cs.PATHS["mp"] = str(tmpdir / "mp.json")
-        tunnels = [{"name": "fw", "id": tid, "ssh_user": "u",
-                    "ssh_host": "h", "ssh_port": 22, "auth_type": "key",
-                    "forwards": [{"local_port": 9000, "remote_port": 80,
-                                  "enabled": enabled}]}]
+        servers = [{"name": "fw", "id": tid,
+                    "ssh": {"user": "u", "host": "h", "port": 22,
+                            "auth_type": "key"},
+                    "services": {"ssh": {"forwards": [
+                        {"local_port": 9000, "remote_port": 80,
+                         "enabled": enabled}]}}}]
         with open(cs.PATHS["mp"], "w") as f:
-            json.dump({"current_tunnel": 0, "tunnels": tunnels}, f)
+            json.dump({"proxy_server_id": "", "servers": servers}, f)
         return tid
 
     def test_write_failure_aborts_without_notify(self):
@@ -239,7 +241,7 @@ class TestToggleForwardRow(unittest.TestCase):
                         _json.dump(mut(cfg), f)
                     return True
                 ui, conn, _, notes, _ = _intents(update_mp=_real_update)
-                conn.proxy_tunnel_id = "t-proxy"
+                conn.proxy_server_id = "t-proxy"
                 conn.restart_forward_async.return_value = True
                 ui.toggle_forward_row(tid, 0)
                 conn.restart_forward_async.assert_called_once_with(

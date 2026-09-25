@@ -15,11 +15,12 @@ class TestTerminalEnvsDropped(unittest.TestCase):
         return {
             "socks5_port": 1080,
             "http_listen_port": 8888,
-            "current_tunnel": 0,
-            "tunnels": [
-                {"name": "demo", "ssh_user": "u", "ssh_host": "h",
-                 "ssh_port": 22, "auth_type": "key", "ssh_key": "",
-                 "ssh_compression": True}
+            "proxy_server_id": "",
+            "servers": [
+                {"name": "demo", "ssh": {"user": "u", "host": "h",
+                                         "port": 22, "auth_type": "key",
+                                         "ssh_key": "",
+                                         "compression": True}}
             ],
             "terminal_envs": [
                 {"name": "old profile", "env": "FOO=bar\nBAZ=qux"}
@@ -54,15 +55,15 @@ class TestConfigValidation(unittest.TestCase):
             "socks5_port": "bad",
             "capture_port": -1,
             "retention_days": "bad",
-            "current_tunnel": "bad",
+            "proxy_server_id": 5,
             "capture_dir": "~/captures",
-            "tunnels": [{"ssh_host": " example.com ", "ssh_port": 70000}],
+            "servers": [{"ssh": {"host": " example.com ", "port": 70000}}],
         })
         self.assertEqual(merged["http_listen_port"], 8888)
         self.assertEqual(merged["socks5_port"], 1080)
         self.assertEqual(merged["capture_port"], 8080)
         self.assertEqual(merged["retention_days"], 7)
-        self.assertEqual(merged["tunnels"][0]["ssh_port"], 22)
+        self.assertEqual(merged["servers"][0]["ssh"]["port"], 22)
         self.assertTrue(os.path.isabs(merged["capture_dir"]))
 
     def test_non_object_config_is_backed_up_instead_of_crashing(self):
@@ -103,8 +104,7 @@ class TestPreventSleepLaunchLoginDefaults(unittest.TestCase):
         old = {
             "socks5_port": 1080,
             "http_listen_port": 8888,
-            "current_tunnel": 0,
-            "tunnels": [],
+            "servers": [],
         }
         merged = config.merge_config(old)
         self.assertFalse(merged["prevent_sleep"])
@@ -121,89 +121,99 @@ class TestPreventSleepLaunchLoginDefaults(unittest.TestCase):
         self.assertIs(merged["launch_at_login"], True)
 
 
-class TestMergeConfigTunnels(unittest.TestCase):
-    def test_tunnel_missing_fields_get_defaults(self):
-        merged = config.merge_config({"tunnels": [{"ssh_host": "srv"}]})
-        t = merged["tunnels"][0]
-        self.assertEqual(t["ssh_port"], 22)
-        self.assertEqual(t["auth_type"], "key")
-        self.assertTrue(t["ssh_compression"])
+class TestMergeConfigServers(unittest.TestCase):
+    def test_server_missing_fields_get_defaults(self):
+        merged = config.merge_config({"servers": [{"ssh": {"host": "srv"}}]})
+        t = merged["servers"][0]
+        self.assertEqual(t["ssh"]["port"], 22)
+        self.assertEqual(t["ssh"]["auth_type"], "key")
+        self.assertTrue(t["ssh"]["compression"])
 
-    def test_tunnel_port_out_of_range_falls_back(self):
-        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "ssh_port": 99999}]})
-        self.assertEqual(merged["tunnels"][0]["ssh_port"], 22)
+    def test_server_port_out_of_range_falls_back(self):
+        merged = config.merge_config(
+            {"servers": [{"ssh": {"host": "s", "port": 99999}}]})
+        self.assertEqual(merged["servers"][0]["ssh"]["port"], 22)
 
-    def test_tunnel_auth_type_validated(self):
-        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "auth_type": "bogus"}]})
-        self.assertEqual(merged["tunnels"][0]["auth_type"], "key")
+    def test_server_auth_type_validated(self):
+        merged = config.merge_config(
+            {"servers": [{"ssh": {"host": "s", "auth_type": "bogus"}}]})
+        self.assertEqual(merged["servers"][0]["ssh"]["auth_type"], "key")
 
-    def test_tunnel_missing_fields_get_forwards_default(self):
-        merged = config.merge_config({"tunnels": [{"ssh_host": "srv"}]})
+    def test_server_missing_fields_get_forwards_default(self):
+        merged = config.merge_config({"servers": [{"ssh": {"host": "srv"}}]})
         # forwards 缺省得 []（旧配置无感升级，无需迁移脚本）
-        self.assertEqual(merged["tunnels"][0]["forwards"], [])
+        self.assertEqual(config.server_forwards(merged["servers"][0]), [])
 
 
 class TestMergeConfigForwards(unittest.TestCase):
     """端口转发读路径归一：剥未知键、字符串端口兼容、缺省回填、浅拷贝防护。"""
 
+    @staticmethod
+    def _cfg(forwards):
+        return {"servers": [{"ssh": {"host": "s"},
+                             "services": {"ssh": {"forwards": forwards}}}]}
+
     def test_string_ports_read_compat(self):
-        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "forwards": [
+        merged = config.merge_config(self._cfg([
             {"local_port": "9000", "remote_host": "db", "remote_port": "5432"},
-        ]}]})
-        self.assertEqual(merged["tunnels"][0]["forwards"], [
+        ]))
+        self.assertEqual(config.server_forwards(merged["servers"][0]), [
             {"local_port": 9000, "remote_host": "db", "remote_port": 5432,
              "enabled": True}])
 
     def test_unknown_keys_stripped_and_remote_host_defaults(self):
-        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "forwards": [
+        merged = config.merge_config(self._cfg([
             {"local_port": 9000, "remote_port": 8000, "note": "dropped"},
-        ]}]})
-        self.assertEqual(merged["tunnels"][0]["forwards"], [
+        ]))
+        self.assertEqual(config.server_forwards(merged["servers"][0]), [
             {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 8000,
              "enabled": True}])
 
     def test_invalid_port_falls_to_zero_not_dropped(self):
         """非法端口落 0（下次保存被 prepare 拦），绝不静默丢行。"""
-        merged = config.merge_config({"tunnels": [{"ssh_host": "s", "forwards": [
+        merged = config.merge_config(self._cfg([
             {"local_port": "abc", "remote_host": "h", "remote_port": 70000},
-        ]}]})
-        self.assertEqual(merged["tunnels"][0]["forwards"], [
+        ]))
+        self.assertEqual(config.server_forwards(merged["servers"][0]), [
             {"local_port": 0, "remote_host": "h", "remote_port": 0,
              "enabled": True}])
 
     def test_non_dict_rows_and_non_list_dropped(self):
-        merged = config.merge_config({"tunnels": [
-            {"ssh_host": "s", "forwards": ["bad", 42,
-             {"local_port": 9000, "remote_port": 80}]},
-            {"ssh_host": "s2", "forwards": "not-a-list"},
+        merged = config.merge_config({"servers": [
+            {"ssh": {"host": "s"},
+             "services": {"ssh": {"forwards": ["bad", 42,
+              {"local_port": 9000, "remote_port": 80}]}}},
+            {"ssh": {"host": "s2"},
+             "services": {"ssh": {"forwards": "not-a-list"}}},
         ]})
-        self.assertEqual(merged["tunnels"][0]["forwards"], [
+        self.assertEqual(config.server_forwards(merged["servers"][0]), [
             {"local_port": 9000, "remote_host": "127.0.0.1", "remote_port": 80,
              "enabled": True}])
-        self.assertEqual(merged["tunnels"][1]["forwards"], [])
+        self.assertEqual(config.server_forwards(merged["servers"][1]), [])
 
-    def test_forward_autostart_defaults_and_normalization(self):
-        merged = config.merge_config({"tunnels": [
-            {"ssh_host": "a"},                         # 缺省 False
-            {"ssh_host": "b", "forward_autostart": True},   # 显式开
-            {"ssh_host": "c", "forward_autostart": "yes"},  # 非 bool 归 False
+    def test_autostart_defaults_and_normalization(self):
+        merged = config.merge_config({"servers": [
+            {"ssh": {"host": "a"}},                          # 缺省 False
+            {"ssh": {"host": "b"},
+             "services": {"ssh": {"autostart": True}}},      # 显式开
+            {"ssh": {"host": "c"},
+             "services": {"ssh": {"autostart": "yes"}}},     # 非 bool 归 False
         ]})
-        self.assertIs(merged["tunnels"][0]["forward_autostart"], False)
-        self.assertIs(merged["tunnels"][1]["forward_autostart"], True)
-        self.assertIs(merged["tunnels"][2]["forward_autostart"], False)
+        autostarts = [s["services"]["ssh"]["autostart"]
+                      for s in merged["servers"]]
+        self.assertEqual(autostarts, [False, True, False])
 
-    def test_default_list_not_shared_across_tunnels(self):
-        """DEFAULT_TUNNEL.copy() 是浅拷贝——forwards 默认 [] 绝不能跨隧道
-        共享同一 list 对象（后续 append 会串隧道）。"""
-        merged = config.merge_config({"tunnels": [
-            {"ssh_host": "a"}, {"ssh_host": "b"},
+    def test_default_list_not_shared_across_servers(self):
+        """归一逐层全新构造——forwards 默认 [] 绝不能跨服务器共享同一
+        list 对象（后续 append 会串服务器）。"""
+        merged = config.merge_config({"servers": [
+            {"ssh": {"host": "a"}}, {"ssh": {"host": "b"}},
         ]})
-        fa, fb = merged["tunnels"][0]["forwards"], merged["tunnels"][1]["forwards"]
+        fa = config.server_forwards(merged["servers"][0])
+        fb = config.server_forwards(merged["servers"][1])
         self.assertIsNot(fa, fb)
-        self.assertIsNot(fa, config.DEFAULT_TUNNEL["forwards"])
         fa.append({"local_port": 1, "remote_host": "h", "remote_port": 2})
         self.assertEqual(fb, [])
-        self.assertEqual(config.DEFAULT_TUNNEL["forwards"], [])
 
 
 class TestMergeConfigPorts(unittest.TestCase):
@@ -217,9 +227,11 @@ class TestMergeConfigPorts(unittest.TestCase):
         merged = config.merge_config({"http_listen_port": 70000})
         self.assertEqual(merged["http_listen_port"], config.DEFAULT_CONFIG["http_listen_port"])
 
-    def test_current_tunnel_out_of_range_resets(self):
-        merged = config.merge_config({"current_tunnel": 5, "tunnels": [{"ssh_host": "s"}]})
-        self.assertEqual(merged["current_tunnel"], 0)
+    def test_dangling_proxy_id_resets_to_first(self):
+        merged = config.merge_config({
+            "proxy_server_id": "gone",
+            "servers": [{"id": "t-a", "ssh": {"host": "s"}}]})
+        self.assertEqual(merged["proxy_server_id"], "t-a")
 
     def test_capture_dir_expands_home(self):
         merged = config.merge_config({"capture_dir": "~/captures"})
@@ -232,54 +244,53 @@ if __name__ == "__main__":
 
 
 class TestProxyRoleResolution(unittest.TestCase):
-    """v0.9.2 代理角色双表示：current_tunnel_id（稳定 id）是唯一真相，
-    current_tunnel 下标退为兼容读入口 + merge 派生投影。"""
+    """v2 代理角色：proxy_server_id（稳定 id）单一真相——merge 按解析序
+    重写悬空值（id 命中 → 首条兜底）。"""
 
     def _two(self):
         return [
-            {"id": "t-a", "ssh_host": "a", "ssh_port": 22, "auth_type": "key"},
-            {"id": "t-b", "ssh_host": "b", "ssh_port": 22, "auth_type": "key"},
+            {"id": "t-a", "ssh": {"host": "a", "port": 22,
+                                  "auth_type": "key"}},
+            {"id": "t-b", "ssh": {"host": "b", "port": 22,
+                                  "auth_type": "key"}},
         ]
 
-    def test_id_wins_over_index_and_backfills_projection(self):
+    def test_id_truth_preserved_by_merge(self):
         merged = config.merge_config({
-            "current_tunnel": 0, "current_tunnel_id": "t-b",
-            "tunnels": self._two()})
-        self.assertEqual(merged["current_tunnel_id"], "t-b")
-        self.assertEqual(merged["current_tunnel"], 1)
+            "proxy_server_id": "t-b", "servers": self._two()})
+        self.assertEqual(merged["proxy_server_id"], "t-b")
 
-    def test_dangling_id_falls_back_to_index(self):
+    def test_dangling_id_falls_back_to_first(self):
         merged = config.merge_config({
-            "current_tunnel": 1, "current_tunnel_id": "t-gone",
-            "tunnels": self._two()})
-        self.assertEqual(merged["current_tunnel_id"], "t-b")
-        self.assertEqual(merged["current_tunnel"], 1)
-
-    def test_legacy_index_only_backfills_id(self):
-        merged = config.merge_config({
-            "current_tunnel": 1, "tunnels": self._two()})
-        self.assertEqual(merged["current_tunnel_id"], "t-b")
+            "proxy_server_id": "t-gone", "servers": self._two()})
+        self.assertEqual(merged["proxy_server_id"], "t-a")
 
     def test_role_survives_reorder(self):
         reordered = config.merge_config({
-            "current_tunnel": 0, "current_tunnel_id": "t-b",
-            "tunnels": [self._two()[1], self._two()[0]]})
-        self.assertEqual(reordered["current_tunnel_id"], "t-b")
-        self.assertEqual(reordered["current_tunnel"], 0,
-                         "投影下标随位置重算，真相 id 纹丝不动")
+            "proxy_server_id": "t-b",
+            "servers": [self._two()[1], self._two()[0]]})
+        self.assertEqual(reordered["proxy_server_id"], "t-b")
 
-    def test_empty_tunnels_resets_role(self):
-        merged = config.merge_config({"current_tunnel": 3, "tunnels": []})
-        self.assertEqual(merged["current_tunnel"], 0)
-        self.assertEqual(merged["current_tunnel_id"], "")
+    def test_empty_servers_resets_role(self):
+        merged = config.merge_config({"proxy_server_id": "t-x", "servers": []})
+        self.assertEqual(merged["proxy_server_id"], "")
 
-    def test_idless_tunnel_role_stays_indexless_id(self):
-        # 新隧道保存时尚未赋 id（下次 load 才赋）——id 真相保持空，
-        # 角色经下标解析不丢
+    def test_idless_server_role_stays_empty(self):
+        # 新服务器保存时尚未赋 id（下次 load 才赋）——角色保持空，
+        # 消费方按首条解析不丢
         merged = config.merge_config({
-            "current_tunnel": 0, "tunnels": [{"ssh_host": "x", "ssh_port": 22}]})
-        self.assertEqual(merged["current_tunnel_id"], "")
-        self.assertEqual(merged["current_tunnel"], 0)
+            "proxy_server_id": "", "servers": [
+                {"ssh": {"host": "x", "port": 22}}]})
+        self.assertEqual(merged["proxy_server_id"], "")
+
+    def test_v1_role_keys_never_survive_merge(self):
+        merged = config.merge_config({
+            "current_tunnel": 1, "current_tunnel_id": "t-b",
+            "tunnels": self._two()})
+        self.assertNotIn("current_tunnel", merged)
+        self.assertNotIn("current_tunnel_id", merged)
+        self.assertNotIn("tunnels", merged)
+        self.assertEqual(merged["servers"], [])
 
 
 class TestDecorateRuntimeState(unittest.TestCase):
@@ -287,10 +298,10 @@ class TestDecorateRuntimeState(unittest.TestCase):
     is_proxy 与 merge 同一解析序；装饰只写声明的键。"""
 
     @staticmethod
-    def _mp(cid="t-b", idx=0):
-        return {"current_tunnel_id": cid, "current_tunnel": idx,
-                "tunnels": [{"id": "t-a", "ssh_host": "a"},
-                            {"id": "t-b", "ssh_host": "b"}]}
+    def _mp(cid="t-b"):
+        return {"proxy_server_id": cid,
+                "servers": [{"id": "t-a", "ssh": {"host": "a"}},
+                            {"id": "t-b", "ssh": {"host": "b"}}]}
 
     @staticmethod
     def _proj(capture=False, forwards=(), mounts=()):
@@ -308,44 +319,44 @@ class TestDecorateRuntimeState(unittest.TestCase):
                        error="", fixable="")])
         mp = config.decorate_runtime_state(self._mp(), proj)
         self.assertTrue(mp["capture_active"])
-        self.assertFalse(mp["tunnels"][0]["is_proxy"])
-        self.assertTrue(mp["tunnels"][1]["is_proxy"])
-        self.assertTrue(mp["tunnels"][0]["forward_running"])
-        self.assertFalse(mp["tunnels"][1]["forward_running"])
-        self.assertEqual(mp["tunnels"][1]["nfs_states"],
+        self.assertFalse(mp["servers"][0]["is_proxy"])
+        self.assertTrue(mp["servers"][1]["is_proxy"])
+        self.assertTrue(mp["servers"][0]["forward_running"])
+        self.assertFalse(mp["servers"][1]["forward_running"])
+        self.assertEqual(mp["servers"][1]["nfs_states"],
                          {"data": {"status": "mounted", "error": "",
                                    "fixable": ""}})
-        self.assertEqual(mp["tunnels"][0]["nfs_states"], {})
+        self.assertEqual(mp["servers"][0]["nfs_states"], {})
 
     def test_absent_projection_decorates_empty(self):
         mp = config.decorate_runtime_state(self._mp(), None)
         self.assertFalse(mp["capture_active"])
-        for t in mp["tunnels"]:
+        for t in mp["servers"]:
             self.assertFalse(t["forward_running"])
             self.assertEqual(t["nfs_states"], {})
         # 角色解析与 merge 同源：id 命中不缺席
-        self.assertTrue(mp["tunnels"][1]["is_proxy"])
+        self.assertTrue(mp["servers"][1]["is_proxy"])
 
-    def test_is_proxy_index_fallback_matches_merge(self):
-        # id 真相缺席/失配 → 下标 → 首条：与 merge_config 写回的解析一致
-        raw = {"current_tunnel_id": "", "current_tunnel": 1,
-               "tunnels": [{"id": "t-a"}, {"id": "t-b"}]}
+    def test_is_proxy_fallback_matches_merge(self):
+        # id 真相缺席/失配 → 首条兜底：与 merge_config 写回的解析一致
+        raw = {"proxy_server_id": "", "servers": [{"id": "t-a"},
+                                                  {"id": "t-b"}]}
         mp = config.decorate_runtime_state(dict(raw), None)
-        self.assertTrue(mp["tunnels"][1]["is_proxy"])
-        raw2 = {"current_tunnel_id": "ghost", "current_tunnel": 9,
-                "tunnels": [{"id": "t-a"}, {"id": "t-b"}]}
+        self.assertTrue(mp["servers"][0]["is_proxy"])
+        raw2 = {"proxy_server_id": "ghost",
+                "servers": [{"id": "t-a"}, {"id": "t-b"}]}
         mp2 = config.decorate_runtime_state(dict(raw2), None)
-        self.assertTrue(mp2["tunnels"][0]["is_proxy"])  # 首条兜底
+        self.assertTrue(mp2["servers"][0]["is_proxy"])  # 首条兜底
         self.assertEqual(
-            config.merge_config(dict(raw2))["current_tunnel_id"], "t-a")
+            config.merge_config(dict(raw2))["proxy_server_id"], "t-a")
 
     def test_writes_exactly_the_declared_set(self):
         # 装饰只写 RUNTIME_DECORATED_FIELDS；strip 名单运行态半边同源派生
         mp = config.decorate_runtime_state(self._mp(), self._proj())
         written = ({"capture_active"}
-                   | {k for t in mp["tunnels"]
+                   | {k for t in mp["servers"]
                       for k in t
-                      if k not in ("id", "ssh_host")})
+                      if k not in ("id", "name", "ssh", "services")})
         self.assertEqual(written, set(config.RUNTIME_DECORATED_FIELDS))
         from mpconf.config_state import READONLY_DECORATED_FIELDS
         self.assertEqual(READONLY_DECORATED_FIELDS,

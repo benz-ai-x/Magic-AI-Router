@@ -815,7 +815,7 @@ class TestHostKeyFlowBeginReplacementThreadBody(unittest.TestCase):
 
         flow = host_key_flow.HostKeyFlow(
             ssh_monitor=MagicMock(),
-            get_tunnel=lambda: {"ssh_host": "srv", "ssh_port": 22},
+            get_tunnel=lambda: {"ssh": {"host": "srv", "port": 22}},
             get_socks5_port=lambda: 1080,
             get_password=lambda: "",
             on_connect=MagicMock(),
@@ -827,7 +827,7 @@ class TestHostKeyFlowBeginReplacementThreadBody(unittest.TestCase):
                 break
             time.sleep(0.02)
         mock_inspect.assert_called_once_with(
-            {"ssh_host": "srv", "ssh_port": 22}, force_scan=True)
+            {"ssh": {"host": "srv", "port": 22}}, force_scan=True)
         self.assertEqual(captured["cb"], flow._finish_replacement)
 
 
@@ -839,7 +839,7 @@ class TestHostKeyFlowFinishReplacementStaleGeneration(unittest.TestCase):
     def test_stale_generation_is_noop(self):
         flow = host_key_flow.HostKeyFlow(
             ssh_monitor=MagicMock(),
-            get_tunnel=lambda: {"ssh_host": "srv", "ssh_port": 22},
+            get_tunnel=lambda: {"ssh": {"host": "srv", "port": 22}},
             get_socks5_port=lambda: 1080,
             get_password=lambda: "",
             on_connect=MagicMock(),
@@ -848,7 +848,7 @@ class TestHostKeyFlowFinishReplacementStaleGeneration(unittest.TestCase):
         current_gen = flow._generation
         flow._finish_replacement(
             current_gen + 999,
-            {"ssh_host": "srv", "ssh_port": 22},
+            {"ssh": {"host": "srv", "port": 22}},
             (False, "keys", "fps", None),
         )
         flow._on_reconnect.assert_not_called()
@@ -891,7 +891,7 @@ class TestHostKeyReplaceOsCloseError(unittest.TestCase):
                  patch.object(host_key, "KNOWN_HOSTS_PATH", known_hosts), \
                  patch("os.close", side_effect=OSError("fd closed")):
                 result = host_key.replace(
-                    {"ssh_host": "example.com", "ssh_port": 22},
+                    {"ssh": {"host": "example.com", "port": 22}},
                     "example.com ssh-ed25519 NEWKEY",
                 )
         # atomic_write succeeds; the finally block's OSError is swallowed.

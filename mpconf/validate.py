@@ -31,8 +31,23 @@ def numeric_errors(mp) -> list:
     return errors
 
 
-def tunnel_rows_errors(mp) -> list:
-    """逐隧道行校验：端口转发行 + NFS 挂载节（ADR-007）。
+
+def _ssh_svc(server) -> dict:
+    """v2 形状：SSH 隧道服务节点（services.ssh；非 dict 形状安全返回 {}）。"""
+    svc = server.get("services") if isinstance(server.get("services"), dict) else {}
+    ssh = svc.get("ssh")
+    return ssh if isinstance(ssh, dict) else {}
+
+
+def _nfs_svc(server):
+    """v2 形状：NFS 服务节点（services.nfs；非 dict 返回 None 保持
+    「未配置不校验」语义）。"""
+    svc = server.get("services") if isinstance(server.get("services"), dict) else {}
+    nfs = svc.get("nfs")
+    return nfs if isinstance(nfs, dict) else None
+
+def server_rows_errors(mp) -> list:
+    """逐服务器行校验：SSH 隧道服务的转发实例 + NFS 服务的挂载实例。
 
     merge 前：保存候选必须规整——字符串端口的读时兼容只发生在 load
     路径的 normalize_forwards。NFS 名字/路径/端口是运行时标识与安全
@@ -40,21 +55,22 @@ def tunnel_rows_errors(mp) -> list:
     对必须在落盘前拦下。
     """
     errors = []
-    for _ti, _t in enumerate(mp.get("tunnels") or []):
+    for _ti, _t in enumerate(mp.get("servers") or []):
         if not isinstance(_t, dict):
             continue
         _tname = _t.get("name") or f"#{_ti}"
-        _forwards = _t.get("forwards")
+        _ssh = _t.get("ssh")
+        if _ssh is not None and not isinstance(_ssh, dict):
+            errors.append(f"服务器 {_tname} 的 ssh 必须是对象")
+        _forwards = _ssh_svc(_t).get("forwards")
         if _forwards is None:
             pass
         elif not isinstance(_forwards, list):
-            errors.append(f"隧道 {_tname} 的 forwards 必须是列表")
+            errors.append(f"服务器 {_tname} 的 forwards 必须是列表")
         else:
             errors += _forward_rows(_tname, _forwards)
-        _nfs = _t.get("nfs")
-        if _nfs is not None and not isinstance(_nfs, dict):
-            errors.append(f"隧道 {_tname} 的 nfs 必须是对象")
-        elif isinstance(_nfs, dict):
+        _nfs = _nfs_svc(_t)
+        if _nfs is not None:
             errors += _nfs_errors(_tname, _nfs)
     return errors
 
@@ -64,14 +80,14 @@ def _forward_rows(tname, forwards) -> list:
     for _fi, _f in enumerate(forwards):
         if not isinstance(_f, dict):
             errors.append(
-                f"隧道 {tname} 的第 {_fi + 1} 条端口转发必须是对象")
+                f"服务器 {tname} 的第 {_fi + 1} 条端口转发必须是对象")
             continue
         for _key in ("local_port", "remote_port"):
             _v = _f.get(_key)
             if (not isinstance(_v, int) or isinstance(_v, bool)
                     or not 1 <= _v <= _PORT_MAX):
                 errors.append(
-                    f"隧道 {tname} 第 {_fi + 1} 条转发的 "
+                    f"服务器 {tname} 第 {_fi + 1} 条转发的 "
                     f"{_key} 无效（须 1..65535）")
         _rh = _f.get("remote_host")
         if _rh is None:
@@ -79,7 +95,7 @@ def _forward_rows(tname, forwards) -> list:
         if (not isinstance(_rh, str) or not _rh.strip()
                 or any(c.isspace() for c in _rh) or ":" in _rh):
             errors.append(
-                f"隧道 {tname} 第 {_fi + 1} 条转发的 remote_host "
+                f"服务器 {tname} 第 {_fi + 1} 条转发的 remote_host "
                 "无效（须主机名或 IPv4 地址，暂不支持 IPv6）")
     return errors
 
@@ -92,25 +108,25 @@ def _nfs_errors(tname, nfs) -> list:
             or isinstance(_nport, bool)
             or not 1 <= _nport <= _PORT_MAX):
         errors.append(
-            f"隧道 {tname} 的 NFS 本地端口无效（须 1..65535）")
+            f"服务器 {tname} 的 NFS 本地端口无效（须 1..65535）")
     _mounts = nfs.get("mounts")
     if _mounts is not None and not isinstance(_mounts, list):
-        errors.append(f"隧道 {tname} 的 nfs.mounts 必须是列表")
+        errors.append(f"服务器 {tname} 的 nfs.mounts 必须是列表")
         _mounts = []
     _names = set()
     for _mi, _m in enumerate(_mounts or []):
         if not isinstance(_m, dict):
             errors.append(
-                f"隧道 {tname} 的第 {_mi + 1} 条 NFS 挂载必须是对象")
+                f"服务器 {tname} 的第 {_mi + 1} 条 NFS 挂载必须是对象")
             continue
         _label = _m.get("name") or f"#{_mi + 1}"
         _mname = _m.get("name")
         if not isinstance(_mname, str) or not _mname.strip():
             errors.append(
-                f"隧道 {tname} 的第 {_mi + 1} 条 NFS 挂载名不能为空")
+                f"服务器 {tname} 的第 {_mi + 1} 条 NFS 挂载名不能为空")
         elif _mname.strip() in _names:
             errors.append(
-                f"隧道 {tname} 的 NFS 挂载名 {_mname.strip()} 重复")
+                f"服务器 {tname} 的 NFS 挂载名 {_mname.strip()} 重复")
         else:
             _names.add(_mname.strip())
         _rp = _m.get("remote_path")
@@ -133,12 +149,12 @@ def port_conflict_errors(mp, sp) -> list:
     冲突，落盘后才由 bind 失败就太迟）。
 
     mp/sp 任一可为 None（该侧不参与）。多活（v0.9）：转发本地端口全
-    局唯一——任意隧道可并行运行，两条隧道抢同端口会让双方在
+    局唯一——任意服务器可并行运行，两台服务器抢同端口会让双方在
     ExitOnForwardFailure 下互顶死循环（v0.8 的「跨隧道合法」以单活为
     前提，随多活作废）。NFS 隧道与转发会话并行——本地端口同一命名空
     间；只查「实际在用」的 nfs（enabled 或配置了挂载）：merge 会给每
-    条隧道填默认 nfs 节（enabled=False、无挂载、12049），纯默认节点
-    不占端口，不得让两条隧道互报假冲突。
+    台服务器填默认 nfs 节（enabled=False、无挂载、12049），纯默认节点
+    不占端口，不得让两台服务器互报假冲突。
     """
     errors = []
     port_refs = []
@@ -147,12 +163,12 @@ def port_conflict_errors(mp, sp) -> list:
             _v = mp.get(_f)
             if isinstance(_v, int) and not isinstance(_v, bool):
                 port_refs.append((_f, _v))
-        for _ti, _t in enumerate(mp.get("tunnels") or []):
+        for _ti, _t in enumerate(mp.get("servers") or []):
             if not isinstance(_t, dict):
                 continue
             _tname = _t.get("name") or f"#{_ti}"
             _fw_seen = set()
-            for _f in _t.get("forwards") or []:
+            for _f in _ssh_svc(_t).get("forwards") or []:
                 if not isinstance(_f, dict):
                     continue
                 _lp = _f.get("local_port")
@@ -166,19 +182,19 @@ def port_conflict_errors(mp, sp) -> list:
                     continue
                 if _lp in _fw_seen:
                     errors.append(
-                        f"隧道 {_tname} 的转发本地端口 {_lp} 重复")
+                        f"服务器 {_tname} 的转发本地端口 {_lp} 重复")
                 else:
                     _fw_seen.add(_lp)
                     port_refs.append(
-                        (f"隧道 {_tname} 端口转发本地端口", _lp))
-            _nfs = _t.get("nfs")
+                        (f"服务器 {_tname} 端口转发本地端口", _lp))
+            _nfs = _nfs_svc(_t)
             if isinstance(_nfs, dict) and (
                     _nfs.get("enabled") is True or _nfs.get("mounts")):
                 _np = _nfs.get("local_port")
                 if (isinstance(_np, int) and not isinstance(_np, bool)
                         and 1 <= _np <= _PORT_MAX):
                     port_refs.append(
-                        (f"隧道 {_tname} NFS 本地端口", _np))
+                        (f"服务器 {_tname} NFS 本地端口", _np))
     if sp is not None:
         _v = sp.get("listen_port")
         if isinstance(_v, int) and not isinstance(_v, bool):
@@ -202,11 +218,11 @@ def mount_dir_conflict_errors(mp) -> list:
     from mpconf.config import resolve_mount_dir as _resolve_dir
     errors = []
     _dirs_seen = {}
-    for _ti, _t in enumerate(mp.get("tunnels") or []):
+    for _ti, _t in enumerate(mp.get("servers") or []):
         if not isinstance(_t, dict):
             continue
         _tname = _t.get("name") or f"#{_ti}"
-        _nfs = _t.get("nfs")
+        _nfs = _nfs_svc(_t)
         _nfs_mounts = (_nfs.get("mounts")
                        if isinstance(_nfs, dict) else None) or []
         for _m in _nfs_mounts:
@@ -216,7 +232,7 @@ def mount_dir_conflict_errors(mp) -> list:
             if not _label:
                 continue  # 空名已在 tunnel_rows_errors 拦下
             _dir = _resolve_dir(_m)
-            _who = f"隧道 {_tname} 的挂载 {_label}"
+            _who = f"服务器 {_tname} 的挂载 {_label}"
             if _dir in _dirs_seen:
                 errors.append(
                     f"挂载点冲突：{_dirs_seen[_dir]} 与 {_who} 同为 {_dir}")

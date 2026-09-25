@@ -11,7 +11,7 @@ def test_keychain_importable_without_security_framework():
         "import sys; sys.modules['Security'] = None;"
         "from shared import keychain;"
         "assert keychain.Security is None;"
-        "t = {'ssh_host': 'h', 'ssh_user': 'u'};"
+        "t = {'ssh': {'host': 'h', 'user': 'u'}};"
         "assert keychain.get_password(t) == '';"
         "assert keychain.set_password(t, 'x') is False;"
         "assert keychain.delete_password(t) is False;"

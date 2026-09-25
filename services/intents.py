@@ -61,7 +61,7 @@ class UserIntents:
         否则代理隧道整体重连。guarded=True 是保存流自动应用的守卫
         （未连接绝不拉起）；显式重连（菜单/桥接直连）恒 guarded=False
         ——会话存在即重建（Spec-A 语义）。"""
-        if tunnel_id and tunnel_id != self._conn.proxy_tunnel_id:
+        if tunnel_id and tunnel_id != self._conn.proxy_server_id:
             self._conn.restart_forward_async(
                 tunnel_id, self._reload_config, guarded=guarded,
                 thread_name="BridgeReconnectForward")
@@ -120,7 +120,7 @@ class UserIntents:
                     c, tunnel_id, index, not enabled)):
             return
         note = ""
-        if tunnel_id == self._conn.proxy_tunnel_id:
+        if tunnel_id == self._conn.proxy_server_id:
             # 守卫与保存流同判（proxy_connected=仅 connected，不含
             # connecting）——未运行的代理绝不因翻转转发被拉起（c-1）
             if self._conn.proxy_connected:

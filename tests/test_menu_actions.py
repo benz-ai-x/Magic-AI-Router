@@ -31,7 +31,7 @@ def _make_app(config=None):
         "http_listen_port": 8888,
         "capture_port": 8080,
         "capture_dir": "~/captures",
-        "current_tunnel": 0,
+        "proxy_server_id": "",
     }
     a._menu_builder = MagicMock()
     a.VERSION_DISPLAY = "0.4.2"
@@ -104,35 +104,41 @@ class TestConnectionActions(unittest.TestCase):
         a.toggle_system_proxy(None)
         a._sys_proxy.toggle.assert_called_once()
 
-    def test_switch_tunnel_noop_when_current_and_connected(self):
-        a = _make_app()
+    def test_switch_server_noop_when_current_and_connected(self):
+        a = _make_app({"proxy_server_id": "t-a", "servers": [
+            {"id": "t-a", "name": "t1",
+             "ssh": {"host": "h1", "port": 22, "auth_type": "key"}}]})
         a._conn.ssh.status = "connected"
-        switch = a.make_switch_tunnel(0)  # already current (current_tunnel=0)
+        a._conn.current_server = a._config["servers"][0]
+        switch = a.make_switch_server("t-a")  # already current
         with patch.object(a, "_update_mp_config") as upd:
             switch(None)
         upd.assert_not_called()
 
-    def test_switch_tunnel_persists_and_reconnects(self):
-        # #46：切换隧道经事务写径落盘（磁盘可见），再重连。写径写前
-        # 读新——种子须先落沙箱磁盘，内存 _config 会被磁盘真相刷新
-        tunnels = [
-            {"name": "t1", "ssh_user": "u", "ssh_host": "h1",
-             "ssh_port": 22, "auth_type": "key"},
-            {"name": "t2", "ssh_user": "u", "ssh_host": "h2",
-             "ssh_port": 22, "auth_type": "key"}]
+    def test_switch_server_persists_and_reconnects(self):
+        # #46：切换代理服务器经事务写径落盘（磁盘可见），再重连。写径
+        # 写前读新——种子须先落沙箱磁盘，内存 _config 会被磁盘真相刷新
+        servers = [
+            {"id": "t-a", "name": "t1",
+             "ssh": {"user": "u", "host": "h1", "port": 22,
+                     "auth_type": "key"}},
+            {"id": "t-b", "name": "t2",
+             "ssh": {"user": "u", "host": "h2", "port": 22,
+                     "auth_type": "key"}}]
         import json as _json_seed
         from shared import config_store as _cs
         with open(_cs.PATHS["mp"], "w") as f:
-            _json_seed.dump({"current_tunnel": 0, "tunnels": tunnels}, f)
-        a = _make_app({"current_tunnel": 0, "tunnels": tunnels})
+            _json_seed.dump({"proxy_server_id": "t-a",
+                             "servers": servers}, f)
+        a = _make_app({"proxy_server_id": "t-a", "servers": servers})
         a._conn.ssh.status = "stopped"
-        switch = a.make_switch_tunnel(1)
+        switch = a.make_switch_server("t-b")
         switch(None)
-        self.assertEqual(a._config["current_tunnel"], 1)
+        self.assertEqual(a._config["proxy_server_id"], "t-b")
         import json as _json
         from shared import config_store
         disk = _json.loads(open(config_store.PATHS["mp"]).read())
-        self.assertEqual(disk.get("current_tunnel"), 1)
+        self.assertEqual(disk.get("proxy_server_id"), "t-b")
         a._conn.restart.assert_called_once()
 
 
@@ -593,32 +599,31 @@ class TestMpSavedConverge(unittest.TestCase):
         self.assertIs(a._config.get("prevent_sleep"), False)
 
 
-class TestSwitchTunnelStableRole(unittest.TestCase):
-    """v0.9.2：菜单切换代理角色写稳定 id（current_tunnel_id 真相 +
-    current_tunnel 下标投影），删除/调序不再让角色漂移。"""
+class TestSwitchServerStableRole(unittest.TestCase):
+    """v2：菜单切换代理角色只写 proxy_server_id 单一真相——删除/调序
+    不再让角色漂移（v1 下标投影随换轴退役）。"""
 
-    def test_switch_tunnel_persists_stable_id_role(self):
-        tunnels = [
-            {"name": "t1", "ssh_user": "u", "ssh_host": "h1",
-             "ssh_port": 22, "auth_type": "key", "id": "t-a"},
-            {"name": "t2", "ssh_user": "u", "ssh_host": "h2",
-             "ssh_port": 22, "auth_type": "key", "id": "t-b"}]
+    def test_switch_server_persists_stable_id_role(self):
+        servers = [
+            {"name": "t1", "ssh": {"user": "u", "host": "h1", "port": 22,
+                                   "auth_type": "key"}, "id": "t-a"},
+            {"name": "t2", "ssh": {"user": "u", "host": "h2", "port": 22,
+                                   "auth_type": "key"}, "id": "t-b"}]
         import json as _json_seed
         from shared import config_store as _cs
         with open(_cs.PATHS["mp"], "w") as f:
-            _json_seed.dump({"current_tunnel": 0, "current_tunnel_id": "t-a",
-                             "tunnels": tunnels}, f)
-        a = _make_app({"current_tunnel": 0, "current_tunnel_id": "t-a",
-                       "tunnels": tunnels})
+            _json_seed.dump({"proxy_server_id": "t-a",
+                             "servers": servers}, f)
+        a = _make_app({"proxy_server_id": "t-a", "servers": servers})
         a._conn.ssh.status = "stopped"
-        a.make_switch_tunnel(1)(None)
-        self.assertEqual(a._config["current_tunnel_id"], "t-b")
-        self.assertEqual(a._config["current_tunnel"], 1)
+        a.make_switch_server("t-b")(None)
+        self.assertEqual(a._config["proxy_server_id"], "t-b")
         import json as _json
         from shared import config_store
         disk = _json.loads(open(config_store.PATHS["mp"]).read())
-        self.assertEqual(disk.get("current_tunnel_id"), "t-b")
-        self.assertEqual(disk.get("current_tunnel"), 1)
+        self.assertEqual(disk.get("proxy_server_id"), "t-b")
+        self.assertNotIn("current_tunnel", disk)
+        self.assertNotIn("current_tunnel_id", disk)
         a._conn.restart.assert_called_once()
 
 
@@ -636,26 +641,29 @@ class TestToggleForward(unittest.TestCase):
     def _seed_and_app(self, forwards, tid="t-abc"):
         import json as _json
         from shared import config_store as _cs
-        tunnels = [{"name": "fw", "id": tid, "ssh_user": "u",
-                    "ssh_host": "h", "ssh_port": 22, "auth_type": "key",
-                    "forwards": forwards}]
+        servers = [{"name": "fw", "id": tid,
+                    "ssh": {"user": "u", "host": "h", "port": 22,
+                            "auth_type": "key"},
+                    "services": {"ssh": {"forwards": forwards}}}]
         with open(_cs.PATHS["mp"], "w") as f:
-            _json.dump({"current_tunnel": 0, "tunnels": tunnels}, f)
-        a = _make_app({"current_tunnel": 0, "tunnels": tunnels})
+            _json.dump({"proxy_server_id": "", "servers": servers}, f)
+        a = _make_app({"proxy_server_id": "", "servers": servers})
         return a, tid
 
     def test_flips_disk_enabled_and_rebuilds_running_session(self):
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_host": "127.0.0.1",
               "remote_port": 80, "enabled": True}])
-        a._conn.proxy_tunnel_id = "t-other"
+        a._conn.proxy_server_id = "t-other"
         a.make_toggle_forward(tid, 0)(None)
         import json as _json
         from shared import config_store
         disk = _json.loads(open(config_store.PATHS["mp"]).read())
         # 磁盘翻转走事务写径；重建分发恒走守卫入口（guarded 默认 True，
         # 未连接绝不拉起的真值表见 coordinator 的 TestForwardGuards）
-        self.assertIs(disk["tunnels"][0]["forwards"][0]["enabled"], False)
+        self.assertIs(
+            disk["servers"][0]["services"]["ssh"]["forwards"][0]["enabled"],
+            False)
         a._conn.restart_forward_async.assert_called_once_with(
             tid, a._reload_config_or_alert,
             thread_name="ToggleForwardRebuild")
@@ -666,7 +674,7 @@ class TestToggleForward(unittest.TestCase):
             [{"local_port": 9000, "remote_port": 80}])
         a._conn.forward_connected.return_value = True
         a._conn.restart_forward_async.return_value = True
-        a._conn.proxy_tunnel_id = "t-other"
+        a._conn.proxy_server_id = "t-other"
         a.make_toggle_forward(tid, 0)(None)
         a._conn.restart_forward_async.assert_called_once_with(
             tid, a._reload_config_or_alert,
@@ -678,7 +686,7 @@ class TestToggleForward(unittest.TestCase):
         restart_forward 不被触达。"""
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_port": 80}])
-        a._conn.proxy_tunnel_id = "t-other"
+        a._conn.proxy_server_id = "t-other"
         a.make_toggle_forward(tid, 0)(None)
         a._conn.restart_forward_async.assert_called_once_with(
             tid, a._reload_config_or_alert,
@@ -690,7 +698,7 @@ class TestToggleForward(unittest.TestCase):
         （仅 connected）归 coordinator，意图只消费。"""
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_port": 80}])
-        a._conn.proxy_tunnel_id = tid
+        a._conn.proxy_server_id = tid
         a._conn.proxy_connected = False
         a.make_toggle_forward(tid, 0)(None)
         a._conn.restart.assert_not_called()  # 代理未跑：只写配置
@@ -701,7 +709,7 @@ class TestToggleForward(unittest.TestCase):
             [{"local_port": 9000, "remote_port": 80}])
         a._conn.forward_connected.return_value = True
         a._conn.restart_forward_async.return_value = True
-        a._conn.proxy_tunnel_id = "t-other"
+        a._conn.proxy_server_id = "t-other"
         with patch.object(a, "_notify") as notify:
             a.make_toggle_forward(tid, 0)(None)
         a._conn.restart_forward_async.assert_called_once()
@@ -712,7 +720,7 @@ class TestToggleForward(unittest.TestCase):
     def test_proxy_tunnel_rebuild_only_when_connected(self):
         a, tid = self._seed_and_app(
             [{"local_port": 9000, "remote_port": 80}])
-        a._conn.proxy_tunnel_id = tid   # 该隧道就是代理隧道
+        a._conn.proxy_server_id = tid   # 该隧道就是代理隧道
         a._conn.proxy_connected = False
         a.make_toggle_forward(tid, 0)(None)
         a._conn.restart.assert_not_called()   # 代理未跑：只写配置

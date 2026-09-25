@@ -17,19 +17,21 @@ def _resolve(row):
     return explicit or f"/Volumes/{row.get('name')}"
 
 
-def _config(*tunnels):
-    return {"tunnels": list(tunnels)}
+def _config(*servers):
+    return {"servers": list(servers)}
 
 
 def _tunnel(tid="t-1", name="srv", enabled=True, port=12049, mounts=None,
             forwards=()):
-    return {"id": tid, "name": name, "ssh_host": "h", "ssh_user": "u",
-            "auth_type": "key", "forwards": list(forwards),
-            "nfs": {"enabled": enabled, "local_port": port,
-                    "squash_to_ssh_user": False,
-                    "mounts": mounts if mounts is not None else [
-                        {"name": "data", "remote_path": "/data",
-                         "local_dir": "", "auto_mount": True}]}}
+    return {"id": tid, "name": name,
+            "ssh": {"host": "h", "user": "u", "auth_type": "key"},
+            "services": {
+                "ssh": {"forwards": list(forwards)},
+                "nfs": {"enabled": enabled, "local_port": port,
+                        "squash_to_ssh_user": False,
+                        "mounts": mounts if mounts is not None else [
+                            {"name": "data", "remote_path": "/data",
+                             "local_dir": "", "auto_mount": True}]}}}
 
 
 class _FakeRetry:

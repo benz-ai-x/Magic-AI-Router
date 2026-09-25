@@ -65,10 +65,11 @@ class TestSvcCoordPaths(unittest.TestCase):
 # ── config.py: _migrate password + save error ──────────────────────
 from mpconf import config
 class TestConfigMigratePassword(unittest.TestCase):
-    def test_migrate_preserves_tunnel_config(self):
+    def test_migrate_preserves_server_config(self):
         old = {"tunnels": [{"ssh_host": "s", "auth_type": "password"}]}
         result = config._migrate(old)
-        self.assertEqual(result["tunnels"][0]["ssh_host"], "s")
+        self.assertEqual(result["servers"][0]["ssh"]["host"], "s")
+        self.assertEqual(result["servers"][0]["ssh"]["auth_type"], "password")
 
 
 class TestConfigSaveOSError(unittest.TestCase):

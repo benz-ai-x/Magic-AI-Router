@@ -80,7 +80,7 @@ class HostKeyFlow:
             result = rumps.alert(
                 title="确认 SSH 服务器指纹",
                 message=(
-                    f"服务器：{tunnel.get('ssh_host')}:{tunnel.get('ssh_port', 22)}\n\n"
+                    f"服务器：{(tunnel.get('ssh') or {}).get('host')}:{(tunnel.get('ssh') or {}).get('port', 22)}\n\n"
                     f"SHA256 指纹：\n{fingerprints}\n\n"
                     "请通过可信渠道核对指纹。确认后，Magic AI Router 将严格固定此主机密钥。"
                 ),
@@ -125,7 +125,7 @@ class HostKeyFlow:
         result = rumps.alert(
             title="SSH 主机密钥已变化",
             message=(
-                f"服务器：{tunnel.get('ssh_host')}:{tunnel.get('ssh_port', 22)}\n\n"
+                f"服务器：{(tunnel.get('ssh') or {}).get('host')}:{(tunnel.get('ssh') or {}).get('port', 22)}\n\n"
                 f"新的 SHA256 指纹：\n{fingerprints}\n\n"
                 "这可能是服务器重装，也可能是中间人攻击。请通过可信渠道核对后再替换。"
             ),

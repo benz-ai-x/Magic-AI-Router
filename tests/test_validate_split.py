@@ -21,32 +21,37 @@ class TestMpValidate(unittest.TestCase):
     def test_numeric_errors_empty_is_skip(self):
         self.assertEqual(mpv.numeric_errors({"socks5_port": ""}), [])
 
-    def test_tunnel_rows_forwards_shape(self):
-        errs = mpv.tunnel_rows_errors({"tunnels": [
-            {"name": "s", "forwards": [
+    def test_server_rows_forwards_shape(self):
+        errs = mpv.server_rows_errors({"servers": [
+            {"name": "s", "services": {"ssh": {"forwards": [
                 {"local_port": 0, "remote_host": "h", "remote_port": 80},
-                "not-a-dict"]}]})
+                "not-a-dict"]}}}]})
         self.assertTrue(any("第 1 条转发的 local_port 无效" in e for e in errs))
         self.assertTrue(any("第 2 条端口转发必须是对象" in e for e in errs))
 
-    def test_tunnel_rows_nfs_messages(self):
-        errs = mpv.tunnel_rows_errors({"tunnels": [
-            {"name": "s", "nfs": {"local_port": 12049, "mounts": [
-                {"name": "", "remote_path": "rel", "local_dir": "x"}]}}]})
+    def test_server_rows_nfs_messages(self):
+        errs = mpv.server_rows_errors({"servers": [
+            {"name": "s", "services": {"nfs": {"local_port": 12049, "mounts": [
+                {"name": "", "remote_path": "rel", "local_dir": "x"}]}}}]})
         self.assertTrue(any("挂载名不能为空" in e for e in errs))
         self.assertTrue(any("远程路径必须是绝对路径" in e for e in errs))
         self.assertTrue(any("本地目录必须是绝对路径" in e for e in errs))
 
-    def test_tunnel_rows_nfs_not_dict(self):
-        errs = mpv.tunnel_rows_errors({"tunnels": [{"name": "s",
-                                                    "nfs": ["x"]}]})
-        self.assertEqual(errs, ["隧道 s 的 nfs 必须是对象"])
+    def test_server_rows_nfs_not_dict_treated_as_absent(self):
+        # v2 语义（与 JS 第一道闸同口径）：非 dict nfs = 未配置不校验，
+        # merge 归一回默认节点——v1 的「nfs 必须是对象」报错随换轴退役
+        errs = mpv.server_rows_errors({"servers": [{"name": "s",
+                                                    "services": {"nfs": ["x"]}}]})
+        self.assertEqual(errs, [])
+        errs2 = mpv.server_rows_errors({"servers": [{"name": "s",
+                                                     "ssh": ["x"]}]})
+        self.assertEqual(errs2, ["服务器 s 的 ssh 必须是对象"])
 
     def test_port_conflict_across_sides(self):
         errs = mpv.port_conflict_errors(
-            {"tunnels": [{"name": "s", "forwards": [
+            {"servers": [{"name": "s", "services": {"ssh": {"forwards": [
                 {"local_port": 9527, "remote_host": "h",
-                 "remote_port": 80}]}]},
+                 "remote_port": 80}]}}}]},
             {"listen_port": 9527})
         self.assertEqual(len(errs), 1)
         self.assertIn("端口冲突", errs[0])
@@ -55,17 +60,19 @@ class TestMpValidate(unittest.TestCase):
     def test_port_conflict_default_nfs_nodes_do_not_collide(self):
         # merge 填的纯默认 nfs 节（enabled=False 无挂载）不参与——
         # 两条隧道不得互报假冲突
-        tunnel = {"nfs": {"enabled": False, "local_port": 12049,
-                          "mounts": []}}
+        _srv = lambda n: {"name": n,
+                          "services": {"nfs": {"enabled": False,
+                                               "local_port": 12049,
+                                               "mounts": []}}}
         self.assertEqual(
             mpv.port_conflict_errors(
-                {"tunnels": [dict(tunnel, name="a"), dict(tunnel, name="b")]},
+                {"servers": [_srv("a"), _srv("b")]},
                 None), [])
 
     def test_mount_dir_conflict_uses_default_resolution(self):
-        errs = mpv.mount_dir_conflict_errors({"tunnels": [
-            {"name": "a", "nfs": {"mounts": [{"name": "data"}]}},
-            {"name": "b", "nfs": {"mounts": [{"name": "data"}]}}]})
+        errs = mpv.mount_dir_conflict_errors({"servers": [
+            {"name": "a", "services": {"nfs": {"mounts": [{"name": "data"}]}}},
+            {"name": "b", "services": {"nfs": {"mounts": [{"name": "data"}]}}}]})
         self.assertEqual(len(errs), 1)
         self.assertIn("/Volumes/data", errs[0])
 

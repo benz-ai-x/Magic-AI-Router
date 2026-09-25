@@ -116,14 +116,16 @@ class TestProbePort(unittest.TestCase):
     def test_first_forward_port_derivation_single_home(self):
         from tunnel.ssh_session import first_forward_port
         self.assertEqual(first_forward_port(
-            {"forwards": [{"local_port": 9000, "remote_host": "h",
-                           "remote_port": 80},
-                          {"local_port": True}]}), 9000)
-        self.assertIsNone(first_forward_port({"forwards": []}))
+            {"services": {"ssh": {"forwards": [
+                {"local_port": 9000, "remote_host": "h", "remote_port": 80},
+                {"local_port": True}]}}}), 9000)
+        self.assertIsNone(first_forward_port(
+            {"services": {"ssh": {"forwards": []}}}))
         self.assertIsNone(first_forward_port(None))
         # 防御分支：非法端口行跳过
         self.assertIsNone(first_forward_port(
-            {"forwards": [{"local_port": 70000}]}))
+            {"services": {"ssh": {"forwards": [
+                {"local_port": 70000}]}}}))
 
 
 class TestTick(unittest.TestCase):

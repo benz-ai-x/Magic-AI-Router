@@ -34,14 +34,14 @@ def _lookup_name(host, port):
 
 def inspect(tunnel, force_scan=False):
     """Return (known, scanned_keys, fingerprints, error)."""
-    host = str(tunnel.get("ssh_host") or "").strip()
+    host = str(tunnel.get("ssh", {}).get("host") or "").strip()
     try:
         _validate_host(host)
         _ensure_storage()
     except (ValueError, OSError) as exc:
         return False, "", "", str(exc)
     try:
-        port = int(tunnel.get("ssh_port", 22))
+        port = int(tunnel.get("ssh", {}).get("port", 22))
     except (TypeError, ValueError):
         return False, "", "", "SSH 端口无效"
     if not host or not 1 <= port <= 65535:
@@ -125,10 +125,10 @@ def accept(keys):
 
 def replace(tunnel, keys):
     """Atomically replace entries for one host after explicit confirmation."""
-    host = str(tunnel.get("ssh_host") or "").strip()
+    host = str(tunnel.get("ssh", {}).get("host") or "").strip()
     lock_fd = None
     try:
-        port = int(tunnel.get("ssh_port", 22))
+        port = int(tunnel.get("ssh", {}).get("port", 22))
         _validate_host(host)
         _ensure_storage()
         lock_fd = os.open(

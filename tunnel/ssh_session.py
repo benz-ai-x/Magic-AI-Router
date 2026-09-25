@@ -32,7 +32,9 @@ def first_forward_port(tunnel):
     端口，与 _forward_args 同口径。非法/缺字段行防御性跳过——prepare
     校验与 merge 归一双保险下，正常流转的配置永不触达跳过分支。
     """
-    for f in (tunnel or {}).get("forwards") or []:
+    forwards = (((tunnel or {}).get("services") or {})
+                .get("ssh") or {}).get("forwards") or []
+    for f in forwards:
         if isinstance(f, dict) and f.get("enabled") is not False:
             lp = f.get("local_port")
             if isinstance(lp, int) and not isinstance(lp, bool) \

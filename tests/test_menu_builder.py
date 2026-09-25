@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import rumps
 
-from shellui.menu_builder import MenuBuilder, MenuState, _proxy_tunnel_index
+from shellui.menu_builder import MenuBuilder, MenuState, _is_proxy_server
 from tunnel.connection_coordinator import ForwardState
 from mount.coordinator import MountState
 
@@ -17,7 +17,7 @@ def _state(**overrides):
         config={}, sys_proxy_on=False, sys_proxy_error="",
         capture_enabled=False, capture_state="idle", capture_hint=None,
         suanpan_running=False, suanpan_error="", suanpan_listen_address="",
-        current_tunnel=None,
+        current_server=None,
     )
     base.update(overrides)
     return MenuState(**base)
@@ -118,13 +118,17 @@ class TestMultiActiveTunnels(unittest.TestCase):
 
     @staticmethod
     def _cfg():
-        return {"current_tunnel": 0, "tunnels": [
-            {"id": "t-1", "name": "Aws-eu", "ssh_host": "a",
-             "forwards": [{"local_port": 9000, "remote_host": "h",
-                           "remote_port": 80}]},
-            {"id": "t-2", "name": "AWS-ap", "ssh_host": "b",
-             "forwards": [{"local_port": 9001, "remote_host": "h",
-                           "remote_port": 81}]},
+        return {"proxy_server_id": "t-1", "servers": [
+            {"id": "t-1", "name": "Aws-eu",
+             "ssh": {"host": "a"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_host": "h",
+                  "remote_port": 80}]}}},
+            {"id": "t-2", "name": "AWS-ap",
+             "ssh": {"host": "b"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9001, "remote_host": "h",
+                  "remote_port": 81}]}}},
         ]}
 
     def test_status_flip_does_not_rebuild_menu(self):
@@ -142,7 +146,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
         """行集合变化（配置增删转发规则）仍然重建。"""
         cfg = self._cfg()
         cfg_more = self._cfg()
-        cfg_more["tunnels"][1]["forwards"].append(
+        cfg_more["servers"][1]["services"]["ssh"]["forwards"].append(
             {"local_port": 9002, "remote_host": "h", "remote_port": 82})
         key_a = MenuBuilder(MagicMock(), lambda: _state(config=cfg)).struct_key()
         key_b = MenuBuilder(
@@ -173,7 +177,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
         self.assertIn("暂停代理", titles)          # connected 语境
         self.assertIn("重新连接", titles)
         self.assertIn("开启系统代理", titles)       # 动词式开关
-        self.assertIn("代理隧道（本地代理的上游）", titles)
+        self.assertIn("代理服务器（本地代理的上游）", titles)
         self.assertIn("✓ Aws-eu", titles)          # 角色单选：当前打 ✓
         self.assertIn("AWS-ap", titles)
         launch = [t for t in titles if t == "经代理启动 App"]
@@ -201,7 +205,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
 
     def test_forward_submenu_idle_and_no_rules(self):
         cfg = self._cfg()
-        cfg["tunnels"][1]["forwards"] = []
+        cfg["servers"][1]["services"]["ssh"]["forwards"] = []
         parent, subs = self._submenu("端口映射", cfg=cfg)
         titles = self._titles
         idle = [s for s in subs if s.title.startswith("AWS-ap")]
@@ -215,16 +219,16 @@ class TestMultiActiveTunnels(unittest.TestCase):
 
     def test_forward_submenu_empty_state_hint(self):
         cfg = self._cfg()
-        for t in cfg["tunnels"]:
-            t["forwards"] = []
+        for t in cfg["servers"]:
+            t["services"]["ssh"]["forwards"] = []
         parent, _ = self._submenu("端口映射", cfg=cfg)
         titles = self._titles
         self.assertIn("添加转发规则…", titles)
 
     def test_forward_empty_state_deep_links_to_prefs(self):
         cfg = self._cfg()
-        for t in cfg["tunnels"]:
-            t["forwards"] = []
+        for t in cfg["servers"]:
+            t["services"]["ssh"]["forwards"] = []
         app = MagicMock()
         mb = MenuBuilder(app, lambda: _state(config=cfg))
         parent = mb._build_forward_submenu()
@@ -239,10 +243,12 @@ class TestMultiActiveTunnels(unittest.TestCase):
 
     def test_forward_submenu_single_tunnel_flattens(self):
         """单隧道拍平：转发行一级直达（免隧道包装行的嵌套）。"""
-        cfg = {"current_tunnel": 0, "tunnels": [
-            {"id": "t-1", "name": "Aws-eu", "ssh_host": "a",
-             "forwards": [{"local_port": 7001, "remote_host": "h",
-                           "remote_port": 71}]}]}
+        cfg = {"proxy_server_id": "t-1", "servers": [
+            {"id": "t-1", "name": "Aws-eu",
+             "ssh": {"host": "a"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 7001, "remote_host": "h",
+                  "remote_port": 71}]}}}]}
         app = MagicMock()
         with unittest.mock.patch("shellui.menu_builder.chromium_proxy.installed_apps",
                                  return_value=[]):
@@ -260,7 +266,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
         self._submenu("选 项", cfg={"prevent_sleep": True,
                                     "launch_at_login": False,
                                     "config_api_enabled": True,
-                                    "tunnels": []})
+                                    "servers": []})
         titles = self._titles
         self.assertEqual(titles, ["防睡眠", "登录启动", "配置 API 服务"])
         mb = self._mb
@@ -295,7 +301,7 @@ class TestMultiActiveTunnels(unittest.TestCase):
         """断开也保留隧道名——此刻更需要知道当前配的是谁。"""
         cfg = self._cfg()
         mb = MenuBuilder(MagicMock(), lambda: _state(
-            ssh_status="stopped", config=cfg, current_tunnel=cfg["tunnels"][0]))
+            ssh_status="stopped", config=cfg, current_server=cfg["servers"][0]))
         mb.build()
         mb.refresh_titles()
         self.assertIn("未连接", mb.refs["proxy_status"].title)
@@ -315,13 +321,17 @@ class TestDynamicRefreshInPlace(unittest.TestCase):
 
     @staticmethod
     def _cfg():
-        return {"current_tunnel": 0, "tunnels": [
-            {"id": "t-1", "name": "Aws-eu", "ssh_host": "a",
-             "forwards": [{"local_port": 9000, "remote_host": "h",
-                           "remote_port": 80}]},
-            {"id": "t-2", "name": "AWS-ap", "ssh_host": "b",
-             "forwards": [{"local_port": 9001, "remote_host": "h",
-                           "remote_port": 81}]},
+        return {"proxy_server_id": "t-1", "servers": [
+            {"id": "t-1", "name": "Aws-eu",
+             "ssh": {"host": "a"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_host": "h",
+                  "remote_port": 80}]}}},
+            {"id": "t-2", "name": "AWS-ap",
+             "ssh": {"host": "b"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9001, "remote_host": "h",
+                  "remote_port": 81}]}}},
         ]}
 
     def test_forward_rows_refresh_without_rebuild(self):
@@ -345,7 +355,7 @@ class TestDynamicRefreshInPlace(unittest.TestCase):
         state = {"mount_states": (MountState("t-1", "Aws-eu", "data",
                                              "mounted", ""),)}
         mb = MenuBuilder(MagicMock(), lambda: _state(
-            config={"tunnels": []}, **state))
+            config={"servers": []}, **state))
         mb._build_mount_submenu()
         row = mb.refs[("mount_row", "t-1", "data")]
         action = mb.refs[("mount_action", "t-1", "data")]
@@ -405,27 +415,33 @@ class TestIconInfrastructure(unittest.TestCase):
             self.assertIsNotNone(menu_builder._status_color(kind))
 
 
-class TestProxyTunnelIndex(unittest.TestCase):
-    """角色解析序（v0.9.2）：id 真相 → 旧下标 → 首条（与 merge 同语义，
-    菜单只消费不重定义）。"""
+class TestIsProxyServer(unittest.TestCase):
+    """代理角色判定（v2）：proxy_server_id 唯一真相，缺省/悬空回退首条
+    （与 merge 同语义，菜单只消费不重定义）。"""
 
-    def test_id_wins_over_index(self):
-        cfg = {"current_tunnel": 0, "current_tunnel_id": "t-b",
-               "tunnels": [{"id": "t-a"}, {"id": "t-b"}]}
-        self.assertEqual(_proxy_tunnel_index(cfg), 1)
+    def test_id_truth_marks_server(self):
+        cfg = {"proxy_server_id": "t-b",
+               "servers": [{"id": "t-a"}, {"id": "t-b"}]}
+        self.assertFalse(_is_proxy_server(cfg, cfg["servers"][0]))
+        self.assertTrue(_is_proxy_server(cfg, cfg["servers"][1]))
 
-    def test_dangling_id_falls_back_to_index(self):
-        cfg = {"current_tunnel": 1, "current_tunnel_id": "gone",
-               "tunnels": [{"id": "t-a"}, {"id": "t-b"}]}
-        self.assertEqual(_proxy_tunnel_index(cfg), 1)
+    def test_dangling_id_marks_nothing(self):
+        # 悬空 id 只可能出现在未经 merge 的手编配置里——merge 会把
+        # proxy_server_id 重写为解析后的有效值，菜单只消费 merge 后配置；
+        # 此处钉住原始判定不猜归属（不静默回退标错行）。
+        cfg = {"proxy_server_id": "gone",
+               "servers": [{"id": "t-a"}, {"id": "t-b"}]}
+        self.assertFalse(_is_proxy_server(cfg, cfg["servers"][0]))
+        self.assertFalse(_is_proxy_server(cfg, cfg["servers"][1]))
 
-    def test_index_out_of_range_resets_to_first(self):
-        cfg = {"current_tunnel": 5, "tunnels": [{"id": "t-a"}]}
-        self.assertEqual(_proxy_tunnel_index(cfg), 0)
+    def test_absent_id_first_row_is_proxy(self):
+        cfg = {"servers": [{"id": "t-a"}, {"id": "t-b"}]}
+        self.assertTrue(_is_proxy_server(cfg, cfg["servers"][0]))
 
     def test_malformed_config_is_safe(self):
-        self.assertEqual(_proxy_tunnel_index(None), 0)
-        self.assertEqual(_proxy_tunnel_index({}), 0)
+        self.assertFalse(_is_proxy_server(None, {"id": "t-a"}))
+        self.assertFalse(_is_proxy_server({}, {"id": "t-a"}))
+        self.assertFalse(_is_proxy_server({"servers": []}, {}))
 
 
 class TestMountSubmenu(unittest.TestCase):
@@ -441,7 +457,7 @@ class TestMountSubmenu(unittest.TestCase):
         with unittest.mock.patch("shellui.menu_builder.chromium_proxy.installed_apps",
                                  return_value=[]):
             mb = MenuBuilder(app, lambda: _state(
-                config=cfg or {"tunnels": []}, mount_states=mount_states))
+                config=cfg or {"servers": []}, mount_states=mount_states))
             parent = mb._build_mount_submenu()
         rows = [r for r in parent.values() if hasattr(r, "values")]
         titles = [r.title for r in parent.values() if hasattr(r, "title")]
@@ -485,11 +501,11 @@ class TestMountSubmenu(unittest.TestCase):
     def test_all_empty_multi_tunnel_no_duplicate_rows(self):
         """rumps 以标题为键去重——多隧道全空态时各包装行内的
         「添加转发规则…」分属不同子菜单，顶层仅全局一行（不塌行）。"""
-        cfg = {"current_tunnel": 0, "tunnels": [
-            {"id": "t-1", "name": "a", "ssh_host": "h",
-             "ssh_user": "u", "auth_type": "key", "forwards": []},
-            {"id": "t-2", "name": "b", "ssh_host": "h",
-             "ssh_user": "u", "auth_type": "key", "forwards": []},
+        cfg = {"proxy_server_id": "", "servers": [
+            {"id": "t-1", "name": "a", "ssh": {"host": "h", "user": "u"},
+             "services": {"ssh": {"forwards": []}}},
+            {"id": "t-2", "name": "b", "ssh": {"host": "h", "user": "u"},
+             "services": {"ssh": {"forwards": []}}},
         ]}
         app = MagicMock()
         mb = MenuBuilder(app, lambda: _state(config=cfg))
@@ -509,7 +525,7 @@ class TestMountSubmenu(unittest.TestCase):
 
     def test_empty_state_hint_deep_links(self):
         app = MagicMock()
-        mb = MenuBuilder(app, lambda: _state(config={"tunnels": []}))
+        mb = MenuBuilder(app, lambda: _state(config={"servers": []}))
         parent = mb._build_mount_submenu()
         titles = [r.title for r in parent.values() if hasattr(r, "title")]
         self.assertIn("配置挂载…", titles)
@@ -531,13 +547,17 @@ class TestForwardRowPerItemToggle(unittest.TestCase):
 
     @staticmethod
     def _cfg():
-        return {"current_tunnel": 0, "tunnels": [
-            {"id": "t-1", "name": "Aws-eu", "ssh_host": "a",
-             "forwards": [{"local_port": 9000, "remote_host": "h",
-                           "remote_port": 80}]},
-            {"id": "t-2", "name": "AWS-ap", "ssh_host": "b",
-             "forwards": [{"local_port": 9001, "remote_host": "h",
-                           "remote_port": 81}]},
+        return {"proxy_server_id": "t-1", "servers": [
+            {"id": "t-1", "name": "Aws-eu",
+             "ssh": {"host": "a"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_host": "h",
+                  "remote_port": 80}]}}},
+            {"id": "t-2", "name": "AWS-ap",
+             "ssh": {"host": "b"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9001, "remote_host": "h",
+                  "remote_port": 81}]}}},
         ]}
 
     @staticmethod
@@ -555,7 +575,7 @@ class TestForwardRowPerItemToggle(unittest.TestCase):
                  forward_states=None):
         cfg = cfg or self._cfg()
         if forwards is not None:
-            cfg["tunnels"][1]["forwards"] = forwards
+            cfg["servers"][1]["services"]["ssh"]["forwards"] = forwards
         if forward_states is None and ssh_status == "connected":
             forward_states = (ForwardState("t-2", "AWS-ap", "connected"),)
         mb = MenuBuilder(MagicMock(), lambda: _state(
@@ -575,7 +595,7 @@ class TestForwardRowPerItemToggle(unittest.TestCase):
 
     def test_proxy_tunnel_forwards_get_rows(self):
         cfg = self._cfg()
-        cfg["tunnels"][0]["forwards"] = [
+        cfg["servers"][0]["services"]["ssh"]["forwards"] = [
             {"local_port": 7001, "remote_port": 71}]
         parent = self._fw_menu(cfg=cfg)
         proxy_rows = [i for i in parent.values()

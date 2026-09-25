@@ -350,7 +350,7 @@ function normalizeState(raw){
   // Shape whatever the server returned into the canonical in-memory model.
   const S=raw||{};
   S.mp=S.mp||{};S.sp=S.sp||{};
-  S.mp.tunnels=S.mp.tunnels||[];
+  S.mp.servers=S.mp.servers||[];
   S.sp.providers=S.sp.providers||{};
   S.sp.router=S.sp.router||{};
   S.sp.rules=S.sp.rules||[];
@@ -412,8 +412,8 @@ function _nfsMountedCount(t){
 function mergeRuntimeDecorations(S,fetched){
   const fm=(fetched&&fetched.mp)||{};
   const byId={};
-  (fm.tunnels||[]).forEach(t=>{if(t&&t.id)byId[t.id]=t;});
-  (S.mp.tunnels||[]).forEach(t=>{
+  (fm.servers||[]).forEach(t=>{if(t&&t.id)byId[t.id]=t;});
+  (S.mp.servers||[]).forEach(t=>{
     if(!t||!t.id)return;
     const f=byId[t.id];if(!f)return;
     t.nfs_states=f.nfs_states||{};
@@ -445,20 +445,20 @@ function viewSnapshot(view,state,roles){
   // value from becoming a false change merely because collect() filled it in.
   const mp=(state&&state.mp)||{},sp=(state&&state.sp)||{};
   if(view==='tunnel')return{
-    // 角色真相是 current_tunnel_id（稳定 id）；派生下标不入 dirty 面
-    //（隧道删除/调序不应伪造角色变更）
-    current_tunnel_id:(mp.current_tunnel_id==null?'':String(mp.current_tunnel_id)),
-    tunnels:(mp.tunnels||[]).map(t=>({
-      id:t.id||'',name:t.name||'',ssh_user:t.ssh_user||'',ssh_host:t.ssh_host||'',
-      ssh_port:numberDefault(t.ssh_port,22),auth_type:t.auth_type||'key',
-      ssh_key:t.ssh_key||'',ssh_compression:t.ssh_compression!==false,
+    // 角色真相是 proxy_server_id（稳定 id）；派生面不入 dirty
+    //（服务器删除/调序不应伪造角色变更）
+    proxy_server_id:(mp.proxy_server_id==null?'':String(mp.proxy_server_id)),
+    tunnels:(mp.servers||[]).map(t=>({
+      id:t.id||'',name:t.name||'',ssh_user:sshOf(t).user||'',ssh_host:sshOf(t).host||'',
+      ssh_port:numberDefault(sshOf(t).port,22),auth_type:sshOf(t).auth_type||'key',
+      ssh_key:sshOf(t).ssh_key||'',ssh_compression:sshOf(t).compression!==false,
       password:t.password||(t.has_password?'__saved_password__':''),
-      forward_autostart:t.forward_autostart===true,
+      autostart:autostartOf(t),
       // collect 的缺省口径：空端口=0、空地址=127.0.0.1（与服务端 merge
       // 归一同一语义），未触碰行不产生假 dirty。
       // is_proxy/forward_running 是服务端运行态装饰（不入快照——非用户
       // 可编辑面，prepare 的 READONLY_DECORATED_FIELDS 剥除）
-      forwards:(t.forwards||[]).map(f=>({
+      forwards:forwardsOf(t).map(f=>({
         local_port:numberDefault(f.local_port,0),
         remote_host:f.remote_host||'127.0.0.1',
         remote_port:numberDefault(f.remote_port,0),
@@ -468,9 +468,9 @@ function viewSnapshot(view,state,roles){
   };
   if(view==='nfs')return{
     // 运行态装饰 nfs_states 不入 dirty 面（READONLY_DECORATED_FIELDS 剥除）
-    tunnels:(mp.tunnels||[]).map(t=>({
+    servers:(mp.servers||[]).map(t=>({
       id:t.id||'',
-      nfs:nfsProjection(t.nfs),
+      nfs:nfsProjection(nfsOf(t)),
     })),
   };
   if(view==='proxy')return{
@@ -526,14 +526,14 @@ function validateConfig(S){
   const errors=[];
   if(S&&S.sp&&S.sp._load_error)errors.push('Suanpan 配置装载失败，已阻止保存以防覆盖：'+S.sp._load_error);
   if(S&&S.mp&&S.mp._load_error)errors.push('Magic Proxy 配置装载失败，已阻止保存以防覆盖：'+S.mp._load_error);
-  (S.mp.tunnels||[]).forEach((t,i)=>{
-    if(!t.ssh_host)errors.push(`隧道 ${i+1}: 未填写地址`);
-    if(t.ssh_port&&(t.ssh_port<1||t.ssh_port>65535))errors.push(`隧道 ${i+1}: SSH 端口无效`);
+  (S.mp.servers||[]).forEach((t,i)=>{
+    if(!sshOf(t).host)errors.push(`隧道 ${i+1}: 未填写地址`);
+    if(sshOf(t).port&&(sshOf(t).port<1||sshOf(t).port>65535))errors.push(`隧道 ${i+1}: SSH 端口无效`);
     // 端口转发行：范围 + 同隧道重复 + remote_host 文法（镜像 prepare 的
     // 中文文案——prepare 是 422 兜底，这里是保存前第一道）
-    const tn=t.name||t.ssh_host||(`隧道 ${i+1}`);
+    const tn=t.name||sshOf(t).host||(`隧道 ${i+1}`);
     const fwSeen={};
-    (t.forwards||[]).forEach(f=>{
+    forwardsOf(t).forEach(f=>{
       // 与 prepare 同口径：端口须整数（拦小数），remote_host 字串化
       // （数字形态仅在直改 state 时出现，String 兜底不抛 TypeError）
       const lp=f.local_port,rp=f.remote_port,rh=String(f.remote_host||'127.0.0.1');
@@ -546,7 +546,7 @@ function validateConfig(S){
     });
     // NFS 本地端口行级形状（镜像 prepare 的 _nfs_errors；无效值不再
     // 进冲突命名空间——两个错误不得叠加报）
-    const n=t.nfs;
+    const n=nfsOf(t);
     if(n&&typeof n==='object'){
       const np=n.local_port;
       if(np!=null&&np!==''&&(!Number.isInteger(np)||np<1||np>65535))
@@ -575,9 +575,9 @@ function validateConfig(S){
   });
   // 转发本地端口全局唯一（多活 v0.9：任意隧道可并行，抢同端口会让两条
   // ssh 在 ExitOnForwardFailure 下互顶）；镜像 prepare 同一判定
-  (S.mp.tunnels||[]).forEach(t=>{
-    const tn=t.name||t.ssh_host||'隧道';
-    (t.forwards||[]).forEach(f=>{
+  (S.mp.servers||[]).forEach(t=>{
+    const tn=t.name||sshOf(t).host||'隧道';
+    forwardsOf(t).forEach(f=>{
       const lp=f.local_port;
       const ref=`${tn} 端口转发本地端口`;
       if(f.enabled===false)return;  // 停用行不进会话 -L、不占本地端口
@@ -590,13 +590,13 @@ function validateConfig(S){
   // NFS 本地端口进同一命名空间（镜像 prepare 的「实际在用才占端口」：
   // enabled 或配置了挂载；merge 填的纯默认节点不占——两条隧道不得互报
   // 假冲突）。曾漏：NFS×转发/全局端口撞车过第一道闸、只在 422 现形
-  (S.mp.tunnels||[]).forEach(t=>{
-    const n=t.nfs;
+  (S.mp.servers||[]).forEach(t=>{
+    const n=nfsOf(t);
     if(!n||typeof n!=='object')return;
     if(!(n.enabled===true||(n.mounts&&n.mounts.length)))return;
     const np=n.local_port;
     if(!Number.isInteger(np)||np<1||np>65535)return;  // 形状归行级校验
-    const tn=t.name||t.ssh_host||'隧道';
+    const tn=t.name||sshOf(t).host||'隧道';
     const ref=`${tn} NFS 本地端口`;
     if(seen[np])errors.push(`端口冲突：${seen[np]} 与 ${ref} 同为 ${np}`);
     else seen[np]=ref;
@@ -617,7 +617,16 @@ function validateConfig(S){
   return errors;
 }
 
-function addrStr(t){return t.ssh_host?(t.ssh_user?t.ssh_user+'@':'')+t.ssh_host:'';}
+function addrStr(t){return sshOf(t).host?(sshOf(t).user?sshOf(t).user+'@':'')+sshOf(t).host:'';}
+// ── v2 服务器形状访问器（读安全缺省 / 写确保容器——路径知识单一归宿）──
+const sshOf=t=>((t||{}).ssh)||{};
+function sshNode(t){t.ssh=t.ssh||{user:'',host:'',port:22,auth_type:'key',ssh_key:'',compression:true};return t.ssh;}
+function sshSvc(t){const s=t.services=t.services||{};s.ssh=s.ssh||{forwards:[],autostart:false};return s.ssh;}
+const forwardsOf=t=>((((t||{}).services)||{}).ssh||{}).forwards||[];
+function nfsNode(t){const s=t.services=t.services||{};s.nfs=s.nfs||{enabled:false,local_port:12049,squash_to_ssh_user:false,mounts:[]};return s.nfs;}
+const nfsOf=t=>(((t||{}).services)||{}).nfs;
+const autostartOf=t=>((((t||{}).services)||{}).ssh||{}).autostart===true;
+
 function parseAddr(s){
   // IPv6-safe: supports user@host, user@[::1], user@host:port, user@[::1]:22
   let user='',hostPart=s;
@@ -886,8 +895,8 @@ function changedForwardTunnels(base,S){
   // 多活（v0.9）：返回 forwards 有变的隧道 id 数组——saveFlow 对「正在
   // 运行的」逐隧道触发守卫重连（代理隧道走代理守卫；转发会话按各自
   // 连接态定向守卫），未运行的不拉起。
-  const sig=t=>((t&&t.forwards)||[]).map(f=>`${f.local_port}|${f.remote_host}|${f.remote_port}|${f.enabled===false?0:1}`).join(';');
-  const byId=st=>{const m={};((st&&st.mp&&st.mp.tunnels)||[]).forEach(t=>{if(t&&t.id)m[t.id]=t;});return m;};
+  const sig=t=>forwardsOf(t).map(f=>`${f.local_port}|${f.remote_host}|${f.remote_port}|${f.enabled===false?0:1}`).join(';');
+  const byId=st=>{const m={};((st&&st.mp&&st.mp.servers)||[]).forEach(t=>{if(t&&t.id)m[t.id]=t;});return m;};
   const a=byId(base),b=byId(S);
   const out=[];
   for(const id of new Set([...Object.keys(a),...Object.keys(b)])){
@@ -898,14 +907,13 @@ function changedForwardTunnels(base,S){
 // 代理角色 → 隧道下标（纯函数，按任意 state 解析）：id 真相 → 悬空/缺省
 // 回退旧下标并钳制——与服务端 merge 的解析序同一语义
 function proxyIndexOf(st){
-  const mp=(st&&st.mp)||{},ts=(mp.tunnels)||[];
-  const cid=mp.current_tunnel_id||'';
+  const mp=(st&&st.mp)||{},ts=(mp.servers)||[];
+  const cid=mp.proxy_server_id||'';
   if(cid){
     const i=ts.findIndex(t=>t&&t.id===cid);
     if(i>=0)return i;
   }
-  const idx=numberDefault(mp.current_tunnel,0);
-  return Math.min(Math.max(0,idx),Math.max(0,ts.length-1));
+  return 0;  // id 悬空/缺省回退首条（与服务端 merge 同一解析序）
 }
 async function saveFlow(snap,deps,forceRulesSync){
   const{S,ccRoles,baselineState,baselineRoles}=snap;
@@ -964,14 +972,14 @@ async function saveFlow(snap,deps,forceRulesSync){
         // 隧道才触发）；运行中的转发会话按 tunnel_id 定向守卫——原生侧
         // 按各自连接态拦，未连接/未运行的绝不拉起
         const baseIdx=proxyIndexOf(baselineState),saveIdx=proxyIndexOf(S);
-        const baseCur=(baselineState.mp.tunnels||[])[baseIdx]||null;
-        const saveCur=(S.mp.tunnels||[])[saveIdx]||null;
+        const baseCur=(baselineState.mp.servers||[])[baseIdx]||null;
+        const saveCur=(S.mp.servers||[])[saveIdx]||null;
         const sameProxy=!!(baseCur&&saveCur&&baseCur.id&&saveCur.id===baseCur.id);
         const proxyId=saveCur&&saveCur.id;
         fwChangedIds.forEach(id=>{
           if(id===proxyId){
             if(sameProxy)deps.reconnectForwards(null);
-          }else if(((S.mp.tunnels||[]).find(t=>t&&t.id===id)||{}).forward_running){
+          }else if(((S.mp.servers||[]).find(t=>t&&t.id===id)||{}).forward_running){
             deps.reconnectForwards(id);
           }
         });
@@ -1044,7 +1052,7 @@ function captureBaseline(saved){
 function discardAll(){
   const count=totalDirtyCount();if(!count)return;
   S=normalizeState(cloneData(baselineState));ccRoles=cloneData(baselineRoles);credModeOverride='';
-  activeTunnel=Math.min(activeTunnel,Math.max(0,S.mp.tunnels.length-1));
+  activeTunnel=Math.min(activeTunnel,Math.max(0,S.mp.servers.length-1));
   if(!S.sp.providers[activeProvider])activeProvider=Object.keys(S.sp.providers)[0]||'';
   recomputeDirty();renderNav();renderView();toast(`已放弃 ${count} 项改动`);
 }
@@ -1287,7 +1295,7 @@ function toggleSwitch(el){
 
 // ── tunnel view (master-detail only) ──────────────────
 function fwRows(t){
-  const fs=t.forwards||[];
+  const fs=forwardsOf(t);
   if(!fs.length)return `<tr class="fw-empty"><td colspan="5">暂无端口转发规则——点「+ 添加转发」把远程端口映射到本机</td></tr>`;
   return fs.map((f,fi)=>`<tr data-fwr="${fi}">
     <td><input class="control mono" data-fwf="local_port" type="number" min="1" max="65535" value="${esc(f.local_port||'')}" placeholder="9000" aria-label="转发 ${fi+1} 本地端口"></td>
@@ -1300,7 +1308,7 @@ function fwRows(t){
   </tr>`).join('');
 }
 function tunnelHTML(){
-  const ts=S.mp.tunnels||[];
+  const ts=S.mp.servers||[];
   if(!ts.length)return `<section class="view">
     <p class="module-intro">管理 SSH 隧道连接。保存后点击菜单栏「重新连接」生效。</p>
     <div class="panel">
@@ -1309,8 +1317,8 @@ function tunnelHTML(){
     </div>
   </section>`;
   const t=ts[activeTunnel];
-  const tname=t.name||t.ssh_host||'Server '+(activeTunnel+1);
-  // 代理角色标记的表单真相：current_tunnel_id 只经 setProxyTunnel 显式
+  const tname=t.name||sshOf(t).host||'Server '+(activeTunnel+1);
+  // 代理角色标记的表单真相：proxy_server_id 只经 setProxyTunnel 显式
   // 变更（t.is_proxy 是服务端「实际跑着」的装饰快照，未保存窗口可不同）
   const curIdx=proxyIndexOf(S);
   const isCur=activeTunnel===curIdx;
@@ -1319,13 +1327,13 @@ function tunnelHTML(){
     <div class="panel"><div class="md-layout">
       <div class="md-master">
         <div class="section-bar"><h2 class="section-title">隧道</h2><span class="count">${ts.length} 个隧道</span></div>
-        <div class="md-list">${ts.map((tn,i)=>`<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectTunnel(${i})"><span class="dot ${i===curIdx?'':'off'}" title="${i===curIdx?'代理隧道（SOCKS5 上游）':'非代理隧道（可启动端口转发）'}"></span><span><strong>${esc(tn.name||tn.ssh_host||'Server '+(i+1))}</strong>${tn.forward_running?'<span class="fw-badge">转发中</span>':''}<span class="sub">${tn.ssh_host?esc((tn.ssh_user?tn.ssh_user+'@':'')+tn.ssh_host+(tn.ssh_port&&tn.ssh_port!==22?':'+tn.ssh_port:'')):'（需填写地址）'}</span></span></button>`).join('')}</div>
+        <div class="md-list">${ts.map((tn,i)=>`<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectTunnel(${i})"><span class="dot ${i===curIdx?'':'off'}" title="${i===curIdx?'代理隧道（SOCKS5 上游）':'非代理隧道（可启动端口转发）'}"></span><span><strong>${esc(tn.name||sshOf(tn).host||'Server '+(i+1))}</strong>${tn.forward_running?'<span class="fw-badge">转发中</span>':''}<span class="sub">${sshOf(tn).host?esc((sshOf(tn).user?sshOf(tn).user+'@':'')+sshOf(tn).host+(sshOf(tn).port&&sshOf(tn).port!==22?':'+sshOf(tn).port:'')):'（需填写地址）'}</span></span></button>`).join('')}</div>
         <div class="md-master-footer"><button class="btn" onclick="addTunnel()">+ 添加隧道</button></div>
       </div>
       <div class="md-detail">
         <div class="detail-bar"><h2>${esc(t.name||'Server '+(activeTunnel+1))}</h2>
           <div class="section-actions">
-            ${isCur?'<span class="fw-badge" title="该隧道是代理会话的 SSH 上游（SOCKS5 -D）">代理隧道</span>':`<button class="btn btn-sm" aria-label="设为代理隧道 ${esc(tname)}" onclick="setProxyTunnel()">设为代理隧道</button>`}
+            ${isCur?'<span class="fw-badge" title="该服务器是代理会话的 SSH 上游（SOCKS5 -D）">代理服务器</span>':(t.id?`<button class="btn btn-sm" aria-label="设为代理服务器 ${esc(tname)}" onclick="setProxyTunnel()">设为代理服务器</button>`:'')}
             ${(isCur||t.is_proxy)?'':`<button class="btn btn-sm" aria-label="${t.forward_running?'停止':'启动'}端口转发 ${esc(tname)}" onclick="toggleForwardSession(this,'${esc(t.id||'')}','${t.forward_running?'stop':'start'}')">${t.forward_running?'停止转发':'启动转发'}</button>`}
             <button class="btn btn-sm" aria-label="测试连接 ${esc(tname)}" onclick="testTunnel(this)">测试连接</button>
             <button class="btn btn-sm" aria-label="重新连接 ${esc(tname)}" onclick="reconnectProxy(this,'${esc(t.id||'')}')">重新连接</button>
@@ -1335,27 +1343,27 @@ function tunnelHTML(){
           <div class="form-section"><h3>连接</h3>
             <div class="field-grid">
               <div class="field"><label>名称</label><input class="control" data-tf="name" value="${esc(t.name||'')}"></div>
-              <div class="field"><label>SSH 端口</label><input class="control mono" data-tf="ssh_port" type="number" min="1" max="65535" value="${esc(t.ssh_port||22)}" onblur="validatePort(this)"></div>
+              <div class="field"><label>SSH 端口</label><input class="control mono" data-tf="ssh_port" type="number" min="1" max="65535" value="${esc(sshOf(t).port||22)}" onblur="validatePort(this)"></div>
               <div class="field span-2"><label>地址（user@host，不含端口）</label><input class="control mono" data-tf="addr" value="${esc(addrStr(t))}" placeholder="ubuntu@my-server.com"></div>
             </div></div>
           <div class="form-section"><h3>认证</h3>
             <div class="field-grid">
-              <div class="field"><label>认证方式</label><select class="select-control" data-tf="auth" onchange="toggleAuth(this)"><option value="key" ${t.auth_type!=='password'?'selected':''}>密钥</option><option value="password" ${t.auth_type==='password'?'selected':''}>密码</option></select></div>
-              <div class="field" data-auth="key" ${t.auth_type==='password'?'style="display:none"':''}><label>密钥路径</label>
-                <div class="key-field"><input class="control mono" data-tf="key" value="${esc(t.ssh_key||'')}" placeholder="~/.ssh/id_rsa">
+              <div class="field"><label>认证方式</label><select class="select-control" data-tf="auth" onchange="toggleAuth(this)"><option value="key" ${sshOf(t).auth_type!=='password'?'selected':''}>密钥</option><option value="password" ${sshOf(t).auth_type==='password'?'selected':''}>密码</option></select></div>
+              <div class="field" data-auth="key" ${sshOf(t).auth_type==='password'?'style="display:none"':''}><label>密钥路径</label>
+                <div class="key-field"><input class="control mono" data-tf="key" value="${esc(sshOf(t).ssh_key||'')}" placeholder="~/.ssh/id_rsa">
                 <button class="key-toggle" type="button" onclick="pickKeyFile(this)" aria-label="选择文件">${folderIcon}</button></div></div>
-              <div class="field span-2" data-auth="password" ${t.auth_type!=='password'?'style="display:none"':''}><label>密码</label><input class="control mono" type="password" data-tf="pw" placeholder="${t.has_password?'••••（已保存）':'SSH 密码'}"></div>
+              <div class="field span-2" data-auth="password" ${sshOf(t).auth_type!=='password'?'style="display:none"':''}><label>密码</label><input class="control mono" type="password" data-tf="pw" placeholder="${t.has_password?'••••（已保存）':'SSH 密码'}"></div>
             </div>
             <div class="toggle-row" style="border:0;padding:12px 0 0"><label>SSH 压缩</label>
-              <div class="switch-line"><span class="switch-label">${t.ssh_compression!==false?'已启用':'已停用'}</span>
-              <button class="switch" data-tf="compress" role="switch" aria-checked="${t.ssh_compression!==false}" aria-label="SSH 压缩" onclick="toggleSwitch(this)"></button></div></div>
+              <div class="switch-line"><span class="switch-label">${sshOf(t).compression!==false?'已启用':'已停用'}</span>
+              <button class="switch" data-tf="compress" role="switch" aria-checked="${sshOf(t).compression!==false}" aria-label="SSH 压缩" onclick="toggleSwitch(this)"></button></div></div>
           </div>
           <div class="form-section"><div class="fw-head"><h3>端口转发</h3>
             <button class="btn btn-sm" onclick="addForward()">+ 添加转发</button></div>
             <p class="fw-hint">把远程服务器的端口映射到本机 127.0.0.1（ssh -L）；保存后自动重连生效。行内「测试」对当前填写的值做一次 SSH 探测（无需先保存）。多隧道可并行——非代理隧道用上方「启动转发」独立运行。</p>
             <div class="toggle-row" style="border:0;padding:0 0 12px"><label>随应用启动转发</label>
-              <div class="switch-line"><span class="switch-label">${t.forward_autostart===true?'已启用':'已停用'}</span>
-              <button class="switch" data-tf="fw_autostart" role="switch" aria-checked="${t.forward_autostart===true}" aria-label="随应用启动转发" onclick="toggleSwitch(this)"></button></div></div>
+              <div class="switch-line"><span class="switch-label">${autostartOf(t)===true?'已启用':'已停用'}</span>
+              <button class="switch" data-tf="fw_autostart" role="switch" aria-checked="${autostartOf(t)===true}" aria-label="随应用启动转发" onclick="toggleSwitch(this)"></button></div></div>
             <table class="rules-table fw-table"><thead><tr>
               <th style="width:15%">本地端口</th><th style="width:37%">远程地址（服务器侧）</th><th style="width:13%">远程端口</th><th style="width:11%">启用</th><th>操作</th>
             </tr></thead><tbody>${fwRows(t)}</tbody></table>
@@ -1370,33 +1378,32 @@ function selectTunnel(i){collectTunnel();recomputeDirty();activeTunnel=i;renderV
 // 代理角色唯一显式写径（设置窗侧）：标记为 dirty 待保存；应用要经
 // 「重新连接」（切换会断现有代理会话，必须显式触发，不随保存自动断）
 function setProxyTunnel(){
-  const t=S.mp.tunnels[activeTunnel];if(!t)return;
+  const t=S.mp.servers[activeTunnel];if(!t)return;
   if(activeTunnel===proxyIndexOf(S))return;
-  // id 是真相；未保存的新隧道尚无 id（保存时服务端赋）→ 置空 id 并把
-  // 下标一并写入，merge 侧按「id 缺省→下标」解析到新隧道
-  S.mp.current_tunnel_id=t.id||'';
-  S.mp.current_tunnel=activeTunnel;
+  // v2：proxy_server_id 单一真相；未保存的新服务器尚无 id（保存时服务端
+  // 赋）→ 置空 id，merge 侧按首条回退解析
+  S.mp.proxy_server_id=t.id||'';
   recomputeDirty();renderView();
-  toast(`已标记「${t.name||t.ssh_host||('Server '+(activeTunnel+1))}」为代理隧道——保存后经「重新连接」生效`);
+  toast(`已标记「${t.name||sshOf(t).host||('Server '+(activeTunnel+1))}」为代理服务器——保存后经「重新连接」生效`);
 }
-function addTunnel(){collectTunnel();S.mp.tunnels.push({name:'',ssh_user:'',ssh_host:'',ssh_port:22,auth_type:'key',ssh_key:'',ssh_compression:true,forwards:[],forward_autostart:false});activeTunnel=S.mp.tunnels.length-1;recomputeDirty();renderView();}
+function addTunnel(){collectTunnel();S.mp.servers.push({id:'',name:'',ssh:{user:'',host:'',port:22,auth_type:'key',ssh_key:'',compression:true},services:{ssh:{forwards:[],autostart:false}}});activeTunnel=S.mp.servers.length-1;recomputeDirty();renderView();}
 // 删除时保全代理角色：删的是角色隧道（id 匹配）→ 清空 id 真相，靠下标
 // 钳制回落剩余首条；删前方隧道下标前移——角色始终指向同一条隧道
-function removeTunnel(i){if(!S.mp.tunnels.length)return;collectTunnel();const removed=S.mp.tunnels[i];S.mp.tunnels.splice(i,1);if(removed&&removed.id&&(removed.id===(S.mp.current_tunnel_id||'')))S.mp.current_tunnel_id='';const cur=S.mp.current_tunnel||0;if(i<cur)S.mp.current_tunnel=cur-1;else if(i===cur)S.mp.current_tunnel=Math.max(0,Math.min(cur,S.mp.tunnels.length-1));activeTunnel=Math.max(0,Math.min(i,S.mp.tunnels.length-1));recomputeDirty();renderView();}
-function addForward(){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t)return;(t.forwards=t.forwards||[]).push({local_port:0,remote_host:'127.0.0.1',remote_port:0,enabled:true});recomputeDirty();renderView();}
-function removeForward(fi){collectTunnel();const t=S.mp.tunnels[activeTunnel];if(!t||!(t.forwards||[]).length)return;t.forwards.splice(fi,1);recomputeDirty();renderView();}
+function removeTunnel(i){if(!S.mp.servers.length)return;collectTunnel();const removed=S.mp.servers[i];S.mp.servers.splice(i,1);if(removed&&removed.id&&(removed.id===(S.mp.proxy_server_id||'')))S.mp.proxy_server_id='';activeTunnel=Math.max(0,Math.min(i,S.mp.servers.length-1));recomputeDirty();renderView();}
+function addForward(){collectTunnel();const t=S.mp.servers[activeTunnel];if(!t)return;(sshSvc(t).forwards=forwardsOf(t)).push({local_port:0,remote_host:'127.0.0.1',remote_port:0,enabled:true});recomputeDirty();renderView();}
+function removeForward(fi){collectTunnel();const t=S.mp.servers[activeTunnel];const fs=forwardsOf(t);if(!t||!fs.length)return;sshSvc(t).forwards=fs;fs.splice(fi,1);recomputeDirty();renderView();}
 function collectTunnel(){
-  const ts=S.mp.tunnels;if(!ts.length)return;const t=ts[activeTunnel];if(!t)return;
+  const ts=S.mp.servers;if(!ts.length)return;const t=ts[activeTunnel];if(!t)return;
   const d=document.querySelector('.md-detail .detail-body');if(!d)return;
   const v=f=>{const el=d.querySelector(`[data-tf="${f}"]`);return el?el.value:'';};
   t.name=v('name').trim();const a=parseAddr(v('addr'));
-  t.ssh_user=a.user;t.ssh_host=a.host;
-  t.ssh_port=parseInt(v('ssh_port'))||22;t.auth_type=v('auth')||'key';t.ssh_key=v('key');
+  sshOf(t).user=a.user;sshOf(t).host=a.host;
+  sshOf(t).port=parseInt(v('ssh_port'))||22;sshOf(t).auth_type=v('auth')||'key';sshOf(t).ssh_key=v('key');
   // 空输入恢复 null：密码是掩码字段，清空 = 不改（服务器只在非空时写钥匙串），
   // 残留旧值会让 dirty 卡住并把幽灵密码静默写入。
   const pw=v('pw');t.password=pw||null;
-  const cb=d.querySelector('[data-tf="compress"]');t.ssh_compression=cb&&cb.getAttribute('aria-checked')==='true';
-  const fab=d.querySelector('[data-tf="fw_autostart"]');t.forward_autostart=fab&&fab.getAttribute('aria-checked')==='true';
+  const cb=d.querySelector('[data-tf="compress"]');sshNode(t).compression=cb&&cb.getAttribute('aria-checked')==='true';
+  const fab=d.querySelector('[data-tf="fw_autostart"]');sshSvc(t).autostart=fab&&fab.getAttribute('aria-checked')==='true';
   // 端口转发行按 DOM 顺序读回（行序即数组序）；缺省口径与 viewSnapshot
   // 同一语义：空端口=0、空地址=127.0.0.1
   const fws=[];
@@ -1408,7 +1415,7 @@ function collectTunnel(){
       remote_port:parseInt(g('remote_port'),10)||0,
       enabled:!sw||sw.getAttribute('aria-checked')==='true'});
   });
-  t.forwards=fws;
+  sshSvc(t).forwards=fws;
 }
 
 // ── tunnel connectivity test + reconnect (bridge) ─────
@@ -1428,8 +1435,8 @@ function _setTunnelResult(text,color){
 }
 async function testTunnel(btn){
   collectTunnel();
-  const ts=S.mp.tunnels||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可测试的隧道',true);return;}
+  const ts=S.mp.servers||[],i=activeTunnel;
+  if(!(i>=0&&i<ts.length)){toast('没有可测试的服务器',true);return;}
   btn.disabled=true;btn.textContent='测试中…';
   _setTunnelResult('测试中…（探测已保存的配置）','var(--muted)');
   const restore=()=>{btn.disabled=false;btn.textContent='测试连接';};
@@ -1442,13 +1449,13 @@ async function testTunnel(btn){
     restore();
   }catch(e){_setTunnelResult('❌ 请求失败: '+e.message,'var(--danger)');restore();}
 }
-// 行内端口转发测试：探测的是表单当前值（collect 后的隧道 + t.forwards[fi]），
+// 行内端口转发测试：探测的是表单当前值（collect 后的转发实例行），
 // 未保存的新隧道/新行同样可测——后端 probe_forward 不依赖隧道当前状态。
 async function testForward(fi,btn){
   collectTunnel();
-  const ts=S.mp.tunnels||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可测试的隧道',true);return;}
-  const f=((ts[i].forwards)||[])[fi];
+  const ts=S.mp.servers||[],i=activeTunnel;
+  if(!(i>=0&&i<ts.length)){toast('没有可测试的服务器',true);return;}
+  const f=((forwardsOf(ts[i]))||[])[fi];
   if(!f){toast('转发行不存在',true);return;}
   const st=document.getElementById('fw-status-'+fi);
   const set=(txt,cls)=>{if(!st)return;st.textContent=txt||'';st.className='fw-status'+(cls?' '+cls:'');};
@@ -1485,7 +1492,7 @@ function toggleForwardSession(btn,tunnelId,action){
 const NFS_STATUS_LABEL={mounted:['已挂载','ok'],mounting:['挂载中…','warn'],
   unmounting:['卸载中…','warn'],error:['异常','err'],unmounted:['未挂载','muted']};
 function nfsMountRows(t){
-  const n=t.nfs||{},states=t.nfs_states||{};
+  const n=nfsOf(t)||{},states=t.nfs_states||{};
   const ms=n.mounts||[];
   if(!ms.length)return `<tr class="fw-empty"><td colspan="5">暂无挂载项——点「+ 添加挂载」把远程目录挂到本机</td></tr>`;
   return ms.map((m,mi)=>{
@@ -1507,19 +1514,19 @@ function nfsMountRows(t){
   }).join('');
 }
 function nfsHTML(){
-  const ts=S.mp.tunnels||[];
+  const ts=S.mp.servers||[];
   if(!ts.length)return `<section class="view"><div class="panel"><div class="empty-state"><h2>还没有配置隧道</h2><p>远程挂载依附于 SSH 隧道——先到「隧道」页添加服务器。</p></div></div></section>`;
   const t=ts[activeTunnel];
-  const n=t.nfs||{};
-  const tname=t.name||t.ssh_host||('Server '+(activeTunnel+1));
+  const n=nfsOf(t)||{};
+  const tname=t.name||sshOf(t).host||('Server '+(activeTunnel+1));
   return `<section class="view">
     <p class="module-intro">把远程目录经 SSH 隧道以 NFSv4 挂载到本机。三步：填挂载项 →「一键安装」配置服务器 →「挂载」。仅 NFSv4（单端口，一条隧道承载全部挂载）；服务器只导出给 127.0.0.1；首次挂载会请求一次本机管理员授权。</p>
     <div class="panel"><div class="md-layout">
       <div class="md-master">
         <div class="section-bar"><h2 class="section-title">服务器</h2><span class="count">${ts.length} 台</span></div>
         <div class="md-list">${ts.map((tn,i)=>{
-          const tnfs=tn.nfs||{};const up=_nfsMountedCount(tn);
-          return `<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectNfsTunnel(${i})"><span class="dot ${tnfs.enabled===true?'':'off'}" title="${tnfs.enabled===true?'NFS 挂载已启用':'NFS 挂载未启用'}"></span><span><strong>${esc(tn.name||tn.ssh_host||('Server '+(i+1)))}</strong>${up?`<span class="fw-badge">${up} 挂载中</span>`:''}<span class="sub">${tn.ssh_host?esc((tn.ssh_user?tn.ssh_user+'@':'')+tn.ssh_host+(tn.ssh_port&&tn.ssh_port!==22?':'+tn.ssh_port:'')):'（需填写地址）'}</span></span></button>`;}).join('')}</div>
+          const tnfs=nfsOf(tn)||{};const up=_nfsMountedCount(tn);
+          return `<button class="md-row ${i===activeTunnel?'is-selected':''}" onclick="selectNfsTunnel(${i})"><span class="dot ${tnfs.enabled===true?'':'off'}" title="${tnfs.enabled===true?'NFS 挂载已启用':'NFS 挂载未启用'}"></span><span><strong>${esc(tn.name||sshOf(tn).host||('Server '+(i+1)))}</strong>${up?`<span class="fw-badge">${up} 挂载中</span>`:''}<span class="sub">${sshOf(tn).host?esc((sshOf(tn).user?sshOf(tn).user+'@':'')+sshOf(tn).host+(sshOf(tn).port&&sshOf(tn).port!==22?':'+sshOf(tn).port:'')):'（需填写地址）'}</span></span></button>`;}).join('')}</div>
       </div>
       <div class="md-detail">
         <div class="detail-bar"><h2>${esc(tname)}</h2>
@@ -1553,10 +1560,10 @@ function nfsHTML(){
   </section>`;
 }
 function selectNfsTunnel(i){collectNfs();recomputeDirty();activeTunnel=i;renderView();}
-function addNfsMount(){collectNfs();const t=S.mp.tunnels[activeTunnel];if(!t)return;const n=t.nfs=t.nfs||{enabled:false,local_port:12049,squash_to_ssh_user:false,mounts:[]};(n.mounts=n.mounts||[]).push({name:'',remote_path:'',local_dir:'',auto_mount:false});recomputeDirty();renderView();}
-function removeNfsMount(mi){collectNfs();const t=S.mp.tunnels[activeTunnel];if(!t)return;const n=t.nfs;if(!n||!(n.mounts||[]).length)return;n.mounts.splice(mi,1);recomputeDirty();renderView();}
+function addNfsMount(){collectNfs();const t=S.mp.servers[activeTunnel];if(!t)return;const n=nfsNode(t);(n.mounts=n.mounts||[]).push({name:'',remote_path:'',local_dir:'',auto_mount:false});recomputeDirty();renderView();}
+function removeNfsMount(mi){collectNfs();const t=S.mp.servers[activeTunnel];if(!t)return;const n=nfsOf(t);if(!n||!(n.mounts||[]).length)return;n.mounts.splice(mi,1);recomputeDirty();renderView();}
 function collectNfs(){
-  const ts=S.mp.tunnels;if(!ts.length)return;const t=ts[activeTunnel];if(!t)return;
+  const ts=S.mp.servers;if(!ts.length)return;const t=ts[activeTunnel];if(!t)return;
   const d=document.querySelector('.md-detail .detail-body');if(!d)return;
   const val=k=>{const el=d.querySelector(`[data-nf="${k}"]`);return el?el.value:'';};
   const sw=k=>{const el=d.querySelector(`[data-nf="${k}"]`);return !!el&&el.getAttribute('aria-checked')==='true';};
@@ -1568,9 +1575,9 @@ function collectNfs(){
       local_dir:g('local_dir'),auto_mount:!!auto&&auto.getAttribute('aria-checked')==='true'});
   });
   // 缺省口径与 nfsProjection 同一语义（空端口=12049）
-  t.nfs={enabled:sw('enabled'),
+  Object.assign(nfsNode(t),{enabled:sw('enabled'),
     local_port:parseInt(val('port'),10)||12049,
-    squash_to_ssh_user:sw('squash'),mounts};
+    squash_to_ssh_user:sw('squash'),mounts});
 }
 // 结果行按需插入 detail-body 顶部（模式对齐 _setTunnelResult）
 function _setNfsResult(text,color){
@@ -1587,8 +1594,8 @@ function _setNfsResult(text,color){
   el.textContent=text;
 }
 async function nfsCheckRemote(btn){
-  collectNfs();const ts=S.mp.tunnels||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可检测的隧道',true);return;}
+  collectNfs();const ts=S.mp.servers||[],i=activeTunnel;
+  if(!(i>=0&&i<ts.length)){toast('没有可检测的服务器',true);return;}
   btn.disabled=true;btn.textContent='检测中…';_setNfsResult('检测中…（探测发行版 / NFS 服务 / 2049 监听）','var(--muted)');
   const restore=()=>{btn.disabled=false;btn.textContent='检测远程 NFS';};
   try{
@@ -1606,9 +1613,9 @@ async function nfsCheckRemote(btn){
   }catch(e){_setNfsResult('❌ 请求失败: '+e.message,'var(--danger)');restore();}
 }
 async function nfsSetupRemote(btn){
-  collectNfs();const ts=S.mp.tunnels||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可安装的隧道',true);return;}
-  const t=ts[i],n=t.nfs||{};
+  collectNfs();const ts=S.mp.servers||[],i=activeTunnel;
+  if(!(i>=0&&i<ts.length)){toast('没有可安装的服务器',true);return;}
+  const t=ts[i],n=nfsOf(t)||{};
   const mounts=[...new Set((n.mounts||[]).map(m=>(m.remote_path||'').trim()).filter(p=>p&&p.startsWith('/')))];
   if(!mounts.length){_setNfsResult('❌ 请先填写至少一条有效的远程绝对路径','var(--danger)');return;}
   const pwEl=document.querySelector('.md-detail [data-nf="sudo_pw"]');
@@ -1644,9 +1651,9 @@ async function nfsRefreshRuntime(){
   nfsUpdateStatusCells();          // 定向 DOM 更新，不 renderView
 }
 function nfsUpdateStatusCells(){
-  const t=(S.mp.tunnels||[])[activeTunnel];if(!t)return;
+  const t=(S.mp.servers||[])[activeTunnel];if(!t)return;
   const states=t.nfs_states||{};
-  ((t.nfs||{}).mounts||[]).forEach((m,mi)=>{
+  ((nfsOf(t)||{}).mounts||[]).forEach((m,mi)=>{
     if(!m||!m.name)return;
     const o=nfsStateOf(states,m.name);
     const [lbl,cls]=NFS_STATUS_LABEL[o.status]||NFS_STATUS_LABEL.unmounted;
@@ -1660,9 +1667,9 @@ function nfsUpdateStatusCells(){
   });
 }
 async function nfsFixExports(mi,btn){
-  collectNfs();const ts=S.mp.tunnels||[],i=activeTunnel;
+  collectNfs();const ts=S.mp.servers||[],i=activeTunnel;
   const t=ts[i];if(!t)return;
-  const n=t.nfs||{};
+  const n=nfsOf(t)||{};
   const row=(n.mounts||[])[mi];
   const mounts=[...new Set((n.mounts||[]).map(m=>(m.remote_path||'').trim()).filter(p=>p&&p.startsWith('/')))];
   if(!mounts.length){toast('请先填写有效的远程路径',true);return;}
@@ -1685,8 +1692,8 @@ async function nfsFixExports(mi,btn){
   btn.disabled=false;btn.textContent=orig;
 }
 function nfsMountAction(btn,mi,action){
-  collectNfs();const t=S.mp.tunnels[activeTunnel];if(!t)return;
-  const m=((t.nfs||{}).mounts||[])[mi];
+  collectNfs();const t=S.mp.servers[activeTunnel];if(!t)return;
+  const m=((nfsOf(t)||{}).mounts||[])[mi];
   if(!m||!m.name){toast('请先填写挂载名',true);return;}
   if(!t.id){toast('该隧道尚未保存，请先保存再挂载',true);return;}
   if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.bridge){
@@ -1799,8 +1806,8 @@ function pickKeyFile(btn){nativeSend('pickKeyFile',{field:'sshKey'});}
 // 原生回发入口：写数据模型优先（重渲染不丢），再同步 DOM
 function fillKeyPath(field,path){
   if(field!=='sshKey'||typeof path!=='string'||!path)return;
-  const t=S.mp.tunnels&&S.mp.tunnels[activeTunnel];
-  if(t)t.ssh_key=path;
+  const t=S.mp.servers&&S.mp.servers[activeTunnel];
+  if(t)sshNode(t).ssh_key=path;
   const inp=document.querySelector('input[data-tf="key"]');
   if(inp)inp.value=path;
   recomputeDirty();
@@ -2226,7 +2233,7 @@ function collect(forSave){
 // ════════════════════════════════════════════════════════════════
 // LAYER 3 — wiring: registry attachment, listeners, bootstrap
 // ════════════════════════════════════════════════════════════════
-// collect 只读表单，绝不写 current_tunnel——代理角色唯一的写径是
+// collect 只读表单，绝不写 proxy_server_id——代理角色唯一的写径是
 // setProxyTunnel（显式动作）。旧版在此隐式写 activeTunnel，查看另一条
 // 隧道后保存会把代理静默切过去（实测 bug：保存后隧道变成另一连接串）
 Object.assign(VIEWS.tunnel,{render:tunnelHTML,collect(){collectTunnel();}});

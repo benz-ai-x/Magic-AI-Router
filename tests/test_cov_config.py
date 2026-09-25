@@ -55,39 +55,41 @@ def _request(port, method, path, body=None, token=None, host_header=None):
 
 # ── config_server: _read_mp line 37 ───────────────────────────────────
 
-class TestReadMpTunnels(unittest.TestCase):
-    def test_tunnel_gets_has_password_flag(self):
-        """Line 37: tunnels get has_password set based on keychain lookup."""
-        tunnels = [{"name": "t1", "ssh_host": "h", "auth_type": "password"}]
+class TestReadMpServers(unittest.TestCase):
+    def test_server_gets_has_password_flag(self):
+        """Line 37: servers get has_password set based on keychain lookup."""
+        servers = [{"name": "t1",
+                    "ssh": {"host": "h", "auth_type": "password"}}]
         with patch.object(config_server, "load_config", return_value={}), \
              patch.object(config_server, "merge_config",
-                          return_value={"tunnels": tunnels}), \
+                          return_value={"servers": servers}), \
              patch.object(config_server.keychain, "get_password",
                           return_value="secret"):
             cfg = config_server._read_mp()
-        self.assertTrue(cfg["tunnels"][0]["has_password"])
+        self.assertTrue(cfg["servers"][0]["has_password"])
 
-    def test_tunnel_has_password_false_when_no_keychain_entry(self):
-        tunnels = [{"name": "t1", "ssh_host": "h", "auth_type": "password"}]
+    def test_server_has_password_false_when_no_keychain_entry(self):
+        servers = [{"name": "t1",
+                    "ssh": {"host": "h", "auth_type": "password"}}]
         with patch.object(config_server, "load_config", return_value={}), \
              patch.object(config_server, "merge_config",
-                          return_value={"tunnels": tunnels}), \
+                          return_value={"servers": servers}), \
              patch.object(config_server.keychain, "get_password",
                           return_value=""):
             cfg = config_server._read_mp()
-        self.assertFalse(cfg["tunnels"][0]["has_password"])
+        self.assertFalse(cfg["servers"][0]["has_password"])
 
-    def test_tunnel_has_password_false_when_auth_is_key(self):
+    def test_server_has_password_false_when_auth_is_key(self):
         """auth_type != password → has_password stays False; keychain is
         never even consulted (the `and` short-circuits)."""
-        tunnels = [{"name": "t1", "ssh_host": "h", "auth_type": "key"}]
+        servers = [{"name": "t1", "ssh": {"host": "h", "auth_type": "key"}}]
         with patch.object(config_server, "load_config", return_value={}), \
              patch.object(config_server, "merge_config",
-                          return_value={"tunnels": tunnels}), \
+                          return_value={"servers": servers}), \
              patch.object(config_server.keychain, "get_password",
                           return_value="never-called") as gp:
             cfg = config_server._read_mp()
-        self.assertFalse(cfg["tunnels"][0]["has_password"])
+        self.assertFalse(cfg["servers"][0]["has_password"])
         gp.assert_not_called()
 
 

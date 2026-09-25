@@ -18,7 +18,7 @@ def test_existing_key_is_accepted_without_scan(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
     with patch("subprocess.run", return_value=_cp(stdout="# found\nexample")) as run:
         known, keys, fingerprints, err = host_key.inspect(
-            {"ssh_host": "example.com", "ssh_port": 22}
+            {"ssh": {"host": "example.com", "port": 22}}
         )
     assert known and not err and not keys and not fingerprints
     assert run.call_count == 1
@@ -33,7 +33,7 @@ def test_scan_returns_fingerprint_for_user_confirmation(tmp_path, monkeypatch):
     ]
     with patch("subprocess.run", side_effect=results):
         known, keys, fingerprints, err = host_key.inspect(
-            {"ssh_host": "example.com", "ssh_port": 22}
+            {"ssh": {"host": "example.com", "port": 22}}
         )
     assert not known and not err
     assert "ssh-ed25519" in keys
@@ -50,7 +50,7 @@ def test_accept_uses_private_permissions(tmp_path, monkeypatch):
 
 def test_rejects_option_like_host(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
-    known, _, _, err = host_key.inspect({"ssh_host": "-oProxyCommand=bad", "ssh_port": 22})
+    known, _, _, err = host_key.inspect({"ssh": {"host": "-oProxyCommand=bad", "port": 22}})
     assert not known
     assert "不安全字符" in err
 
@@ -61,7 +61,7 @@ def test_replace_updates_only_selected_host(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "KNOWN_HOSTS_PATH", str(path))
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
     assert host_key.replace(
-        {"ssh_host": "a.example", "ssh_port": 22},
+        {"ssh": {"host": "a.example", "port": 22}},
         "a.example ssh-ed25519 NEW",
     )
     text = path.read_text()
@@ -72,14 +72,14 @@ def test_replace_updates_only_selected_host(tmp_path, monkeypatch):
 
 def test_invalid_port_type_returns_error(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
-    known, _, _, err = host_key.inspect({"ssh_host": "example.com", "ssh_port": "abc"})
+    known, _, _, err = host_key.inspect({"ssh": {"host": "example.com", "port": "abc"}})
     assert not known
     assert "端口无效" in err
 
 
 def test_port_out_of_range_returns_error(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
-    known, _, _, err = host_key.inspect({"ssh_host": "example.com", "ssh_port": 99999})
+    known, _, _, err = host_key.inspect({"ssh": {"host": "example.com", "port": 99999}})
     assert not known
     assert "无效" in err
 
@@ -90,7 +90,7 @@ def test_known_lookup_subprocess_error(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "KNOWN_HOSTS_PATH", str(path))
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
     with patch("subprocess.run", side_effect=OSError("ssh-keygen missing")):
-        known, _, _, err = host_key.inspect({"ssh_host": "example.com", "ssh_port": 22})
+        known, _, _, err = host_key.inspect({"ssh": {"host": "example.com", "port": 22}})
     assert not known
     assert "ssh-keygen missing" in err
 
@@ -99,7 +99,7 @@ def test_scan_subprocess_error(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "KNOWN_HOSTS_PATH", str(tmp_path / "missing"))
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
     with patch("subprocess.run", side_effect=OSError("ssh-keyscan missing")):
-        known, _, _, err = host_key.inspect({"ssh_host": "example.com", "ssh_port": 22})
+        known, _, _, err = host_key.inspect({"ssh": {"host": "example.com", "port": 22}})
     assert not known
     assert "无法扫描" in err
 
@@ -108,7 +108,7 @@ def test_scan_no_keys_returns_error(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "KNOWN_HOSTS_PATH", str(tmp_path / "missing"))
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
     with patch("subprocess.run", return_value=_cp(returncode=1, stdout="", stderr="timeout")):
-        known, _, _, err = host_key.inspect({"ssh_host": "example.com", "ssh_port": 22})
+        known, _, _, err = host_key.inspect({"ssh": {"host": "example.com", "port": 22}})
     assert not known
     assert "timeout" in err
 
@@ -121,7 +121,7 @@ def test_fingerprint_subprocess_error(tmp_path, monkeypatch):
         OSError("ssh-keygen missing"),
     ]
     with patch("subprocess.run", side_effect=results):
-        known, _, _, err = host_key.inspect({"ssh_host": "example.com", "ssh_port": 22})
+        known, _, _, err = host_key.inspect({"ssh": {"host": "example.com", "port": 22}})
     assert not known
     assert "无法计算" in err
 
@@ -134,7 +134,7 @@ def test_fingerprint_failure_returns_error(tmp_path, monkeypatch):
         _cp(returncode=1, stdout="", stderr="bad key"),
     ]
     with patch("subprocess.run", side_effect=results):
-        known, _, _, err = host_key.inspect({"ssh_host": "example.com", "ssh_port": 22})
+        known, _, _, err = host_key.inspect({"ssh": {"host": "example.com", "port": 22}})
     assert not known
     assert "bad key" in err
 
@@ -180,7 +180,7 @@ def test_ensure_storage_rejects_wrong_owner(tmp_path, monkeypatch):
 
 def test_replace_invalid_host_returns_false(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
-    assert host_key.replace({"ssh_host": "-bad", "ssh_port": 22}, "key") is False
+    assert host_key.replace({"ssh": {"host": "-bad", "port": 22}}, "key") is False
 
 
 def test_accept_rejects_non_regular_file(tmp_path, monkeypatch):
@@ -205,7 +205,7 @@ def test_replace_rejects_non_regular_existing(tmp_path, monkeypatch):
     fake.st_mode = stat_mod.S_IFDIR
     fake.st_uid = os.getuid()
     with patch("os.fstat", return_value=fake):
-        assert host_key.replace({"ssh_host": "example.com", "ssh_port": 22}, "key") is False
+        assert host_key.replace({"ssh": {"host": "example.com", "port": 22}}, "key") is False
 
 
 def test_replace_none_ssh_port_returns_false(tmp_path, monkeypatch):
@@ -213,7 +213,7 @@ def test_replace_none_ssh_port_returns_false(tmp_path, monkeypatch):
     return False instead of propagating."""
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
     monkeypatch.setattr(host_key, "KNOWN_HOSTS_PATH", str(tmp_path / "kh"))
-    assert host_key.replace({"ssh_host": "example.com", "ssh_port": None}, "key") is False
+    assert host_key.replace({"ssh": {"host": "example.com", "port": None}}, "key") is False
 
 
 def test_replace_non_numeric_ssh_port_returns_false(tmp_path, monkeypatch):
@@ -221,4 +221,4 @@ def test_replace_non_numeric_ssh_port_returns_false(tmp_path, monkeypatch):
     monkeypatch.setattr(host_key, "APP_SECURITY_DIR", str(tmp_path))
     monkeypatch.setattr(host_key, "KNOWN_HOSTS_PATH", str(tmp_path / "kh"))
     assert host_key.replace(
-        {"ssh_host": "example.com", "ssh_port": [1, 2]}, "key") is False
+        {"ssh": {"host": "example.com", "port": [1, 2]}}, "key") is False

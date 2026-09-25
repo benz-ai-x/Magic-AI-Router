@@ -13,10 +13,10 @@ from tunnel import host_key, ssh_launch
 
 
 class TestRunRemote(unittest.TestCase):
-    _KEY = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 2222,
-            "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"}
-    _PW = {"ssh_host": "example.com", "ssh_user": "u", "ssh_port": 22,
-           "auth_type": "password"}
+    _KEY = {"ssh": {"host": "example.com", "user": "u", "port": 2222,
+                    "auth_type": "key", "ssh_key": "~/.ssh/id_ed25519"}}
+    _PW = {"ssh": {"host": "example.com", "user": "u", "port": 22,
+                   "auth_type": "password"}}
 
     @staticmethod
     def _proc(returncode=0, stderr=b"", stdout=b""):

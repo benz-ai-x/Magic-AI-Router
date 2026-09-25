@@ -10,8 +10,9 @@ def _make_config():
     return {
         "socks5_port": 1080,
         "http_listen_port": 8888,
-        "current_tunnel": 0,
-        "tunnels": [{"ssh_host": "test", "ssh_user": "user", "ssh_port": 22, "auth_type": "key"}],
+        "proxy_server_id": "",
+        "servers": [{"ssh": {"host": "test", "user": "user",
+                             "port": 22, "auth_type": "key"}}],
     }
 
 
@@ -38,10 +39,10 @@ class TestInitialProperties(unittest.TestCase):
         conn = _make_coordinator()
         self.assertIsNotNone(conn.ssh)
 
-    def test_current_tunnel(self):
+    def test_current_server(self):
         conn = _make_coordinator()
-        self.assertIsNotNone(conn.current_tunnel)
-        self.assertEqual(conn.current_tunnel["ssh_host"], "test")
+        self.assertIsNotNone(conn.current_server)
+        self.assertEqual(conn.current_server["ssh"]["host"], "test")
 
     def test_socks5_port(self):
         conn = _make_coordinator()
@@ -371,17 +372,20 @@ def _fwd(lp=9000, rp=8000):
 
 
 def _multi_config():
-    """两条隧道：t1 当前（有 forwards），t2 转发候选。"""
+    """两台服务器：t1 代理角色（有 forwards），t2 转发候选。"""
     return {
         "socks5_port": 1080,
         "http_listen_port": 8888,
-        "current_tunnel": 0,
-        "tunnels": [
-            {"id": "t-1", "name": "proxy", "ssh_host": "a", "ssh_user": "u",
-             "ssh_port": 22, "auth_type": "key", "forwards": [_fwd()]},
-            {"id": "t-2", "name": "fwd", "ssh_host": "b", "ssh_user": "u",
-             "ssh_port": 22, "auth_type": "key",
-             "forwards": [_fwd(lp=9001, rp=8001)]},
+        "proxy_server_id": "t-1",
+        "servers": [
+            {"id": "t-1", "name": "proxy",
+             "ssh": {"host": "a", "user": "u", "port": 22,
+                     "auth_type": "key"},
+             "services": {"ssh": {"forwards": [_fwd()]}}},
+            {"id": "t-2", "name": "fwd",
+             "ssh": {"host": "b", "user": "u", "port": 22,
+                     "auth_type": "key"},
+             "services": {"ssh": {"forwards": [_fwd(lp=9001, rp=8001)]}}},
         ],
     }
 
@@ -400,7 +404,7 @@ def _mutable_coordinator(cfg):
 class TestForwardSessions(unittest.TestCase):
     def test_start_forward_guards(self):
         conn, _ = _mutable_coordinator(_multi_config())
-        for tid, why in (("t-nope", "不存在"), ("t-1", "代理隧道自身"),
+        for tid, why in (("t-nope", "不存在"), ("t-1", "代理服务器自身"),
                          ("t-2", "无转发规则")):
             if tid == "t-2":
                 conn._config_hack = None  # noqa: F841 — t2 有 forwards，另测
@@ -411,7 +415,7 @@ class TestForwardSessions(unittest.TestCase):
         self.assertEqual(conn.forward_sessions(), [])
         # t2 摘掉 forwards 后同样拒绝
         cfg = _multi_config()
-        cfg["tunnels"][1]["forwards"] = []
+        cfg["servers"][1]["services"]["ssh"]["forwards"] = []
         conn2, _ = _mutable_coordinator(cfg)
         ok, reason = conn2.start_forward("t-2")
         self.assertFalse(ok)
@@ -442,8 +446,8 @@ class TestForwardSessions(unittest.TestCase):
         with patch("tunnel.ssh_session.SshSession.connect"):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
-        holder["cfg"] = {**_multi_config(), "tunnels":
-                         _multi_config()["tunnels"][:1]}
+        holder["cfg"] = {**_multi_config(),
+                         "servers": _multi_config()["servers"][:1]}
         with patch.object(session, "stop") as s:
             conn.check_forwards()
         s.assert_called_once()
@@ -455,7 +459,7 @@ class TestForwardSessions(unittest.TestCase):
             conn.start_forward("t-2")
         session = conn._forward_sessions["t-2"]
         cfg = _multi_config()
-        cfg["tunnels"][1]["forwards"] = []
+        cfg["servers"][1]["services"]["ssh"]["forwards"] = []
         holder["cfg"] = cfg
         with patch.object(session, "stop") as s:
             conn.check_forwards()
@@ -503,17 +507,17 @@ class TestRestartDowngrade(unittest.TestCase):
 
     def test_old_proxy_with_forwards_downgrades_to_forward_session(self):
         def switch_current(holder):
-            holder["cfg"]["current_tunnel"] = 1
+            holder["cfg"]["proxy_server_id"] = "t-2"
         conn = self._restart_with(_multi_config(), switch_current)
         ids = [tid for tid, _, _ in conn.forward_sessions()]
         self.assertIn("t-1", ids)  # 旧代理降级续跑
 
     def test_old_proxy_without_forwards_stops_cleanly(self):
         cfg = _multi_config()
-        cfg["tunnels"][0]["forwards"] = []
+        cfg["servers"][0]["services"]["ssh"]["forwards"] = []
 
         def switch_current(holder):
-            holder["cfg"]["current_tunnel"] = 1
+            holder["cfg"]["proxy_server_id"] = "t-2"
         conn = self._restart_with(cfg, switch_current)
         self.assertEqual(conn.forward_sessions(), [])
 
@@ -538,8 +542,8 @@ class TestWakeTriggerForwards(unittest.TestCase):
 
     def test_apply_autostarts_skips_proxy_and_running(self):
         cfg = _multi_config()
-        cfg["tunnels"][0]["forward_autostart"] = True   # 代理隧道：跳过
-        cfg["tunnels"][1]["forward_autostart"] = True   # 正常补启
+        cfg["servers"][0]["services"]["ssh"]["autostart"] = True   # 代理：跳过
+        cfg["servers"][1]["services"]["ssh"]["autostart"] = True   # 正常补启
         conn, _ = _mutable_coordinator(cfg)
         with patch.object(conn, "start_forward") as sf:
             conn.apply_autostarts()
@@ -574,7 +578,7 @@ class TestRestartForwardExplicitSemantics(unittest.TestCase):
 
         def drop_t2():
             holder["cfg"] = {**_multi_config(),
-                             "tunnels": _multi_config()["tunnels"][:1]}
+                             "servers": _multi_config()["servers"][:1]}
         with patch.object(session, "stop"):
             self.assertTrue(conn.restart_forward("t-2", drop_t2))
         self.assertEqual(conn.forward_sessions(), [])
@@ -584,9 +588,9 @@ class TestRestartForwardExplicitSemantics(unittest.TestCase):
         self.assertFalse(conn.restart_forward("t-nope", lambda: None))
 
 
-class TestCurrentTunnelResolution(unittest.TestCase):
-    """代理角色解析序（v0.9.2）：id 真相 → 旧下标 → 首条；永不因
-    删除/调序漂移到另一条隧道。"""
+class TestCurrentServerResolution(unittest.TestCase):
+    """代理角色解析（v2）：proxy_server_id 单一真相；悬空/缺省回退首条
+    ——永不因删除/调序漂移到另一台服务器。"""
 
     def _conn(self, cfg):
         return ConnectionCoordinator(
@@ -596,57 +600,60 @@ class TestCurrentTunnelResolution(unittest.TestCase):
             get_tunnel_password=lambda t: "",
         )
 
-    def _tunnels(self):
+    def _servers(self):
         return [
-            {"id": "t-a", "ssh_host": "a", "ssh_user": "u", "ssh_port": 22, "auth_type": "key"},
-            {"id": "t-b", "ssh_host": "b", "ssh_user": "u", "ssh_port": 22, "auth_type": "key"},
+            {"id": "t-a", "ssh": {"host": "a", "user": "u", "port": 22,
+                                  "auth_type": "key"}},
+            {"id": "t-b", "ssh": {"host": "b", "user": "u", "port": 22,
+                                  "auth_type": "key"}},
         ]
 
-    def test_id_resolves_even_when_index_points_elsewhere(self):
-        cfg = {"current_tunnel": 0, "current_tunnel_id": "t-b",
-               "tunnels": self._tunnels()}
-        self.assertEqual(self._conn(cfg).current_tunnel["id"], "t-b")
+    def test_id_truth_resolves(self):
+        cfg = {"proxy_server_id": "t-b", "servers": self._servers()}
+        self.assertEqual(self._conn(cfg).current_server["id"], "t-b")
 
-    def test_dangling_id_falls_back_to_index(self):
-        cfg = {"current_tunnel": 1, "current_tunnel_id": "t-gone",
-               "tunnels": self._tunnels()}
-        self.assertEqual(self._conn(cfg).current_tunnel["id"], "t-b")
+    def test_dangling_id_falls_back_to_first(self):
+        cfg = {"proxy_server_id": "t-gone", "servers": self._servers()}
+        self.assertEqual(self._conn(cfg).current_server["id"], "t-a")
 
-    def test_index_out_of_range_falls_back_to_first(self):
-        cfg = {"current_tunnel": 9, "tunnels": self._tunnels()}
-        self.assertEqual(self._conn(cfg).current_tunnel["id"], "t-a")
+    def test_absent_id_resolves_to_first(self):
+        cfg = {"proxy_server_id": "", "servers": self._servers()}
+        self.assertEqual(self._conn(cfg).current_server["id"], "t-a")
 
-    def test_empty_tunnels_yields_none(self):
-        self.assertIsNone(self._conn({"tunnels": []}).current_tunnel)
+    def test_empty_servers_yields_none(self):
+        self.assertIsNone(self._conn({"servers": []}).current_server)
 
 
 class TestEnabledForwardsGuards(unittest.TestCase):
     """逐条启停：全部停用的隧道等价于"无转发规则"。"""
 
-    def _conn_cfg(self, tunnels):
+    def _conn_cfg(self, servers):
         return ConnectionCoordinator(
             stats=MagicMock(),
             ssh_log_sink=lambda line: None,
-            get_config=lambda: {"current_tunnel": 0, "tunnels": tunnels},
+            get_config=lambda: {"proxy_server_id": "t-px",
+                                "servers": servers},
             get_tunnel_password=lambda t: "",
         )
 
     def test_start_forward_rejects_all_disabled(self):
-        # 双隧道：0 号为代理角色，t-1 才是纯转发隧道
+        # 双服务器：t-px 为代理角色，t-1 才是纯转发服务器
         conn = self._conn_cfg([
-            {"name": "px", "id": "t-px", "ssh_host": "p"},
-            {"name": "fw", "id": "t-1", "ssh_host": "h",
-             "forwards": [{"local_port": 9000, "remote_port": 80,
-                           "enabled": False}]}])
+            {"name": "px", "id": "t-px", "ssh": {"host": "p"}},
+            {"name": "fw", "id": "t-1", "ssh": {"host": "h"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_port": 80,
+                  "enabled": False}]}}}])
         ok, reason = conn.start_forward("t-1")
         self.assertFalse(ok)
         self.assertIn("启用", reason)
 
     def test_check_forwards_stops_session_when_all_disabled(self):
-        cfg = {"current_tunnel": 0, "tunnels": [
-            {"name": "px", "id": "t-px", "ssh_host": "p"},
-            {"name": "fw", "id": "t-1", "ssh_host": "h",
-             "forwards": [{"local_port": 9000, "remote_port": 80}]}]}
+        cfg = {"proxy_server_id": "t-px", "servers": [
+            {"name": "px", "id": "t-px", "ssh": {"host": "p"}},
+            {"name": "fw", "id": "t-1", "ssh": {"host": "h"},
+             "services": {"ssh": {"forwards": [
+                 {"local_port": 9000, "remote_port": 80}]}}}]}
         conn = ConnectionCoordinator(
             stats=MagicMock(),
             ssh_log_sink=lambda line: None,
@@ -655,7 +662,7 @@ class TestEnabledForwardsGuards(unittest.TestCase):
         )
         conn.start_forward("t-1")
         # 磁盘态翻成全停用后，check 应收敛停会话（同"forwards 清空"）
-        cfg["tunnels"][1]["forwards"][0]["enabled"] = False
+        cfg["servers"][1]["services"]["ssh"]["forwards"][0]["enabled"] = False
         conn.check_forwards()
         self.assertNotIn("t-1", conn._forward_sessions)
 
