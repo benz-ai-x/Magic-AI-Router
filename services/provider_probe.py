@@ -19,7 +19,11 @@ from services.authenticated_http import (
     AuthenticatedHttpClient,
     shape_outbound_error,
 )
-from shared.provider_auth import build_outbound_headers, resolve_api_key
+from shared.provider_auth import (
+    build_outbound_headers,
+    openai_max_tokens_field,
+    resolve_api_key,
+)
 
 _PROBE_CLIENT = AuthenticatedHttpClient(timeout=10)
 
@@ -128,7 +132,8 @@ def test_provider(sp_raw, name, model=None):
         return {"error": "未配置模型"}
 
     if (p.get("protocol") or "anthropic") == "openai":
-        from suanpan.compat import openai_max_tokens_field
+        # openai 线格式知识归注册表之家（shared.provider_auth）——
+        # 网关依赖缺席时探测侧不再 lazy-import suanpan
         headers = build_outbound_headers({}, key)  # openai 车道恒 Bearer
         headers["Content-Type"] = "application/json"
         body = json.dumps({

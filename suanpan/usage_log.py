@@ -39,6 +39,26 @@ class UsageEntry:
     agent: str = ""
 
 
+def usage_entry_from_wire(usage: dict | None, **overrides) -> "UsageEntry":
+    """Anthropic 线格式 usage dict → UsageEntry（wire→entry 单一转换归宿）。
+
+    wire 键（cache_read_input_tokens / cache_creation_input_tokens）与
+    UsageEntry 字段名（cache_read_tokens / …）不同名，缺键兜底 0——转换
+    曾手写在 proxy 的 openai 车道（转换 A 刚产出的 wire dict 又被拆开
+    重装）。身份字段（provider/scenario/latency_ms/status…）经
+    ``overrides`` 直传构造参。
+    """
+    usage = usage or {}
+    kwargs = dict(
+        input_tokens=usage.get("input_tokens", 0),
+        output_tokens=usage.get("output_tokens", 0),
+        cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+        cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
+    )
+    kwargs.update(overrides)
+    return UsageEntry(**kwargs)
+
+
 class UsageLogger:
     _MAX_BYTES = 50 * 1024 * 1024  # 50 MB → rotate
     _FAIL_LOG_EVERY = 10           # 失败节流：每 10 次才记一次 WARNING

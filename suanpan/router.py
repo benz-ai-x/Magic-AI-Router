@@ -10,12 +10,34 @@ from dataclasses import dataclass
 from typing import Any
 
 
-from suanpan.compat import extract_system_text
 from suanpan.config import AppConfig
 
 
 
 SUBAGENT_RE = re.compile(r"<SUBAGENT-MODEL>(.*?)</SUBAGENT-MODEL>", re.DOTALL)
+
+
+def extract_system_text(body: dict[str, Any]) -> str:
+    """Extract the ``system`` prompt as a string, regardless of format.
+
+    Handles three shapes: plain string (returned as-is), content-block
+    array (text blocks joined with newlines), and missing/None ("").
+    这是「从 Anthropic Messages body 读 system」的单一真源——路由输入
+    抽取（SUBAGENT 标签判定）住在这里；compat 的 body 兼容层
+    （_flatten_system / 转换 A）从这里消费。
+    """
+    system = body.get("system")
+    if isinstance(system, str):
+        return system
+    if isinstance(system, list):
+        parts: list[str] = []
+        for item in system:
+            if isinstance(item, dict) and item.get("type") == "text":
+                t = item.get("text")
+                if isinstance(t, str):
+                    parts.append(t)
+        return "\n".join(parts)
+    return ""
 
 
 @dataclass

@@ -194,10 +194,10 @@ suanpan/ ── AI 路由网关子包（ADR-010 三协议入站：Anthropic Mess
   main.py ── FastAPI app factory + 路由 handler
   middleware.py ── APIKey（常量时间比较）+ BodyLimit 中间件
   proxy.py ── 流式代理转发 + RetryPolicy + count_tokens aread + 车道共用骨架（_LaneCtx/_send_upstream 幂等探针/_send_lane 发送前置块含 make_502 wire 塑形/_reject_5xx/_lane_out_headers/_stream_response——四车道发送纪律单一归宿）
-  compat.py ── 协议适配唯一归宿（ADR-010）：body 归一化（anthropic_native 旗标）+ 转换 A（Anthropic⇄OpenAI Chat 请求/响应/SSE 翻译器）
+  compat.py ── 协议适配唯一归宿（ADR-010）：body 归一化（anthropic_native 旗标）+ 转换 A（Anthropic⇄OpenAI Chat 请求/响应/SSE 翻译器）；system 读取经 router.extract_system_text、max_tokens 参数名经 shared.provider_auth（R5 迁出）
   usage_extractor.py ── SSE 用量提取
-  router.py ── 路由决策 + parse_route_target 文法所有者 + first_tier_route tier 规则逆查询（CC 角色种子共用前缀语义）+ fallback_from 可感知
-  usage_log.py ── 追加写 JSONL + 轮转
+  router.py ── 路由决策 + extract_system_text system 抽取单一真源（SUBAGENT 判定输入；R5 自 compat 迁入）+ parse_route_target 文法所有者 + first_tier_route tier 规则逆查询（CC 角色种子共用前缀语义）+ fallback_from 可感知
+  usage_log.py ── 追加写 JSONL + 轮转 + usage_entry_from_wire 线格式 usage→UsageEntry 单一转换（proxy 四车道消费）
   prewarmer.py ── 启动预热 best-effort adapter
   __main__.py ── `python3 -m suanpan` 独立启动入口
 ```

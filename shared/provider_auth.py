@@ -9,6 +9,7 @@ No third-party imports: the config server must work even when the Suanpan
 gateway deps (pydantic/FastAPI) are absent (ADR-000 lazy-import design).
 """
 import os
+import re
 
 # Headers never forwarded to the backend (hop-by-hop or auth-related).
 HOP_HEADERS = frozenset({
@@ -198,6 +199,22 @@ PROVIDER_REGISTRY = {
         "balance_apis": [],
     },
 }
+
+# OpenAI 新推理系模型拒绝 max_tokens（要求 max_completion_tokens）；
+# 其余厂商兼容面以 max_tokens 为准（deepseek/qwen/siliconflow 文档口径）
+_NEEDS_COMPLETION_TOKENS = re.compile(r"^(gpt-5|o[134](\b|-))")
+
+
+def openai_max_tokens_field(model: str) -> str:
+    """OpenAI 系端点的最大输出参数名（供应商线格式知识，注册表之家）。
+
+    消费方：suanpan/compat 转换 A（请求体改写）+ services/provider_probe
+    的 test_provider 最小消息——两侧曾各自 lazy-import compat，网关依赖
+    缺席时探测侧随之断供；归注册表叶子层后两消费方恒可达。
+    """
+    return ("max_completion_tokens"
+            if _NEEDS_COMPLETION_TOKENS.match(str(model)) else "max_tokens")
+
 
 def restore_masked_key(new_val, old_val, keep):
     """掩码保存契约的 key 解析（唯一实现即此；唯一消费方
