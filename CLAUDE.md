@@ -176,6 +176,10 @@ services/ ── 服务
     通知文案/dirty 标记独占；依赖全注入纯 Python 可构造，测试直打
     公开意图面（tests/test_intents.py 真值表）
   authenticated_http.py ── 认证出站：跨 origin 拒 / 降级必拒 / 1MB 上限
+  server_check.py ── 服务卡一键检测单一归宿（ADR-011 M2）：SERVICE_CARDS
+    注册表（ssh/nfs/openvpn 三卡，label + probe 统一签名）+ check_server
+    编排（单卡失败不连坐）；probe_inputs（探针输入守卫 + Keychain 取用）
+    自 config_server 迁入——test_tunnel/test_forward/NFS 远程操作反向复用
   balance_usage.py ── 余额 API + 本地用量多维聚合（CST 范围，含来源
     Agent 维度）+ 端点三级探测（存在性/认证/模型清单，ADR-010）；
     余额响应归一 = 注册表卡名路由 + 形状嗅探兜底（_BALANCE_PARSERS）

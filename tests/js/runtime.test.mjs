@@ -58,12 +58,13 @@ function fakeElement(extra = {}) {
   };
 }
 
-function makeRuntime() {
+function makeRuntime(fetchImpl) {
   const elements = new Map();
   for (const id of [
     "save-btn", "status-left", "shortcut-hint", "pending-bar",
     "pending-title", "pending-items", "pending-save-btn", "viewport",
     "nav-container", "page-title", "page-subtitle", "toast", "toast-msg",
+    "probe-ssh", "probe-vpn",
   ]) elements.set(id, fakeElement());
 
   for (const id of ["cfg-sysproxy", "cfg-sleep", "cfg-login"]) {
@@ -98,7 +99,7 @@ function makeRuntime() {
     navigator: { clipboard: { writeText: async () => {} } },
     window: {},
     document,
-    fetch: async () => { throw new Error("unexpected fetch"); },
+    fetch: fetchImpl || (async () => { throw new Error("unexpected fetch"); }),
   });
   vm.runInContext(SCRIPT, context);
   return {
@@ -448,9 +449,11 @@ test("servers view renders master-detail with proxy badge, service tags and moun
   assert.match(html, /已挂载/);
   assert.match(html, /nfsMountAction\(this,0,'mount'\)/);
   assert.match(html, /nfsCheckRemote\(this\)/);
-  // OpenVPN 占位卡：禁用态 + 即将支持 + 探针区占位
+  assert.match(html, /svcCheck\('ssh',this\)/);
+  // OpenVPN 占位卡：配置态仍占位（即将支持徽标），检测已可用（svcCheck）
   assert.match(html, /OpenVPN 服务/);
   assert.match(html, /即将支持/);
+  assert.match(html, /svcCheck\('openvpn',this\)/);
   assert.match(html, /id="probe-vpn"/);
 });
 
@@ -471,6 +474,65 @@ test("servers view follows the shared activeTunnel selection", () => {
     /is-selected" onclick="selectServer\(1\)"/);
   assert.doesNotMatch(rt.run("serversHTML()"),
     /is-selected" onclick="selectServer\(0\)"/);
+});
+
+test("svcCheck probes the saved server per card and renders probe results", async () => {
+  const calls = [];
+  const rt = makeRuntime(async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    calls.push({ url, method: opts.method, body });
+    const results = body.only === "ssh"
+      ? { ssh: { ok: true, error: "", latency_ms: 87 } }
+      : { openvpn: { ok: true, error: "", installed: false, version: "" } };
+    return { ok: true, json: async () => ({ ok: true, results }) };
+  });
+  rt.run(`
+    S=normalizeState({mp:{servers:[
+      {id:'t-1',name:'srv-a',ssh:{user:'u',host:'a.example',port:22},
+       services:{ssh:{forwards:[],autostart:false}}}]}});
+    activeView='servers';activeTunnel=0;
+  `);
+  await rt.run(`
+    (async()=>{
+      const btn={textContent:'检测服务',disabled:false};
+      await svcCheck('ssh',btn);
+      await svcCheck('openvpn',btn);
+      return btn;
+    })()
+  `);
+  // SAVED-config 语义：按 index 探测已保存服务器，only 定向单卡
+  assert.deepEqual(calls, [
+    { url: "/api/server-check", method: "POST", body: { index: 0, only: "ssh" } },
+    { url: "/api/server-check", method: "POST", body: { index: 0, only: "openvpn" } },
+  ]);
+  assert.equal(rt.elements.get("probe-ssh").textContent, "✅ SSH 可达 · 87ms");
+  assert.equal(
+    rt.elements.get("probe-vpn").textContent,
+    "❌ 未安装（安装后此处将显示可用入口）");
+});
+
+test("svcCheck renders connection failure from the card probe", async () => {
+  const rt = makeRuntime(async () => ({
+    ok: true,
+    json: async () => ({
+      ok: true,
+      results: { openvpn: { ok: false, error: "连接超时", installed: false, version: "" } },
+    }),
+  }));
+  rt.run(`
+    S=normalizeState({mp:{servers:[
+      {id:'t-1',ssh:{host:'a.example',port:22},services:{ssh:{forwards:[]}}}]}});
+    activeView='servers';activeTunnel=0;
+  `);
+  await rt.run(`
+    (async()=>{
+      const btn={textContent:'检测服务',disabled:false};
+      await svcCheck('openvpn',btn);
+      return btn;
+    })()
+  `);
+  assert.equal(rt.elements.get("probe-vpn").textContent, "❌ 连接超时");
+  assert.equal(rt.elements.get("probe-vpn").style.color, "var(--danger)");
 });
 
 

@@ -755,6 +755,98 @@ class TestTestForwardEndpoint(unittest.TestCase):
         tf.assert_called_once_with(tunnel, forward)
 
 
+class TestServerCheckEndpoint(unittest.TestCase):
+    """POST /api/server-check {tunnel|index, only?}：服务卡一键检测的路由面
+    （卡探测归一/编排的测试在 test_server_check.py）。"""
+
+    def setUp(self):
+        self.server, self.port = _start_server()
+        self.token = self.server._token
+
+    def tearDown(self):
+        self.server.stop()
+
+    def _post(self, body, token=True):
+        return _request(self.port, "POST", "/api/server-check", body=body,
+                        token=self.token if token else None)
+
+    def test_requires_token(self):
+        status, _ = self._post('{"index": 0}', token=False)
+        self.assertEqual(status, 401)
+
+    def test_bad_index_returns_400(self):
+        cfg = {"servers": [{"ssh": {"host": "h"}}]}
+        for bad in ('{"index": 5}', '{"index": "x"}', '{}'):
+            with self.subTest(body=bad):
+                with patch.object(config_server, "_read_mp",
+                                  return_value=cfg):
+                    status, data = self._post(bad)
+                self.assertEqual(status, 400)
+                self.assertFalse(json.loads(data)["ok"])
+
+    def test_no_servers_returns_400(self):
+        with patch.object(config_server, "_read_mp",
+                          return_value={"servers": []}):
+            status, data = self._post('{"index": 0}')
+        self.assertEqual(status, 400)
+        self.assertFalse(json.loads(data)["ok"])
+
+    def test_invalid_only_returns_400(self):
+        tunnel = {"ssh": {"host": "h"}}
+        with patch.object(config_server, "_read_mp",
+                          return_value={"servers": [tunnel]}), \
+             patch.object(config_server.server_check, "check_server") as cs:
+            status, data = self._post('{"index": 0, "only": "telnet"}')
+        self.assertEqual(status, 400)
+        self.assertFalse(json.loads(data)["ok"])
+        cs.assert_not_called()
+
+    def test_non_string_only_returns_400(self):
+        """only 为 dict/list 等恶形不得打崩 handler 线程（评审实锄）。"""
+        tunnel = {"ssh": {"host": "h"}}
+        for bad in ('{"index": 0, "only": {"a": 1}}',
+                    '{"index": 0, "only": ["ssh"]}',
+                    '{"index": 0, "only": 42}'):
+            with patch.object(config_server, "_read_mp",
+                              return_value={"servers": [tunnel]}), \
+                 patch.object(config_server.server_check, "check_server") as cs:
+                status, data = self._post(bad)
+            self.assertEqual(status, 400, bad)
+            self.assertFalse(json.loads(data)["ok"])
+        cs.assert_not_called()
+
+    def test_index_body_delegates_with_only(self):
+        tunnel = {"ssh": {"host": "example.com", "user": "u", "port": 22}}
+        results = {"ssh": {"ok": True, "error": "", "latency_ms": 12}}
+        with patch.object(config_server, "_read_mp",
+                          return_value={"servers": [tunnel]}), \
+             patch.object(config_server.server_check, "check_server",
+                          return_value=results) as cs:
+            status, data = self._post('{"index": 0, "only": "ssh"}')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data),
+                         {"ok": True, "results": results})
+        cs.assert_called_once_with(tunnel, config_server.keychain, only="ssh")
+
+    def test_tunnel_body_runs_all_cards_without_only(self):
+        tunnel = {"ssh": {"host": "new.example.com", "port": 22}}
+        results = {"ssh": {"ok": True, "error": "", "latency_ms": 5},
+                   "nfs": {"ok": True, "error": "", "family": "apt-get",
+                           "installed": True, "listening_2049": True,
+                           "exports_configured": True},
+                   "openvpn": {"ok": True, "error": "", "installed": False,
+                               "version": ""}}
+        with patch.object(config_server, "_read_mp") as rm, \
+             patch.object(config_server.server_check, "check_server",
+                          return_value=results) as cs:
+            status, data = self._post(json.dumps({"tunnel": tunnel}))
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data),
+                         {"ok": True, "results": results})
+        rm.assert_not_called()
+        cs.assert_called_once_with(tunnel, config_server.keychain, only=None)
+
+
 class TestForwardProbeLogic(unittest.TestCase):
     """config_server.test_forward 的端点职责：输入守卫 + Keychain 取用 +
     委托 ssh_launch.probe_forward（-W argv / 分类的测试在 test_ssh_launch.py）。"""
@@ -1350,5 +1442,5 @@ class TestDispatchTables(unittest.TestCase):
         # 端点增减须显式改这里的数字——防表项被误删
         from services import config_server as cs
         self.assertEqual(len(cs._API_GET), 7)
-        self.assertEqual(len(cs._API_POST), 12)
+        self.assertEqual(len(cs._API_POST), 13)
         self.assertEqual(len(cs._API_PUT), 1)

@@ -17,7 +17,7 @@ from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 
 from shared import keychain
-from services import sp_config
+from services import sp_config, server_check
 from mpconf.config_state import ConfigStateStore
 from tunnel import ssh_launch
 from mount import remote_setup
@@ -102,46 +102,17 @@ def _read_mp():
     return cfg
 
 
-def _probe_inputs(tunnel):
-    """test_tunnel / test_forward 共用的探针前置：输入守卫 + Keychain 取用。
-
-    返回 (normalized, password, error)：守卫不过 → (None, "", "<中文短语>")；
-    过关 → 探针消费校验归一后的值（strip/int），与历史行为一致——手改
-    配置的空白 host 或 "022" 端口不进 ssh argv。
-    """
-    ssh = tunnel.get("ssh") if isinstance(tunnel.get("ssh"), dict) else {}
-    host = str(ssh.get("host") or "").strip()
-    user = str(ssh.get("user") or "").strip()
-    try:
-        port = int(ssh.get("port", 22))
-    except (TypeError, ValueError):
-        port = 0
-    destination = f"{user}@{host}" if user else host
-    if not host or not 1 <= port <= 65535 or destination.startswith("-"):
-        return None, "", "服务器地址或端口无效"
-
-    password = ""
-    if ssh.get("auth_type") == "password":
-        password = keychain.get_password(tunnel)
-        if not password:
-            return None, "", "钥匙串中没有该服务器的密码，请先保存"
-
-    normalized = {**tunnel, "ssh": {**ssh, "host": host, "user": user,
-                                    "port": port}}
-    return normalized, password, ""
-
-
 def test_tunnel(tunnel):
     """One-shot SSH reachability probe for one saved tunnel config.
 
-    本函数只持有端点职责：输入守卫与 Keychain 取用经 _probe_inputs 共享；
-    SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe，含超时
-    上限）——绿结果意味着隧道本身会连上，未信任主机快速失败，绝不
-    自动信任。
+    本函数只持有端点职责：输入守卫与 Keychain 取用经 server_check.
+    probe_inputs 共享；SSH 调用策略与真实隧道完全同源（tunnel/
+    ssh_launch.probe，含超时上限）——绿结果意味着隧道本身会连上，
+    未信任主机快速失败，绝不自动信任。
 
     Returns {"ok": True} or {"ok": False, "error": "<中文短语>"} — never raises.
     """
-    normalized, password, error = _probe_inputs(tunnel)
+    normalized, password, error = server_check.probe_inputs(tunnel, keychain)
     if error:
         return {"ok": False, "error": error}
     return ssh_launch.probe(normalized, password=password)
@@ -150,14 +121,14 @@ def test_tunnel(tunnel):
 def test_forward(tunnel, forward):
     """One-shot port-forward probe: tunnel + 一条显式转发行（表单意图）。
 
-    本函数只持有端点职责：输入守卫与 Keychain 取用经 _probe_inputs 共享；
-    SSH 调用策略与真实隧道完全同源（tunnel/ssh_launch.probe_forward，
-    -W 直连远端端口）。测的是请求体里的 tunnel + forward——未保存的
-    表单值同样可测。
+    本函数只持有端点职责：输入守卫与 Keychain 取用经 server_check.
+    probe_inputs 共享；SSH 调用策略与真实隧道完全同源（tunnel/
+    ssh_launch.probe_forward，-W 直连远端端口）。测的是请求体里的
+    tunnel + forward——未保存的表单值同样可测。
 
     Returns {"ok": True, "latency_ms": int} or {"ok": False, "error": str}.
     """
-    normalized, password, error = _probe_inputs(tunnel)
+    normalized, password, error = server_check.probe_inputs(tunnel, keychain)
     if error:
         return {"ok": False, "error": error}
     return ssh_launch.probe_forward(
@@ -172,7 +143,7 @@ def _nfs_credentials(tunnel, sudo_password_override=None):
     密码 > Keychain sudo 槽（密钥登录存过一次的）。空串 = sudo -n
     （NOPASSWD 服务器），失败由 run_remote 分类成中文短语提示补输。
     """
-    normalized, password, error = _probe_inputs(tunnel)
+    normalized, password, error = server_check.probe_inputs(tunnel, keychain)
     if error:
         return None, "", "", error
     if sudo_password_override:
@@ -533,6 +504,25 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._json(200, test_forward(tunnel, forward))
 
+    def _api_server_check(self, data):
+        """POST /api/server-check {tunnel|index, only?} → 服务卡一键检测。
+
+        only = SERVICE_CARDS 键之一（单卡）或缺省（全卡）；隧道解析与
+        test-forward / NFS 端点共用 _resolve_tunnel，结果按服务类型
+        键控（{"results": {"ssh": …, "nfs": …, "openvpn": …}}），单卡
+        失败不连坐其它卡（server_check.check_server 包裹）。"""
+        tunnel, error = self._resolve_tunnel(data)
+        if error:
+            self._json(400, {"ok": False, "error": error})
+            return
+        only = data.get("only")
+        if only is not None and (not isinstance(only, str)
+                                  or only not in server_check.SERVICE_CARDS):
+            self._json(400, {"ok": False, "error": "无效的检测类型"})
+            return
+        self._json(200, {"ok": True, "results": server_check.check_server(
+            tunnel, keychain, only=only)})
+
     def _api_capture_clean(self, data):
         """POST /api/capture-clean → empty the capture dir (keep the dir)."""
         cfg = _read_mp()
@@ -663,6 +653,7 @@ _API_POST = {
     "/api/cc-sync-preview": _Handler._api_cc_sync_preview,
     "/api/test-tunnel": _Handler._api_test_tunnel,
     "/api/test-forward": _Handler._api_test_forward,
+    "/api/server-check": _Handler._api_server_check,
     "/api/nfs-check-remote": _Handler._api_nfs_check_remote,
     "/api/nfs-setup-remote": _Handler._api_nfs_setup_remote,
     "/api/capture-clean": _Handler._api_capture_clean,

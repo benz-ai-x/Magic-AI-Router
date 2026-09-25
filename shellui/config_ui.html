@@ -1372,7 +1372,7 @@ function serversHTML(){
   const nfsOn=n.enabled===true;
   const mountCount=(n.mounts||[]).length;
   return `<section class="view">
-    <p class="module-intro">一台服务器一页配完：连接参数 + 其上可用的服务。隧道变更保存后需「重新连接」生效（端口转发保存后自动重连）；SSH 服务卡「检测服务」探测已保存配置，转发行的「测试」探测当前填写值；NFS「挂载 / 卸载」即时生效（无需保存）。</p>
+    <p class="module-intro">一台服务器一页配完：连接参数 + 其上可用的服务。隧道变更保存后需「重新连接」生效（端口转发保存后自动重连）；服务卡「检测服务」探测已保存配置（SSH 可达 / NFS 状态 / OpenVPN 安装态），转发行的「测试」探测当前填写值；NFS「挂载 / 卸载」即时生效（无需保存）。</p>
     <div class="panel"><div class="md-layout">
       <div class="md-master">
         <div class="section-bar"><h2 class="section-title">服务器</h2><span class="count">${ts.length} 台</span></div>
@@ -1413,7 +1413,7 @@ function serversHTML(){
               <div class="grow"></div>
               <span class="state-badge ${fwOn?'on':''}">${fwOn?`${fwOn} 条启用`:'未配置'}</span>
               ${(isCur||t.is_proxy)?'':`<button class="btn btn-sm" aria-label="${t.forward_running?'停止':'启动'}端口转发 ${esc(tname)}" onclick="toggleForwardSession(this,'${esc(t.id||'')}','${t.forward_running?'stop':'start'}')">${t.forward_running?'停止转发':'启动转发'}</button>`}
-              <button class="btn btn-sm" aria-label="检测 SSH 服务 ${esc(tname)}" onclick="testTunnel(this)" title="探测已保存配置的 SSH 可达性">检测服务</button>
+              <button class="btn btn-sm" aria-label="检测 SSH 服务 ${esc(tname)}" onclick="svcCheck('ssh',this)" title="探测已保存配置的 SSH 可达性">检测服务</button>
             </div>
             <div class="probe-result mono" id="probe-ssh"></div>
             <div class="service-card-body">
@@ -1464,7 +1464,7 @@ function serversHTML(){
                 <div class="svc-sub">VPN 实例（与 SSH 隧道二选一互斥）</div></div>
               <div class="grow"></div>
               <span class="state-badge">占位</span>
-              <button class="btn btn-sm" disabled title="即将支持">检测服务</button>
+              <button class="btn btn-sm" aria-label="检测 OpenVPN 服务 ${esc(tname)}" onclick="svcCheck('openvpn',this)" title="探测远程是否已安装 OpenVPN（服务配置即将支持）">检测服务</button>
             </div>
             <div class="probe-result mono" id="probe-vpn"></div>
             <div class="vpn-ph"><div>· 服务框架已预留此服务类型——正式版将支持 VPN 实例、经 management interface 的连接控制、与 SSH 隧道的互斥切换</div></div>
@@ -1551,22 +1551,35 @@ function _setProbeResult(id,text,color){
   el.textContent=text||'';
   el.style.color=color||'';
 }
-async function testTunnel(btn){
+// 服务卡一键检测（svcCheck）：SSH / OpenVPN 卡共用——后端按「已保存」的
+// servers[index] 探测（同一 SAVED-config 语义，未保存的表单编辑不参与）；
+// NFS 卡走 nfsCheckRemote（富渲染已就绪，保持不动）。kind→探针区 id 映射
+// 补齐历史命名差（openvpn 卡的探针区是 probe-vpn）。
+const SVC_PROBE_ID={ssh:'probe-ssh',openvpn:'probe-vpn'};
+async function svcCheck(kind,btn){
   collectServers();
   const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可测试的服务器',true);return;}
+  if(!(i>=0&&i<ts.length)){toast('没有可检测的服务器',true);return;}
+  const pid=SVC_PROBE_ID[kind]||('probe-'+kind);
   const orig=btn.textContent;
-  btn.disabled=true;btn.textContent='测试中…';
-  _setProbeResult('probe-ssh','测试中…（探测已保存的配置）','var(--muted)');
+  btn.disabled=true;btn.textContent='检测中…';
+  _setProbeResult(pid,'检测中…（探测已保存的配置）','var(--muted)');
   const restore=()=>{btn.disabled=false;btn.textContent=orig;};
   try{
-    // 后端按「已保存」的 servers[index] 探测——未保存的表单编辑不参与。
-    const r=await fetch('/api/test-tunnel',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({index:i})});
+    const r=await fetch('/api/server-check',{method:'POST',headers:apiHeaders(null,{'Content-Type':'application/json'}),body:JSON.stringify({index:i,only:kind})});
     const d=await r.json();
-    if(d.ok)_setProbeResult('probe-ssh','✅ 连接成功','var(--ok)');
-    else _setProbeResult('probe-ssh','❌ '+(d.error||'测试失败'),'var(--danger)');
+    const res=d&&d.results&&d.results[kind];
+    if(!res)_setProbeResult(pid,'❌ '+(d.error||'检测失败'),'var(--danger)');
+    else if(kind==='openvpn'){
+      if(!res.ok)_setProbeResult(pid,'❌ '+(res.error||'检测失败'),'var(--danger)');
+      else if(res.installed)_setProbeResult(pid,'✅ 已安装 · '+(res.version||''),'var(--ok)');
+      else _setProbeResult(pid,'❌ 未安装（安装后此处将显示可用入口）','var(--muted)');
+    }else{
+      if(res.ok)_setProbeResult(pid,'✅ SSH 可达'+(res.latency_ms!=null?' · '+res.latency_ms+'ms':''),'var(--ok)');
+      else _setProbeResult(pid,'❌ '+(res.error||'检测失败'),'var(--danger)');
+    }
     restore();
-  }catch(e){_setProbeResult('probe-ssh','❌ 请求失败: '+e.message,'var(--danger)');restore();}
+  }catch(e){_setProbeResult(pid,'❌ 请求失败: '+e.message,'var(--danger)');restore();}
 }
 // 行内端口转发测试：探测的是表单当前值（collect 后的转发实例行），
 // 未保存的新服务器/新行同样可测——后端 probe_forward 不依赖服务器当前状态。
