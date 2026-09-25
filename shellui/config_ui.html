@@ -37,7 +37,7 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .nav-item{width:100%;min-height:40px;display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;text-align:left;font-weight:550;font-size:15px}
 .nav-item svg{width:16px;height:16px;flex:0 0 auto;align-self:flex-start;margin-top:2px}
 .nav-text{display:flex;flex-direction:column;min-width:0}
-.nav-sub{display:block;font-size:11px;color:var(--muted);font-weight:400;line-height:1.4}
+.nav-sub{display:block;font-size:11px;color:var(--muted);font-weight:400;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nav-item:hover{background:color-mix(in oklch,var(--surface),var(--border) 28%);color:var(--fg)}
 .nav-item[aria-current=page]{background:var(--bg);color:var(--fg);border-color:var(--border);box-shadow:0 1px 2px color-mix(in oklch,var(--fg),transparent 94%)}
 #nav-container{flex:1 1 auto;min-height:0;overflow-y:auto}
@@ -82,9 +82,10 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .panel{border:1px solid var(--border);border-radius:8px;background:var(--bg);overflow:hidden;margin-bottom:16px}
 .panel:last-child{margin-bottom:0}
 /* 宽窗口收束（#3 P2）：普通流式视图的面板/导语限宽居中，表单与统计卡片不再
-   过度拉伸；master-detail 的面板（含 .md-layout）保持全宽 */
+   过度拉伸；master-detail 的面板（含 .md-layout）保持全宽，其导语随之
+   左对齐与面板对齐（居中 760px 导语悬在全宽面板上方会错位） */
 .view .panel:not(:has(.md-layout)){max-width:1100px;margin-left:auto;margin-right:auto}
-.view>.module-intro{margin-left:auto;margin-right:auto}
+.view:not(:has(.md-layout))>.module-intro{margin-left:auto;margin-right:auto}
 /* empty state */
 .empty-state{padding:48px 24px;text-align:center;color:var(--muted)}
 .empty-state>svg{display:block;margin:0 auto 12px}
@@ -1072,7 +1073,7 @@ const VIEWS={
   servers:{group:'代理',title:'服务器',sub:'远程服务器与其上的服务',icon:'server'},
   proxy:{group:'代理',title:'网络设置',sub:'端口与抓包',icon:'globe'},
   system:{group:'系统',title:'系统选项',sub:'防睡眠与登录启动',icon:'sliders-horizontal'},
-  quickstart:{group:'AI 路由',title:'快速接入',sub:'厂商 Key → 多 Agent 自动配置',readOnly:true,icon:'zap'},
+  quickstart:{group:'AI 路由',title:'快速接入',sub:'厂商 Key · 多 Agent 接入',readOnly:true,icon:'zap'},
   providers:{group:'AI 路由',title:'供应商',sub:'后端接入与凭证',icon:'share-2'},
   rules:{group:'AI 路由',title:'Claude Code 同步',sub:'角色模型映射与同步',icon:'list-todo'},
   usage:{group:'AI 路由',title:'运行统计',sub:'缓存命中与用量分析',readOnly:true,icon:'bar-chart-3'},

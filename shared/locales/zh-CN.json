@@ -158,7 +158,7 @@
   "ui.nav.system.title": "系统选项",
   "ui.nav.system.sub": "防睡眠与登录启动",
   "ui.nav.quickstart.title": "快速接入",
-  "ui.nav.quickstart.sub": "厂商 Key → 多 Agent 自动配置",
+  "ui.nav.quickstart.sub": "厂商 Key · 多 Agent 接入",
   "ui.nav.providers.title": "供应商",
   "ui.nav.providers.sub": "后端接入与凭证",
   "ui.nav.rules.title": "Claude Code 同步",

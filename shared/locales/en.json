@@ -158,7 +158,7 @@
   "ui.nav.system.title": "System Options",
   "ui.nav.system.sub": "Sleep and launch",
   "ui.nav.quickstart.title": "Quick Start",
-  "ui.nav.quickstart.sub": "Vendor key → multi-agent setup",
+  "ui.nav.quickstart.sub": "Vendor key · agents ready",
   "ui.nav.providers.title": "Providers",
   "ui.nav.providers.sub": "Backends and credentials",
   "ui.nav.rules.title": "Claude Code Sync",
