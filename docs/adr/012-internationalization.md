@@ -1,7 +1,7 @@
 # ADR-012: 界面国际化（i18n）
 
 日期：2026-09-25
-状态：已接受（M0+M1 随本批落地；M2–M5 见文末路线图）
+状态：已接受（M0+M1 已合入；M2 已落地——设置窗双语 + 语言选择器）
 
 ## 背景
 
@@ -35,7 +35,9 @@
 ## 路线图（里程碑 → PR）
 
 - **M0+M1（本批）**：i18n 管线 + 守卫 + 菜单栏/通知/启动弹窗/关于 双语。
-- **M2**：设置窗 HTML 提键（`data-i18n` + JS `t()`）、serve 时注入 `window.__I18N__`、系统页切换 UI、登录页。
+- **M2（已落地）**：设置窗全量提键（`tt()` 取词，~480 键）、serve 时注入 `window.__I18N__`（双语 catalog）、系统选项页语言选择器（PUT baseline+language → **原地重渲染不 reload**——未保存表单不丢）、登录页双语。
+  - 关键机制：页面 `tt()` 定义在 LAYER 1 横幅之前；`tests/js/extract.mjs` 的 `loadLayer` 求值前注入同款 tt（zh catalog 唯一真相源）——LAYER 1 的校验消息/标签数据面照常 tt() 取词，node 断言经 catalog 取 zh，逐字节不变；runtime.test 注入真实 `__I18N__`。
+  - 残留（M4 收编）：LAYER 1 复合文案（providerRefsHint/ccDriftInfo/modelMissingHint/ccBackupNote/quotaNumsText 复合段）仍 zh；守卫 = tests/test_i18n 闸 5（渲染层零容忍，静态骨架/LAYER1 数据面/注释豁免）。
 - **M3（可选）**：校验器结构化错误（validate.py/mjs + 镜像测试改比码 + 存量文案测试重写）。
 - **M4**：长尾表面（ssh_launch 失败分类、ca_trust 引导窗、log_window、SERVICE_CARDS、balance_usage、provider 品牌名、agent_instructions、docker 引导）+ 白名单清零。
 - **M5**：en 术语表统一打磨、英文 README（独立轨道）、发版。
