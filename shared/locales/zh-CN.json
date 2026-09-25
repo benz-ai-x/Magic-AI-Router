@@ -380,7 +380,7 @@
   "ui.system.language_applied": "语言已切换",
   "ui.chrome.title": "Magic Stack · 设置",
   "ui.chrome.subtitle": "设置",
-  "ui.chrome.priority_note": "<strong>保存后生效</strong>隧道变更需菜单「重新连接」；端口转发保存后自动重连；AI 路由保存后自动重载。",
+  "ui.chrome.priority_note": "<strong>保存后生效：</strong>隧道变更需菜单「重新连接」；端口转发保存后自动重连；AI 路由保存后自动重载。",
   "ui.chrome.saved": "已保存",
   "ui.pending.title_default": "有未保存的更改",
   "ui.net.proxy_ports": "代理端口",
@@ -600,5 +600,12 @@
   "ui.qs.preview_fail": "预览失败",
   "ui.common.cancelled": "已取消",
   "ui.qs.done": "配置完成",
-  "ui.qs.partial_fail": "部分步骤失败，见结果列表"
+  "ui.qs.partial_fail": "部分步骤失败，见结果列表",
+  "ui.pending.discard_all": "放弃全部",
+  "ui.pending.save_all": "保存全部",
+  "ui.login.title": "设置",
+  "ui.login.hint": "输入配置页面的访问 token（Docker 版用 suanpan.sh config-ui 查看）",
+  "ui.login.enter": "进入",
+  "ui.login.invalid": "token 无效",
+  "ui.cc.hint_subagent": "建议选更便宜模型，区分主任务与子代理"
 }

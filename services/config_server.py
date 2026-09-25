@@ -60,11 +60,12 @@ def _inject_i18n_boot(html):
 
 def _login_html():
     """登录页（按当前语言渲染——ADR-012 M2：serve 时取词）。"""
-    return """<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
+    lang = i18n.language()
+    return (
+        """<!doctype html>
+<html lang="@LANG@"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Magic Stack — '
-    + i18n.t("ui.login.title") + '</title>
+<title>Magic Stack — @TITLE@</title>
 <style>
 body{font-family:-apple-system,system-ui,sans-serif;background:#f5f5f7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .card{background:#fff;border-radius:12px;padding:32px;box-shadow:0 4px 24px rgba(0,0,0,.08);width:320px}
@@ -75,13 +76,10 @@ button:disabled{background:#ccc;cursor:default}.err{color:#ff3b30;font-size:13px
 </style></head><body>
 <div class="card">
 <h1>Magic Stack</h1>
-<p>'
-    + i18n.t("ui.login.hint") + '</p>
+<p>@HINT@</p>
 <input id="tok" type="password" placeholder="token" autocomplete="off" autofocus>
-<button id="go">'
-    + i18n.t("ui.login.enter") + '</button>
-<div class="err" id="err">'
-    + i18n.t("ui.login.invalid") + '</div>
+<button id="go">@ENTER@</button>
+<div class="err" id="err">@INVALID@</div>
 </div>
 <script>
 const tok=document.getElementById('tok'),go=document.getElementById('go'),err=document.getElementById('err');
@@ -97,6 +95,12 @@ async function login(){
 go.onclick=login;
 tok.onkeydown=e=>{if(e.key==='Enter')login();};
 </script></body></html>"""
+        .replace("@LANG@", lang)
+        .replace("@TITLE@", i18n.t("ui.login.title"))
+        .replace("@HINT@", i18n.t("ui.login.hint"))
+        .replace("@ENTER@", i18n.t("ui.login.enter"))
+        .replace("@INVALID@", i18n.t("ui.login.invalid"))
+    )
 
 
 def _read_mp():

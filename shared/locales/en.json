@@ -380,7 +380,7 @@
   "ui.system.language_applied": "Language switched",
   "ui.chrome.title": "Magic Stack · Settings",
   "ui.chrome.subtitle": "Settings",
-  "ui.chrome.priority_note": "<strong>Applies after save</strong> — tunnel changes need “Reconnect” in the menu bar; port forwards auto-reconnect after saving; AI routing auto-reloads after saving.",
+  "ui.chrome.priority_note": "<strong>Applies after save:</strong> tunnel changes need “Reconnect” in the menu bar; port forwards auto-reconnect after saving; AI routing auto-reloads after saving.",
   "ui.chrome.saved": "Saved",
   "ui.pending.title_default": "Unsaved changes",
   "ui.net.proxy_ports": "Proxy Ports",
@@ -600,5 +600,12 @@
   "ui.qs.preview_fail": "Preview failed",
   "ui.common.cancelled": "Cancelled",
   "ui.qs.done": "Setup complete",
-  "ui.qs.partial_fail": "Some steps failed — see the results list"
+  "ui.qs.partial_fail": "Some steps failed — see the results list",
+  "ui.pending.discard_all": "Discard all",
+  "ui.pending.save_all": "Save all",
+  "ui.login.title": "Settings",
+  "ui.login.hint": "Enter the access token for this settings page (Docker: see suanpan.sh config-ui)",
+  "ui.login.enter": "Sign in",
+  "ui.login.invalid": "Invalid token",
+  "ui.cc.hint_subagent": "Pick a cheaper model to separate main tasks from subagents"
 }

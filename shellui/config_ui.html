@@ -30,19 +30,19 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
 .brand-mark i{width:5px;height:5px;justify-self:center;border-radius:50%;background:var(--fg)}
 .brand-name{font-size:16px;font-weight:600;line-height:1.35;white-space:nowrap}
 .brand-subtitle{color:var(--muted);font-size:12px}
-.nav-group{margin-top:16px}
-.nav-group:first-of-type{margin-top:14px}
-.nav-label{padding:0 10px 6px;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.nav-group{margin-top:10px}
+.nav-group:first-of-type{margin-top:12px}
+.nav-label{padding:0 10px 4px;color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .side-nav{display:grid;gap:3px}
-.nav-item{width:100%;min-height:40px;display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;text-align:left;font-weight:550;font-size:15px}
+.nav-item{width:100%;min-height:34px;display:flex;align-items:center;gap:10px;padding:5px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;text-align:left;font-weight:550;font-size:15px}
 .nav-item svg{width:16px;height:16px;flex:0 0 auto;align-self:flex-start;margin-top:2px}
 .nav-text{display:flex;flex-direction:column;min-width:0}
 .nav-sub{display:block;font-size:11px;color:var(--muted);font-weight:400;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nav-item:hover{background:color-mix(in oklch,var(--surface),var(--border) 28%);color:var(--fg)}
 .nav-item[aria-current=page]{background:var(--bg);color:var(--fg);border-color:var(--border);box-shadow:0 1px 2px color-mix(in oklch,var(--fg),transparent 94%)}
 #nav-container{flex:1 1 auto;min-height:0;overflow-y:auto}
-.priority-note{margin:16px 4px 0;padding:12px 10px;border-top:1px solid var(--border);color:var(--muted);font-size:13px;line-height:1.6}
-.priority-note strong{display:block;margin-bottom:4px;color:var(--fg);font-weight:550}
+.priority-note{margin:10px 4px 0;padding:9px 10px;border-top:1px solid var(--border);color:var(--muted);font-size:13px;line-height:1.5}
+.priority-note strong{display:inline;color:var(--fg);font-weight:550}
 .sidebar-ai-helper{margin:8px 4px 0}
 .sidebar-ai-helper .btn svg{width:16px;height:16px;flex:0 0 auto}
 /* workbench */
@@ -377,7 +377,7 @@ button:focus-visible,input:focus-visible{outline:3px solid color-mix(in oklch,va
     </header>
     <div class="pending-bar" id="pending-bar" hidden>
       <div class="pending-copy"><strong id="pending-title">有未保存的更改</strong><div class="pending-items" id="pending-items"></div></div>
-      <div class="pending-actions"><button class="btn btn-sm" onclick="discardAll()">放弃全部</button><button class="btn btn-sm btn-primary" id="pending-save-btn" onclick="saveAll()">保存全部</button></div>
+      <div class="pending-actions"><button class="btn btn-sm" id="pending-discard-btn" onclick="discardAll()">放弃全部</button><button class="btn btn-sm btn-primary" id="pending-save-btn" onclick="saveAll()">保存全部</button></div>
     </div>
     <div class="content-viewport" id="viewport"><section class="view is-active"><p class="loading-text">加载中…</p></section></div>
     <footer class="statusbar"><span id="status-left">就绪</span><span id="shortcut-hint">⌘S 保存</span></footer>
@@ -858,8 +858,8 @@ function apiHeaders(token,extra){
 
 // Role-row guidance. #43: the subagent row carries a hint that subagents
 // should use a cheaper model than the main task (CONTEXT.md design intent).
-const CC_ROLE_HINTS={subagent:'建议选更便宜模型，区分主任务与子代理'};
-function ccRoleHint(key){return CC_ROLE_HINTS[key]||'';}
+const CC_ROLE_HINTS={subagent:'ui.cc.hint_subagent'};
+function ccRoleHint(key){return CC_ROLE_HINTS[key]?tt(CC_ROLE_HINTS[key]):'';}
 
 // Table row definitions from the /api/cc-default-roles payload (#44):
 // Python (_ROLES) is the single source of truth for order/labels/readonly;
@@ -1218,7 +1218,7 @@ function renderView(){
   const vp=document.getElementById('viewport');vp.innerHTML='';
   const v=VIEWS[activeView]||VIEWS.servers;
   document.getElementById('page-title').textContent=tt('ui.nav.'+activeView+'.title');
-  document.getElementById('page-subtitle').textContent=v.sub||'';
+  document.getElementById('page-subtitle').textContent=tt('ui.nav.'+activeView+'.sub');
   updateStatus();
   vp.innerHTML=v.render();
   vp.firstElementChild.classList.add('is-active');
@@ -1272,7 +1272,9 @@ function applyStaticI18n(){
   const note=document.querySelector('.priority-note');if(note)note.innerHTML=tt('ui.chrome.priority_note');
   const cb=document.querySelector('.sidebar-ai-helper button');if(cb)cb.textContent=tt('footer.copy_instructions');
   const sb=document.getElementById('save-btn');if(sb&&!sb.textContent)sb.textContent=tt('ui.btn.save');
-  const pt=document.getElementById('pending-title');if(pt&&!pt.textContent)pt.textContent=tt('ui.pending.title_default');
+  const pt=document.getElementById('pending-title');if(pt)pt.textContent=tt('ui.pending.title_default');
+  const pd=document.getElementById('pending-discard-btn');if(pd)pd.textContent=tt('ui.pending.discard_all');
+  const ps=document.getElementById('pending-save-btn');if(ps)ps.textContent=tt('ui.pending.save_all');
   const sl=document.getElementById('status-left');if(sl&&!sl.textContent)sl.textContent=tt('ui.status.ready');
   const sh=document.getElementById('shortcut-hint');if(sh&&!sh.textContent)sh.textContent=tt('ui.hint.save');
   const tm=document.getElementById('toast-msg');if(tm)tm.textContent=tt('ui.chrome.saved');
@@ -2713,7 +2715,7 @@ function quickstartHTML(){
             ${existing?'<p class="field-hint">'+tt('ui.qs.existing_hint')+'</p>':''}</div>
           <div class="field"><label>API Key</label>
             <div class="key-field"><input class="control mono" id="qs-key" type="password" value="${esc(qs.key)}" oninput="qsSet('key',this.value)" placeholder="${existing?tt('ui.qs.key_reuse'):tt('ui.qs.key_paste')}"></div>
-            <p class="field-hint">'+tt('ui.qs.key_optional')+'</p></div>
+            <p class="field-hint">${tt('ui.qs.key_optional')}</p></div>
         </div>
         ${pick?`<p class="panel-hint">${tt('ui.qs.will_use',{proto:esc(pick.protocol==='anthropic'?'Anthropic':'OpenAI'),url:esc(pick.base_url)})}</p>`:'<p class="panel-hint">'+tt('ui.qs.pick_first')+'</p>'}
         <div class="qs-actions"><button class="btn btn-sm" onclick="qsProbe()" ${qs.busy?'disabled':''}>${qs.busy?tt('ui.qs.probing'):tt('ui.qs.probe')}</button></div>
