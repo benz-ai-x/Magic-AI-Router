@@ -1333,7 +1333,7 @@ function tunnelHTML(){
       <div class="md-detail">
         <div class="detail-bar"><h2>${esc(t.name||'Server '+(activeTunnel+1))}</h2>
           <div class="section-actions">
-            ${isCur?'<span class="fw-badge" title="该隧道是代理会话的 SSH 上游（SOCKS5 -D）">代理隧道</span>':`<button class="btn btn-sm" aria-label="设为代理隧道 ${esc(tname)}" onclick="setProxyTunnel()">设为代理隧道</button>`}
+            ${isCur?'<span class="fw-badge" title="该服务器是代理会话的 SSH 上游（SOCKS5 -D）">代理服务器</span>':(t.id?`<button class="btn btn-sm" aria-label="设为代理服务器 ${esc(tname)}" onclick="setProxyTunnel()">设为代理服务器</button>`:'')}
             ${(isCur||t.is_proxy)?'':`<button class="btn btn-sm" aria-label="${t.forward_running?'停止':'启动'}端口转发 ${esc(tname)}" onclick="toggleForwardSession(this,'${esc(t.id||'')}','${t.forward_running?'stop':'start'}')">${t.forward_running?'停止转发':'启动转发'}</button>`}
             <button class="btn btn-sm" aria-label="测试连接 ${esc(tname)}" onclick="testTunnel(this)">测试连接</button>
             <button class="btn btn-sm" aria-label="重新连接 ${esc(tname)}" onclick="reconnectProxy(this,'${esc(t.id||'')}')">重新连接</button>
@@ -1402,7 +1402,7 @@ function collectTunnel(){
   // 空输入恢复 null：密码是掩码字段，清空 = 不改（服务器只在非空时写钥匙串），
   // 残留旧值会让 dirty 卡住并把幽灵密码静默写入。
   const pw=v('pw');t.password=pw||null;
-  const cb=d.querySelector('[data-tf="compress"]');sshOf(t).compression=cb&&cb.getAttribute('aria-checked')==='true';
+  const cb=d.querySelector('[data-tf="compress"]');sshNode(t).compression=cb&&cb.getAttribute('aria-checked')==='true';
   const fab=d.querySelector('[data-tf="fw_autostart"]');sshSvc(t).autostart=fab&&fab.getAttribute('aria-checked')==='true';
   // 端口转发行按 DOM 顺序读回（行序即数组序）；缺省口径与 viewSnapshot
   // 同一语义：空端口=0、空地址=127.0.0.1
@@ -1436,7 +1436,7 @@ function _setTunnelResult(text,color){
 async function testTunnel(btn){
   collectTunnel();
   const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可测试的隧道',true);return;}
+  if(!(i>=0&&i<ts.length)){toast('没有可测试的服务器',true);return;}
   btn.disabled=true;btn.textContent='测试中…';
   _setTunnelResult('测试中…（探测已保存的配置）','var(--muted)');
   const restore=()=>{btn.disabled=false;btn.textContent='测试连接';};
@@ -1454,7 +1454,7 @@ async function testTunnel(btn){
 async function testForward(fi,btn){
   collectTunnel();
   const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可测试的隧道',true);return;}
+  if(!(i>=0&&i<ts.length)){toast('没有可测试的服务器',true);return;}
   const f=((forwardsOf(ts[i]))||[])[fi];
   if(!f){toast('转发行不存在',true);return;}
   const st=document.getElementById('fw-status-'+fi);
@@ -1595,7 +1595,7 @@ function _setNfsResult(text,color){
 }
 async function nfsCheckRemote(btn){
   collectNfs();const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可检测的隧道',true);return;}
+  if(!(i>=0&&i<ts.length)){toast('没有可检测的服务器',true);return;}
   btn.disabled=true;btn.textContent='检测中…';_setNfsResult('检测中…（探测发行版 / NFS 服务 / 2049 监听）','var(--muted)');
   const restore=()=>{btn.disabled=false;btn.textContent='检测远程 NFS';};
   try{
@@ -1614,7 +1614,7 @@ async function nfsCheckRemote(btn){
 }
 async function nfsSetupRemote(btn){
   collectNfs();const ts=S.mp.servers||[],i=activeTunnel;
-  if(!(i>=0&&i<ts.length)){toast('没有可安装的隧道',true);return;}
+  if(!(i>=0&&i<ts.length)){toast('没有可安装的服务器',true);return;}
   const t=ts[i],n=nfsOf(t)||{};
   const mounts=[...new Set((n.mounts||[]).map(m=>(m.remote_path||'').trim()).filter(p=>p&&p.startsWith('/')))];
   if(!mounts.length){_setNfsResult('❌ 请先填写至少一条有效的远程绝对路径','var(--danger)');return;}

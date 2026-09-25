@@ -12,6 +12,7 @@ import logging
 
 import rumps
 from capture import chromium_proxy
+from mpconf.config import proxy_server, server_forwards, servers
 from util import resource_path as _resource_path, truncate as _truncate
 
 logger = logging.getLogger("magic-proxy.menu")
@@ -203,15 +204,18 @@ def _error_counts(st):
 
 
 def _is_proxy_server(config, server) -> bool:
-    """代理角色判定（v2）：proxy_server_id 唯一真相，回退首条。与
-    mpconf.config.merge 的解析序同一语义——菜单只消费不重定义。"""
+    """代理角色判定（v2）：id 有效→命中；悬空/缺省→首条。与 merge 的
+    proxy_server 同一解析序——菜单只消费不重定义。
+
+    悬空 id（手编未 merge 的裸配置）不猜归属：merge 会在写侧重写为
+    有效值，菜单正常路径只见 merged 配置（TestIsProxyServer 钉住）。"""
     if not isinstance(config, dict) or not isinstance(server, dict):
         return False
-    rows = config.get("servers", [])
+    rows = servers(config)
     cid = config.get("proxy_server_id") or ""
     if cid:
         return server.get("id") == cid
-    return rows and server is rows[0]
+    return bool(rows) and server is rows[0]
 
 
 def _status_color(kind):
@@ -309,7 +313,7 @@ class MenuBuilder:
     def struct_key(self):
         st = self._get_state()
         s = st.ssh_status
-        tunnels = st.config.get("servers", [])
+        tunnels = servers(st.config)
         # Note: active_connections is deliberately NOT here (#40) — it
         # fluctuates every tick while traffic flows, but only affects the
         # traffic *title* (refresh_titles), never the menu structure.
@@ -322,8 +326,7 @@ class MenuBuilder:
         fw_identity = tuple(
             (t.get("id") or f"#{i}",
              tuple((f.get("local_port"), f.get("remote_port"))
-                   for f in ((t.get("services") or {}).get("ssh") or {}).get(
-                       "forwards") or []
+                   for f in server_forwards(t)
                    if isinstance(f, dict)))
             for i, t in enumerate(tunnels) if isinstance(t, dict))
         mount_identity = tuple((e.tunnel_id, e.name)
@@ -491,13 +494,12 @@ class MenuBuilder:
         parent = rumps.MenuItem("端口映射", callback=None)
         _apply_icon(parent, "forward_menu")
 
-        tunnels = st.config.get("servers", [])
+        tunnels = servers(st.config)
         single = len(tunnels) == 1
         any_rules = False
         for i, t in enumerate(tunnels):
             tid = t.get("id") or f"#{i}"
-            forwards = ((t.get("services") or {}).get("ssh") or {}).get(
-                "forwards") or []
+            forwards = server_forwards(t)
             any_rules = any_rules or bool(forwards)
             is_proxy = _is_proxy_server(st.config, t)
             if single:
@@ -566,7 +568,7 @@ class MenuBuilder:
         """端口映射区动态段：隧道行尾标、逐条转发行尾标与圆点、启停
         动作标签。每秒 tick 调用——只在标题变化时重挂图标（SF Symbol
         查找不便宜，不能每 tick 全量重设）。"""
-        tunnels = st.config.get("servers", [])
+        tunnels = servers(st.config)
         fw_running = {f.tunnel_id: f.status
                       for f in (st.forward_states or ())}
         for i, t in enumerate(tunnels):
@@ -611,7 +613,7 @@ class MenuBuilder:
                                     "fw_stop" if running else "fw_start")
             session_up = (st.ssh_status == "connected" if is_proxy
                           else fw_running.get(tid) == "connected")
-            for fi, f in enumerate(((t.get("services") or {}).get("ssh") or {}).get("forwards") or []):
+            for fi, f in enumerate(server_forwards(t)):
                 if not isinstance(f, dict):
                     continue
                 row = self.refs.get(("fw_row", tid, fi))
@@ -810,7 +812,7 @@ class MenuBuilder:
         tunnel = st.current_server
         tunnel_name = tunnel.get("name") if tunnel else None
         tunnel_name = tunnel_name or (
-            f"{tunnel.get('ssh_user', '')}@{tunnel.get('ssh_host', '')}" if tunnel else "未配置")
+            f"{(tunnel.get('ssh') or {}).get('user', '')}@{(tunnel.get('ssh') or {}).get('host', '')}" if tunnel else "未配置")
 
         # Proxy status line —— 颜色由行首圆点图标承载（emoji 已退役）
         if st.paused:

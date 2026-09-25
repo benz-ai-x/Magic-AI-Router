@@ -623,7 +623,7 @@ class _Handler(BaseHTTPRequestHandler):
         test-tunnel / test-forward（旧载荷）/ NFS 端点的 index 解析
         共用（架构评审 R2-2：此前三处手抄同款守卫）。"""
         if isinstance(idx, bool) or not isinstance(idx, int):
-            return None, "无效的隧道索引"
+            return None, "无效的服务器索引"
         cfg = _read_mp()
         rows = cfg.get("servers", []) if isinstance(cfg, dict) else []
         if not rows:

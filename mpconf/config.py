@@ -3,7 +3,7 @@
 Reads, writes, migrates, and validates ~/.magic-proxy.json.
 Imported by app.py and config_server.py — no circular dependency.
 
-Schema v2（v0.13.0 服务器中心模型，ADR-011）：``servers[]`` 取代
+Schema v2（服务器中心模型，ADR-011）：``servers[]`` 取代
 ``tunnels[]``——服务器（SSH 连接参数）与其上的服务（ssh 隧道 / nfs）
 与实例（转发行 / 挂载行）分层；代理角色由 ``proxy_server_id`` 单一
 持有（v1 的 current_tunnel/current_tunnel_id 双表示退役）。v1→v2
@@ -70,7 +70,7 @@ def stable_server_id(user: str, host: str, port) -> str:
     return stable_id("t", f"{user or ''}@{host or ''}:{port or 22}")
 
 
-# 兼容别名（v1 名称）——迁移器与测试引用；运行时新代码用 stable_server_id
+# 兼容别名（v1 名称）——存量测试引用；运行时新代码用 stable_server_id
 stable_tunnel_id = stable_server_id
 
 

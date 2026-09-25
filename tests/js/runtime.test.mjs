@@ -334,13 +334,13 @@ test("viewing another tunnel must not silently switch the proxy role", () => {
 test("setProxyTunnel marks the role switch as one tracked, reversible change", () => {
   const rt = makeRuntime();
   setupTunnelForm(rt, { role: "t-a", active: 1 });
-  assert.match(rt.run("tunnelHTML()"), /设为代理隧道/,
-    "非代理隧道的详情栏必须暴露显式角色动作");
+  assert.match(rt.run("tunnelHTML()"), /设为代理服务器/,
+    "非已保存服务器的详情栏必须暴露显式角色动作");
   rt.run("setProxyTunnel()");
   assert.equal(rt.run("S.mp.proxy_server_id"), "t-b");
   assert.equal(rt.run("dirty"), true);
   assert.equal(rt.run("totalDirtyCount()"), 1, "只有角色一个叶子计入待保存");
-  assert.match(rt.run("tunnelHTML()"), /fw-badge[^>]*>代理隧道</,
+  assert.match(rt.run("tunnelHTML()"), /fw-badge[^>]*>代理服务器</,
     "当前代理服务器渲染徽标而非按钮");
   rt.run("discardAll()");
   assert.equal(rt.run("S.mp.proxy_server_id"), "t-a", "放弃更改恢复已保存的角色");

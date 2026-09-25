@@ -250,7 +250,8 @@ class MagicProxyApp(rumps.App):
         main.addItem_(top)
 
     def _tunnel_password(self, tunnel):
-        if tunnel and tunnel.get("auth_type") == "password":
+        _auth = (tunnel.get("ssh") or {}).get("auth_type") if tunnel else None
+        if _auth == "password":
             return keychain.get_password(tunnel)
         return ""
 

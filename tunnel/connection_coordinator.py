@@ -3,7 +3,7 @@
 Owns the connection state machine that was previously scattered across MagicProxyApp.
 The App delegates start/stop/reconnect/pause to this module.
 
-多活模型（v0.9）：代理隧道（current_tunnel，携带 -D 的唯一会话，本类
+多活模型（v0.9 起）：代理服务器（current_server，携带 -D 的唯一会话，本类
 全部既有状态机照旧）+ 任意多条并行「转发会话」（纯 -L 无 -D，SshSession
 实例，各自持有 monitor/retry/host-key 三件套）。会话生命周期的编排单一
 归宿在 tunnel/ssh_session.SshSession（ADR-007 收敛：转发会话与 NFS 会话
@@ -104,8 +104,8 @@ class ConnectionCoordinator:
         self._forward_sessions = {}
         self._ssh_log_sink = ssh_log_sink
         # 代理会话实际启动时的隧道 id——restart 的降级判定必须用「跑着
-        # 的那条」而非配置里的 current_tunnel（切换流在 restart 前就已把
-        # current_tunnel 写成新值）
+        # 的那条」而非配置里的 proxy_server_id（切换流在 restart 前就已把
+        # 角色写成新值）
         self._launched_proxy_id = None
 
     # ── config-derived properties ───────────────────────
@@ -336,7 +336,7 @@ class ConnectionCoordinator:
         return True
 
     def apply_autostarts(self):
-        """按 forward_autostart 收敛补启（app 启动与配置重载后调用）。"""
+        """按 services.ssh.autostart 收敛补启（app 启动与配置重载后调用）。"""
         for t in self._config.get("servers", []):
             if not (isinstance(t, dict) and (t.get("services") or {}).get("ssh", {}).get("autostart")):
                 continue
@@ -374,7 +374,7 @@ class ConnectionCoordinator:
         大换血）。
         """
         with self._lifecycle_lock:
-            # 降级对象 = 实际跑着的代理隧道（非配置 current_tunnel——
+            # 降级对象 = 实际跑着的代理服务器（非配置角色——
             # 切换流在 restart 前就已改写它）
             old_proxy_id = self._launched_proxy_id
             self._retry.cancel()
