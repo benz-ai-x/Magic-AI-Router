@@ -1,6 +1,6 @@
-# Magic Stack — Route Claude Code to Any LLM from the macOS Menu Bar
+# Magic Stack — The All-in-One AI Stack in Your macOS Menu Bar
 
-**Local-first AI network stack: an LLM gateway that speaks Anthropic / OpenAI protocols, your own SSH tunnels, and TLS-level AI traffic capture — one native macOS app. UI in English & 简体中文.**
+**Whatever AI tools you use, a layer here fits: route Claude Code / Codex / OpenCode / ZCode to any LLM (GLM / DeepSeek / Kimi / Qwen / OpenAI / Anthropic, Anthropic & OpenAI protocols), tunnel traffic through your own server (SOCKS5, port forwards, NFS mounts), capture and audit AI calls at TLS level, and track cost, cache-hit and usage per agent — no pile of single-purpose tools, one native macOS app. UI in English & 简体中文.**
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -134,7 +134,7 @@ The Suanpan gateway ships as a Docker image; menu-bar shell, SSH tunnels and cap
 
 ## For curators (one-liner)
 
-> **Magic Stack** — open-source macOS menu-bar app that routes Claude Code, Codex and other agents (Anthropic/OpenAI protocols) to GLM/DeepSeek/Kimi/Qwen/OpenAI through a local-first gateway with English & Chinese UI, bundled with SSH tunnel/port-forwarding management and TLS-level AI traffic observability. MIT.
+> **Magic Stack** — open-source, all-in-one macOS menu-bar stack for anyone who works with AI: local LLM gateway (Claude Code, Codex, OpenCode, ZCode → GLM / DeepSeek / Kimi / Qwen / OpenAI / Anthropic), SSH tunnel & port-forward management, NFS mounts, TLS-level AI traffic capture, per-agent cost and usage analytics. English & 中文 UI. MIT.
 
 [`CHANGELOG.md`](CHANGELOG.md) · [`docs/docker-deploy.md`](docs/docker-deploy.md) · [`docs/adr/`](docs/adr/) · [`CONTEXT.md`](CONTEXT.md)
 

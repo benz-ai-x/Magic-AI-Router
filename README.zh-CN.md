@@ -1,6 +1,6 @@
-# Magic Stack — 菜单栏里的 AI 网络栈：把 Claude Code 路由到任意大模型
+# Magic Stack — 菜单栏里的一站式 AI 工具栈：用 AI，总有几层用得上
 
-**本地优先的 AI 网络栈：讲 Anthropic / OpenAI 协议的大模型网关 + 你自己的 SSH 隧道 + TLS 层 AI 流量抓包，装进一个原生 macOS 应用。界面中英双语。**
+**本地优先的 AI 万能栈：把 Claude Code / Codex / OpenCode / ZCode 路由到任意大模型（GLM / DeepSeek / Kimi / Qwen / OpenAI / Anthropic），经你自己的服务器打通 SSH 隧道、端口转发与 NFS 挂载，TLS 层抓包审计 AI 流量，按 Agent 统计成本、缓存与用量——不用记一堆工具，一个原生 macOS 应用全包。界面中英双语。**
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -134,7 +134,7 @@ Suanpan 网关提供 Docker 镜像；菜单栏外壳、SSH 隧道与抓包为 ma
 
 ## 给收录方的一句话
 
-> **Magic Stack** — 开源 macOS 菜单栏应用：把 Claude Code、Codex 等 Agent（Anthropic/OpenAI 协议）经本地优先网关路由到 GLM/DeepSeek/Kimi/Qwen/OpenAI，中英双语界面，内置 SSH 隧道/端口转发管理与 TLS 层 AI 流量观测。MIT。
+> **Magic Stack** — 开源 macOS 菜单栏应用，给每个用 AI 的人的一站式工具栈：本地大模型网关（Claude Code / Codex / OpenCode / ZCode → GLM / DeepSeek / Kimi / Qwen / OpenAI / Anthropic）、SSH 隧道与端口转发管理、NFS 挂载、TLS 层 AI 流量抓包、按 Agent 的成本与用量统计。中英双语。MIT。
 
 [`CHANGELOG.md`](CHANGELOG.md) · [`docs/docker-deploy.md`](docs/docker-deploy.md) · [`docs/adr/`](docs/adr/) · [`CONTEXT.md`](CONTEXT.md)
 
